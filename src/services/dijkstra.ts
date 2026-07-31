@@ -22,19 +22,40 @@ export function getClosestNodeId(pctX: number, pctY: number): string {
 export function findDijkstraShortestPath(startNodeId: string, endNodeId: string): string[] {
   if (startNodeId === endNodeId) return [startNodeId];
 
+  // Graph vertices = road nodes + facilities (bases). Facilities appear as edge endpoints.
+  const vertices = new Set<string>();
+  SVO_NODES.forEach(n => vertices.add(n.id));
+  SVO_FACILITIES.forEach(f => vertices.add(f.id));
+  SVO_EDGES.forEach(e => { vertices.add(e.from); vertices.add(e.to); });
+
+  // Resolve an id that may be a facility (base) down to a traversable graph vertex
+  const resolveVertex = (id: string): string => {
+    if (vertices.has(id)) return id;
+    const fac = SVO_FACILITIES.find(f => f.id === id);
+    if (fac) return getClosestNodeId(fac.x, fac.y);
+    const node = SVO_NODES.find(n => n.id === id);
+    if (node) return getClosestNodeId(node.x, node.y);
+    return SVO_NODES[0].id;
+  };
+
+  const startId = resolveVertex(startNodeId);
+  const endId = resolveVertex(endNodeId);
+
+  if (startId === endId) return [startNodeId, endNodeId];
+
   const distances: Record<string, number> = {};
   const previous: Record<string, string | null> = {};
   const unvisited = new Set<string>();
 
-  SVO_NODES.forEach(n => {
-    distances[n.id] = Infinity;
-    previous[n.id] = null;
-    unvisited.add(n.id);
+  vertices.forEach(vId => {
+    distances[vId] = Infinity;
+    previous[vId] = null;
+    unvisited.add(vId);
   });
-  distances[startNodeId] = 0;
+  distances[startId] = 0;
 
   const adjList: Record<string, { to: string; distance: number }[]> = {};
-  SVO_NODES.forEach(n => { adjList[n.id] = []; });
+  vertices.forEach(vId => { adjList[vId] = []; });
 
   SVO_EDGES.forEach(e => {
     adjList[e.from]?.push({ to: e.to, distance: e.distance });
@@ -53,7 +74,7 @@ export function findDijkstraShortestPath(startNodeId: string, endNodeId: string)
     }
 
     if (!currentId || smallestDist === Infinity) break;
-    if (currentId === endNodeId) break;
+    if (currentId === endId) break;
 
     unvisited.delete(currentId);
 
@@ -70,16 +91,18 @@ export function findDijkstraShortestPath(startNodeId: string, endNodeId: string)
   }
 
   const path: string[] = [];
-  let curr: string | null = endNodeId;
+  let curr: string | null = endId;
 
   while (curr) {
     path.unshift(curr);
     curr = previous[curr];
   }
 
-  if (path.length === 1 && path[0] !== startNodeId) {
-    return [startNodeId, endNodeId];
-  }
+  // Always anchor the path with the original endpoints (which may be base facilities)
+  if (path[0] !== startNodeId) path.unshift(startNodeId);
+  if (path[path.length - 1] !== endNodeId) path.push(endNodeId);
+
+  if (path.length === 1) return [startNodeId, endNodeId];
 
   return path;
 }
@@ -92,6 +115,13 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
     const node = SVO_NODES.find(n => n.id === nodeId);
     if (node) {
       points.push({ x: node.x, y: node.y });
+      continue;
+    }
+
+    // Facility/base nodes (PTO_1, AK_4, ...) live in SVO_FACILITIES, not SVO_NODES
+    const fac = SVO_FACILITIES.find(f => f.id === nodeId);
+    if (fac) {
+      points.push({ x: fac.x, y: fac.y });
     }
   }
 

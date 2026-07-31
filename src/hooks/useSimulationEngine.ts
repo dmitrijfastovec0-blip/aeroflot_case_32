@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Worker, OtoTask, WorkerStatus, TaskPriority } from '../types/index';
+import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember } from '../types/index';
 import { SVO_STANDS, SVO_FACILITIES, SVO_NODES } from '../constants/index';
 import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath, calculateWorkerToStandEta, findNearestFreeWorkerOfCategory, generateShiftWorkersWithCustomCounts } from '../services/dijkstra';
 
@@ -61,46 +61,66 @@ export function useSimulationEngine() {
       const targetStand = SVO_STANDS.find(s => s.id === qTask.standId);
       if (!targetStand) continue;
 
-      // Find nearest free worker eligible for this queued task
       const usedInLoop = new Set<string>();
-      const eligibleWorker = findNearestFreeWorkerOfCategory(qTask.categoryCode, targetStand, currentWorkers, usedInLoop);
+      let crewMembers: TaskCrewMember[] = [];
 
-      if (eligibleWorker) {
-        stateChanged = true;
-        const etaMember = calculateWorkerToStandEta(
-          currentWorkers.find(w => w.id === eligibleWorker.workerId)!,
-          targetStand
-        );
-
-        // Update task: set crew to this worker and transition to DISPATCHED
-        currentTasks = currentTasks.map(t => {
-          if (t.id === qTask.id) {
-            return {
-              ...t,
-              status: 'DISPATCHED' as const,
-              crew: [etaMember],
-              arrivedCount: 0,
-              maxEtaMinutes: etaMember.etaMinutes
-            };
-          }
-          return t;
+      if (qTask.crew.length > 0) {
+        // User-assembled crew: dispatch the exact selected engineers,
+        // but only once the WHOLE crew is available (no partial dispatch).
+        const allAvailable = qTask.crew.every(member => {
+          const w = currentWorkers.find(wrk => wrk.id === member.workerId);
+          return w && !usedInLoop.has(w.id) &&
+            (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING');
         });
 
-        // Dispatch worker
-        currentWorkers = currentWorkers.map(w => {
-          if (w.id === eligibleWorker.workerId) {
-            return {
-              ...w,
-              status: 'IN_TRANSIT' as WorkerStatus,
-              vehicle: 'APRON_VEHICLE' as const,
-              currentTaskId: qTask.id,
-              pathWaypoints: etaMember.waypoints,
-              currentSegmentIndex: 0
-            };
-          }
-          return w;
-        });
+        if (!allAvailable) continue;
+
+        crewMembers = qTask.crew;
+        crewMembers.forEach(m => usedInLoop.add(m.workerId));
+      } else {
+        // Auto-assemble crew from task category (stress test / system tasks)
+        const nearest = findNearestFreeWorkerOfCategory(qTask.categoryCode, targetStand, currentWorkers, usedInLoop);
+        if (!nearest) continue;
+        usedInLoop.add(nearest.workerId);
+        crewMembers = [nearest];
       }
+
+      // Recompute fresh ETA & waypoints against the workers' current positions
+      const freshMembers: TaskCrewMember[] = crewMembers.map(member => {
+        const workerObj = currentWorkers.find(w => w.id === member.workerId)!;
+        return calculateWorkerToStandEta(workerObj, targetStand);
+      });
+
+      const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
+      stateChanged = true;
+
+      // Update task: set full crew and transition to DISPATCHED
+      currentTasks = currentTasks.map(t => {
+        if (t.id === qTask.id) {
+          return {
+            ...t,
+            status: 'DISPATCHED' as const,
+            crew: freshMembers,
+            arrivedCount: 0,
+            maxEtaMinutes
+          };
+        }
+        return t;
+      });
+
+      // Dispatch every crew member with their own vehicle & waypoints
+      currentWorkers = currentWorkers.map(w => {
+        const member = freshMembers.find(m => m.workerId === w.id);
+        if (!member) return w;
+        return {
+          ...w,
+          status: 'IN_TRANSIT' as WorkerStatus,
+          vehicle: w.vehicle,
+          currentTaskId: qTask.id,
+          pathWaypoints: member.waypoints,
+          currentSegmentIndex: 0
+        };
+      });
     }
 
     if (stateChanged) {
@@ -185,9 +205,9 @@ export function useSimulationEngine() {
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // Movement step
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 12.0 : 4.0;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 6.0;
+            // Movement step (speed calibrated to match ETA: 20 km/h vehicle, 4.5 km/h pedestrian)
+            const speedKmH = worker.vehicle === 'APRON_VEHICLE' ? 20.0 : 4.5;
+            const pctPerSec = ((speedKmH * 1000 / 3600) / 4000) * 100 * simSpeed;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -230,7 +250,7 @@ export function useSimulationEngine() {
             }
 
             const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 5.0 : 2.0;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3.5;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -282,8 +302,10 @@ export function useSimulationEngine() {
               // Track transit time for failsafe
               const currentTransitSec = (task.elapsedTransitSec || 0) + dtSec * simSpeed;
 
-              // FAILSAFE DISPATCH TIMEOUT: If worker in transit for > 15 simulation seconds, force arrive!
-              if (currentTransitSec > 15.0) {
+              // FAILSAFE DISPATCH TIMEOUT: generous ETA-based window so normal transit
+              // never teleports, but genuinely stuck workers are still force-arrived.
+              const failsafeTransitSec = Math.max(60, (task.maxEtaMinutes || 10) * 60 * 1.5);
+              if (currentTransitSec > failsafeTransitSec) {
                 task.crew.forEach(member => {
                   workersRef.current = workersRef.current.map(w => {
                     if (w.id === member.workerId && w.status === 'IN_TRANSIT') {
@@ -395,7 +417,6 @@ export function useSimulationEngine() {
       ...newTask,
       status: 'QUEUED',
       elapsedQueueSec: 0,
-      crew: [],
       arrivedCount: 0
     };
 

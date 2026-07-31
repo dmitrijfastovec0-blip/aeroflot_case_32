@@ -2,6 +2,36 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { Worker, OtoTask, HoverTooltipData, ThemeMode, TaskCrewMember } from '../types/index';
 import { SVO_BUILDINGS, SVO_FACILITIES, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
 
+// Polyfill for CanvasRenderingContext2D.roundRect (missing in older Safari/Firefox)
+if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r?: number | number[]
+  ): void {
+    const radii = Array.isArray(r) ? r : [r ?? 0, r ?? 0, r ?? 0, r ?? 0];
+    const [tl, tr, br, bl] = [
+      Math.min(radii[0] ?? 0, w / 2, h / 2),
+      Math.min(radii[1] ?? radii[0] ?? 0, w / 2, h / 2),
+      Math.min(radii[2] ?? radii[0] ?? 0, w / 2, h / 2),
+      Math.min(radii[3] ?? radii[0] ?? 0, w / 2, h / 2)
+    ];
+
+    this.moveTo(x + tl, y);
+    this.lineTo(x + w - tr, y);
+    this.arcTo(x + w, y, x + w, y + tr, tr);
+    this.lineTo(x + w, y + h - br);
+    this.arcTo(x + w, y + h, x + w - br, y + h, br);
+    this.lineTo(x + bl, y + h);
+    this.arcTo(x, y + h, x, y + h - bl, bl);
+    this.lineTo(x, y + tl);
+    this.arcTo(x, y, x + tl, y, tl);
+    this.closePath();
+  };
+}
+
 interface UseCanvasEngineProps {
   workersRef: React.MutableRefObject<Worker[]>;
   tasksRef: React.MutableRefObject<OtoTask[]>;
@@ -362,39 +392,28 @@ export function useCanvasEngine({
       });
     });
 
-    // WORKER RENDERING WITH VISUAL CLUSTER JITTER FOR BASE WORKERS
-    const groupedTransitWorkers = new Map<string, Worker[]>();
-    const individualWorkers: Worker[] = [];
-
+    // STABLE VISUALIZATION FOR ALL WORKERS (No grouping, stable offsets to prevent flickering)
     workers.forEach(worker => {
-      if (worker.status === 'IN_TRANSIT' && worker.vehicle === 'APRON_VEHICLE' && worker.currentTaskId) {
-        const key = `${worker.currentTaskId}_${worker.baseId}`;
-        if (!groupedTransitWorkers.has(key)) {
-          groupedTransitWorkers.set(key, []);
-        }
-        groupedTransitWorkers.get(key)!.push(worker);
-      } else {
-        individualWorkers.push(worker);
-      }
-    });
-
-    // Count stationary workers per base to arrange them in a neat visual grid cluster
-    const baseWorkerCounts = new Map<string, number>();
-
-    individualWorkers.forEach(worker => {
+      const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
       let renderX = worker.x;
       let renderY = worker.y;
 
       if (worker.status === 'FREE_STATIONARY') {
-        const baseId = worker.baseId;
-        const count = baseWorkerCounts.get(baseId) || 0;
-        baseWorkerCounts.set(baseId, count + 1);
-
-        // Visual offset grid around base badge so all 10 workers at base are distinctly visible!
-        const col = count % 4;
-        const row = Math.floor(count / 4);
-        renderX = worker.x + (col - 1.5) * 1.5;
-        renderY = worker.y + 2.5 + row * 1.5;
+        const col = hash % 6;
+        const row = Math.floor((hash % 30) / 6);
+        renderX = worker.x + (col - 2.5) * 2.8;
+        renderY = worker.y + 3.0 + row * 2.8;
+      } else if (worker.status === 'WORKING_ON_SITE') {
+        const col = hash % 4;
+        const row = Math.floor((hash % 16) / 4);
+        renderX = worker.x + (col - 1.5) * 2.5;
+        renderY = worker.y + 2.0 + row * 2.5;
+      } else if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
+        // Stable jitter on the road so overlapping workers in convoy remain distinct
+        const jitterX = ((hash % 3) - 1) * 0.8;
+        const jitterY = ((Math.floor(hash / 3) % 3) - 1) * 0.8;
+        renderX = worker.x + jitterX;
+        renderY = worker.y + jitterY;
       }
 
       const pos = pctToLogical(renderX, renderY);
@@ -414,45 +433,24 @@ export function useCanvasEngine({
       }
 
       ctx.fillStyle = statusColor;
+      ctx.strokeStyle = theme === 'dark' ? '#070a0e' : '#ffffff';
+      ctx.lineWidth = 1.5;
+      
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 10.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = palette.bg;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 8.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = statusColor;
-      ctx.font = '700 9px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(worker.categoryCode, pos.x, pos.y);
-
-      ctx.restore();
-    });
-
-    groupedTransitWorkers.forEach((group) => {
-      if (group.length === 0) return;
-      const avgX = group.reduce((acc, w) => acc + w.x, 0) / group.length;
-      const avgY = group.reduce((acc, w) => acc + w.y, 0) / group.length;
-      const pos = pctToLogical(avgX, avgY);
-
-      ctx.save();
-      ctx.fillStyle = '#0284c7';
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 13, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, 11.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '700 10px "JetBrains Mono", monospace';
+      ctx.fillStyle = palette.bg;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, 9.0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = statusColor;
+      ctx.font = '800 10px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`🚘${group.length}`, pos.x, pos.y);
+      ctx.fillText(worker.categoryCode, pos.x, pos.y);
 
       ctx.restore();
     });
@@ -542,33 +540,46 @@ export function useCanvasEngine({
     let foundNodeId: string | null = null;
     let foundHit: HoverTooltipData | null = null;
 
-    const groupedMap = new Map<string, Worker[]>();
-    workersRef.current.forEach(w => {
-      if (w.status === 'IN_TRANSIT' && w.vehicle === 'APRON_VEHICLE' && w.currentTaskId) {
-        const k = `${w.currentTaskId}_${w.baseId}`;
-        if (!groupedMap.has(k)) groupedMap.set(k, []);
-        groupedMap.get(k)!.push(w);
+    // Direct worker hover test
+    for (const worker of workersRef.current) {
+      const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
+      let renderX = worker.x;
+      let renderY = worker.y;
+
+      if (worker.status === 'FREE_STATIONARY') {
+        const col = hash % 6;
+        const row = Math.floor((hash % 30) / 6);
+        renderX = worker.x + (col - 2.5) * 2.8;
+        renderY = worker.y + 3.0 + row * 2.8;
+      } else if (worker.status === 'WORKING_ON_SITE') {
+        const col = hash % 4;
+        const row = Math.floor((hash % 16) / 4);
+        renderX = worker.x + (col - 1.5) * 2.5;
+        renderY = worker.y + 2.0 + row * 2.5;
+      } else if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
+        const jitterX = ((hash % 3) - 1) * 0.8;
+        const jitterY = ((Math.floor(hash / 3) % 3) - 1) * 0.8;
+        renderX = worker.x + jitterX;
+        renderY = worker.y + jitterY;
       }
-    });
 
-    for (const [k, grp] of groupedMap.entries()) {
-      if (grp.length === 0) continue;
-      const avgX = grp.reduce((acc, w) => acc + w.x, 0) / grp.length;
-      const avgY = grp.reduce((acc, w) => acc + w.y, 0) / grp.length;
-      const pos = pctToLogical(avgX, avgY);
+      const pos = pctToLogical(renderX, renderY);
 
-      if (Math.hypot(lx - pos.x, ly - pos.y) <= 18) {
-        const task = tasksRef.current.find(t => t.id === grp[0].currentTaskId);
-        const standLabel = task ? task.standLabel : 'Стоянка назначения';
+      if (Math.hypot(lx - pos.x, ly - pos.y) <= 12) {
+        let taskLabel = 'Ожидание';
+        if (worker.currentTaskId) {
+          const task = tasksRef.current.find(t => t.id === worker.currentTaskId);
+          if (task) taskLabel = `Задача ${task.id} (${task.standLabel})`;
+        }
 
         foundHit = {
           type: 'WORKER',
-          title: `📋 Объединенная бригада ОТО (${grp.length} чел.)`,
-          subtitle: `🚘 Спецавтомобиль ОТО • В пути к ${standLabel}`,
+          title: `👷 ${worker.name} (${worker.categoryCode})`,
+          subtitle: `${worker.vehicle === 'APRON_VEHICLE' ? '🚘 Спецтранспорт' : '🚶 Пешком'} • ${worker.status}`,
           details: [
-            { label: '• Специалисты:', value: grp.map(w => `${w.name} (${w.categoryCode})`).join(', ') },
-            { label: '• База выезда:', value: grp[0].baseId },
-            { label: '• Пункт назначения:', value: standLabel }
+            { label: '• Статус:', value: worker.status },
+            { label: '• База приписки:', value: worker.baseId },
+            { label: '• Текущая задача:', value: taskLabel }
           ],
           x: e.clientX,
           y: e.clientY

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ThemeMode } from '../types/index';
 import { Users, X, RefreshCw, Truck } from 'lucide-react';
 
@@ -27,6 +27,16 @@ export const ShiftConfigModal: React.FC<ShiftConfigModalProps> = ({
   const [b2, setB2] = useState<number>(currentB2);
   const [catA, setCatA] = useState<number>(currentCatA);
   const [vehicles, setVehicles] = useState<number>(currentVehicles);
+
+  // Refresh form values every time the modal opens with the latest applied shift config
+  useEffect(() => {
+    if (isOpen) {
+      setB1(currentB1);
+      setB2(currentB2);
+      setCatA(currentCatA);
+      setVehicles(currentVehicles);
+    }
+  }, [isOpen, currentB1, currentB2, currentCatA, currentVehicles]);
 
   if (!isOpen) return null;
 

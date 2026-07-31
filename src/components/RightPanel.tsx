@@ -86,6 +86,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
     if (crew.length > 0 && !withinSla) {
       onTriggerSlaAlert(newTask);
+      setCrew([]);
     } else {
       onLaunchTask(newTask);
       setCrew([]);
