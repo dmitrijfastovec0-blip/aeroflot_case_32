@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Worker, OtoTask, WorkerStatus, ThemeMode } from './types';
 import { REALISTIC_SVO_CONFIG, SVO_STANDS, SVO_NODES } from './constants';
-import { generateShiftWorkers, getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath } from './utils/dispatchLogic';
+import { generateShiftWorkersWithCustomCounts, getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath } from './utils/dispatchLogic';
 import { HeaderBar } from './components/HeaderBar';
 import { AirportCanvas } from './components/AirportCanvas';
 import { RightDispatcherPanel } from './components/RightDispatcherPanel';
 import { BottomConsolePanel } from './components/BottomConsolePanel';
 import { SlaAlertModal } from './components/SlaAlertModal';
+import { ShiftConfigModal } from './components/ShiftConfigModal';
 
 export function App() {
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -22,11 +23,15 @@ export function App() {
   // Light / Dark Theme Mode Engine
   const [theme, setTheme] = useState<ThemeMode>('dark');
 
-  // Work completion notification banner
-  const [completionBanner, setCompletionBanner] = useState<string | null>(null);
+  // Work completion & shift notification banner
+  const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
 
   // Custom SLA Exceeded Warning Modal State
   const [pendingSlaTask, setPendingSlaTask] = useState<OtoTask | null>(null);
+
+  // Shift Personnel Config Modal State
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState<boolean>(false);
+  const [shiftCounts, setShiftCounts] = useState({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
   // Workers Ref to isolate physics loop from React state re-render lags!
   const workersRef = useRef<Worker[]>([]);
@@ -42,15 +47,26 @@ export function App() {
 
   // Initialize Shift Workers: ALL GREEN AT START!
   useEffect(() => {
-    const shift = generateShiftWorkers(REALISTIC_SVO_CONFIG.totalWorkersInShift);
+    const shift = generateShiftWorkersWithCustomCounts(shiftCounts.b1, shiftCounts.b2, shiftCounts.catA, shiftCounts.vehicles);
     workersRef.current = shift;
     setWorkers(shift);
   }, []);
 
+  // Handle Shift Personnel Recalculation & Map Redistribution
+  const handleApplyShiftConfig = (b1: number, b2: number, catA: number, vehicles: number) => {
+    setShiftCounts({ b1, b2, catA, vehicles });
+    const updatedShift = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
+    workersRef.current = updatedShift;
+    setWorkers(updatedShift);
+
+    setNotificationBanner(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
+    setTimeout(() => setNotificationBanner(null), 5000);
+  };
+
   // Task Work Execution Cycle Timers Map (taskId -> elapsed ms)
   const taskWorkTimersRef = useRef<Map<string, number>>(new Map());
 
-  // Continuous Physics Delta-Time Animation Loop (Using workersRef for zero React re-render lag)
+  // Continuous Physics Delta-Time Animation Loop
   const lastTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
@@ -61,12 +77,10 @@ export function App() {
       const dtSec = Math.min(0.2, (now - lastTimeRef.current) / 1000);
       lastTimeRef.current = now;
 
-      // If paused, skip position update physics
       if (!isPaused) {
         let workersUpdated = false;
 
         workersRef.current = workersRef.current.map((worker): Worker => {
-          // A. IN_TRANSIT or RETURNING_TO_BASE
           if ((worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') && worker.pathWaypoints && worker.pathWaypoints.length > 1) {
             workersUpdated = true;
             const currIdx = worker.currentSegmentIndex || 0;
@@ -90,7 +104,6 @@ export function App() {
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // Physical Speed calculation based on simSpeed
             const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 5.55 : 1.25;
             const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3;
 
@@ -104,7 +117,6 @@ export function App() {
             };
           }
 
-          // B. FREE_PATROLLING (Segment-by-segment along road graph)
           if (worker.status === 'FREE_PATROLLING') {
             workersUpdated = true;
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
@@ -151,7 +163,6 @@ export function App() {
           return worker;
         });
 
-        // Synchronize Task Crew Arrival Counters & Work Completion Cycle
         if (workersUpdated) {
           setTasks(prevTasks => {
             const finishedTaskIds: string[] = [];
@@ -181,13 +192,12 @@ export function App() {
               };
             });
 
-            // Automatically complete finished tasks & send workers back to base!
             if (finishedTaskIds.length > 0) {
               finishedTaskIds.forEach(tId => {
                 const finishedTask = prevTasks.find(t => t.id === tId);
                 if (finishedTask) {
-                  setCompletionBanner(`✅ Обслуживание завершено на стоянке ${finishedTask.standLabel}! Инженеры возвращаются на базу.`);
-                  setTimeout(() => setCompletionBanner(null), 5000);
+                  setNotificationBanner(`✅ Обслуживание завершено на стоянке ${finishedTask.standLabel}! Инженеры возвращаются на базу.`);
+                  setTimeout(() => setNotificationBanner(null), 5000);
 
                   const crewIds = new Set(finishedTask.crew.map(c => c.workerId));
                   workersRef.current = workersRef.current.map(w => {
@@ -225,7 +235,7 @@ export function App() {
     return () => cancelAnimationFrame(animFrameId);
   }, [simSpeed, isPaused]);
 
-  // Throttled sync of workersRef to React state `workers` for bottom table display (every 250ms)
+  // Throttled sync of workersRef to React state `workers` for bottom table display
   useEffect(() => {
     const syncInterval = setInterval(() => {
       setWorkers([...workersRef.current]);
@@ -233,7 +243,6 @@ export function App() {
     return () => clearInterval(syncInterval);
   }, []);
 
-  // Directly Launch Task
   const executeLaunchTask = (newTask: OtoTask) => {
     setTasks(prev => [newTask, ...prev]);
 
@@ -253,12 +262,10 @@ export function App() {
     setWorkers([...workersRef.current]);
   };
 
-  // Intercept Task Launch if SLA Exceeded -> Show Custom Warning Modal
   const handleTriggerSlaAlert = (newTask: OtoTask) => {
     setPendingSlaTask(newTask);
   };
 
-  // Confirm Launch from Modal
   const handleConfirmSlaExceededTask = () => {
     if (pendingSlaTask) {
       executeLaunchTask(pendingSlaTask);
@@ -266,7 +273,6 @@ export function App() {
     }
   };
 
-  // ONE-BUTTON TASK CANCELLATION
   const handleCancelTask = (taskId: string) => {
     const targetTask = tasks.find(t => t.id === taskId);
     if (!targetTask) return;
@@ -311,14 +317,26 @@ export function App() {
         theme={theme}
       />
 
-      {/* Work Completion Notification Banner */}
-      {completionBanner && (
+      {/* Shift Personnel Config Modal */}
+      <ShiftConfigModal
+        isOpen={isShiftModalOpen}
+        onClose={() => setIsShiftModalOpen(false)}
+        onApplyShift={handleApplyShiftConfig}
+        currentB1={shiftCounts.b1}
+        currentB2={shiftCounts.b2}
+        currentCatA={shiftCounts.catA}
+        currentVehicles={shiftCounts.vehicles}
+        theme={theme}
+      />
+
+      {/* Notification Banner */}
+      {notificationBanner && (
         <div className="bg-emerald-600 text-white font-mono text-sm font-bold py-2 px-4 text-center border-b border-emerald-500 animate-pulse shadow-lg z-50 flex items-center justify-center space-x-2">
-          <span>{completionBanner}</span>
+          <span>{notificationBanner}</span>
         </div>
       )}
 
-      {/* A. Top Header Bar with Theme Toggle, Pause, & Speed Selector */}
+      {/* A. Top Header Bar with Clickable Shift Config & Theme Toggle */}
       <HeaderBar
         workers={workers}
         simSpeed={simSpeed}
@@ -327,6 +345,7 @@ export function App() {
         onTogglePause={() => setIsPaused(prev => !prev)}
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+        onOpenShiftConfig={() => setIsShiftModalOpen(true)}
       />
 
       {/* B & C. Central CAD Canvas & Right Task Panel */}

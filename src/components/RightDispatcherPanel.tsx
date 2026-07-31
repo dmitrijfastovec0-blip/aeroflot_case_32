@@ -26,8 +26,8 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
   const [standId, setStandId] = useState<string>(selectedStandId || SVO_STANDS[0].id);
   const [crew, setCrew] = useState<TaskCrewMember[]>([]);
 
-  // Default Standard Transit SLA limit (15.0 minutes)
-  const slaLimitMinutes = 15.0;
+  // INTERACTIVE SLA LIMIT INPUT (Default 15.0 min, editable by user!)
+  const [slaLimitMinutes, setSlaLimitMinutes] = useState<number>(15.0);
 
   const currentStand = SVO_STANDS.find(s => s.id === standId) || SVO_STANDS[0];
 
@@ -82,7 +82,6 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
     };
 
-    // If maxEta exceeds slaLimit, block launch & trigger custom modal dialog!
     if (!withinSla) {
       onTriggerSlaAlert(newTask);
     } else {
@@ -212,63 +211,74 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
         </div>
       ) : (
         <>
-          {/* SLA TEXT BADGE */}
+          {/* INTERACTIVE SLA LIMIT INPUT FIELD */}
           <div className={`border rounded-xl p-3.5 flex items-center justify-between font-mono text-xs font-bold ${
             theme === 'dark' ? 'bg-[#121820] border-[#263345] text-amber-400' : 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm'
           }`}>
-            <span className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-amber-400" />
-              <span>[ ⏱️ Лимит SLA: {slaLimitMinutes.toFixed(1)} мин (Стандартный транзит) ]</span>
-            </span>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>⏱️ Лимит SLA (мин):</span>
+            </div>
+            <div className="flex items-center space-x-1.5">
+              <input
+                type="number"
+                step="0.5"
+                min="1.0"
+                max="120.0"
+                value={slaLimitMinutes}
+                onChange={e => setSlaLimitMinutes(Math.max(1.0, parseFloat(e.target.value) || 1.0))}
+                className={`w-20 p-1.5 rounded-lg border text-center font-bold text-sm focus:border-amber-500 focus:outline-none ${
+                  theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-white border-amber-300 text-amber-900'
+                }`}
+              />
+              <span>мин</span>
+            </div>
           </div>
 
-          {/* Quick Crew Assembly (3 BUTTONS) */}
+          {/* COMPACT CREW ASSEMBLY BUTTONS */}
           <div className={`border rounded-xl p-4 space-y-3 ${
             theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-50 border-slate-200'
           }`}>
             <div className="font-bold text-sm border-b border-slate-300 dark:border-[#263345] pb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-emerald-400" /> Быстрая комплектация бригады
+                <Users className="w-4 h-4 text-emerald-400" /> Комплектация бригады
               </span>
             </div>
 
-            <div className="space-y-2 font-mono text-xs">
+            <div className="grid grid-cols-3 gap-2 font-mono text-xs">
               <button
                 type="button"
                 onClick={() => handleAddNearestWorker('B1')}
-                className={`w-full flex items-center justify-between py-2.5 px-3 rounded-lg border transition-colors text-left font-bold cursor-pointer ${
+                className={`py-2 px-2 rounded-lg border text-center font-bold transition-colors cursor-pointer ${
                   theme === 'dark' ? 'bg-[#070a0e] hover:bg-[#1e293b] text-purple-300 border-purple-800/60' : 'bg-white hover:bg-slate-100 text-purple-700 border-purple-300 shadow-sm'
                 }`}
               >
-                <span>[ ➕ Добавить ближайшего B1 ]</span>
-                <span className="text-xs text-purple-400">Механика/Планер</span>
+                ➕ B1 Механика
               </button>
 
               <button
                 type="button"
                 onClick={() => handleAddNearestWorker('B2')}
-                className={`w-full flex items-center justify-between py-2.5 px-3 rounded-lg border transition-colors text-left font-bold cursor-pointer ${
+                className={`py-2 px-2 rounded-lg border text-center font-bold transition-colors cursor-pointer ${
                   theme === 'dark' ? 'bg-[#070a0e] hover:bg-[#1e293b] text-sky-300 border-sky-800/60' : 'bg-white hover:bg-slate-100 text-sky-700 border-sky-300 shadow-sm'
                 }`}
               >
-                <span>[ ➕ Добавить ближайшего B2 ]</span>
-                <span className="text-xs text-sky-400">Авионика/Электроника</span>
+                ➕ B2 Авионика
               </button>
 
               <button
                 type="button"
                 onClick={() => handleAddNearestWorker('A')}
-                className={`w-full flex items-center justify-between py-2.5 px-3 rounded-lg border transition-colors text-left font-bold cursor-pointer ${
+                className={`py-2 px-2 rounded-lg border text-center font-bold transition-colors cursor-pointer ${
                   theme === 'dark' ? 'bg-[#070a0e] hover:bg-[#1e293b] text-emerald-300 border-emerald-800/60' : 'bg-white hover:bg-slate-100 text-emerald-700 border-emerald-300 shadow-sm'
                 }`}
               >
-                <span>[ ➕ Добавить ближайшего Cat A ]</span>
-                <span className="text-xs text-emerald-400">Линейный осмотр</span>
+                ➕ Cat A Линейщик
               </button>
             </div>
           </div>
 
-          {/* Selected Crew List & SLA Indicator */}
+          {/* Selected Crew List & Dynamic SLA Indicator */}
           <div className={`border rounded-xl p-4 space-y-3 flex-1 flex flex-col ${
             theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-50 border-slate-200'
           }`}>
@@ -316,7 +326,7 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
               </div>
             ) : (
               <div className="py-6 text-center text-gray-400 font-mono text-xs border border-dashed border-slate-300 dark:border-[#263345] rounded-lg">
-                Используйте кнопки выше для мгновенной комплектации бригады.
+                Используйте компактные кнопки выше для добавления инженеров.
               </div>
             )}
 

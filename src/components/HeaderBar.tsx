@@ -1,6 +1,6 @@
 import React from 'react';
 import { Worker, ThemeMode } from '../types';
-import { Users, FastForward, Sun, Moon, Pause, Play } from 'lucide-react';
+import { Users, FastForward, Sun, Moon, Pause, Play, Settings2 } from 'lucide-react';
 
 interface HeaderBarProps {
   workers: Worker[];
@@ -10,6 +10,7 @@ interface HeaderBarProps {
   onTogglePause: () => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  onOpenShiftConfig: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -19,7 +20,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   isPaused,
   onTogglePause,
   theme,
-  onToggleTheme
+  onToggleTheme,
+  onOpenShiftConfig
 }) => {
   const totalWorkers = workers.length;
   const freeCount = workers.filter(w => w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING').length;
@@ -40,7 +42,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         </div>
       </div>
 
-      {/* 2. Controls & Shift Status */}
+      {/* 2. Controls & Clickable Shift Status */}
       <div className="flex items-center space-x-3">
         {/* Pause / Resume Button */}
         <button
@@ -86,14 +88,21 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </div>
         </div>
 
-        {/* Shift Status Counter */}
-        <div className="flex items-center space-x-2 bg-[#121820] dark:bg-[#121820] bg-slate-100 px-3 py-1.5 rounded-lg border border-[#263345] dark:border-[#263345] border-slate-300 text-xs md:text-sm">
-          <Users className="w-4 h-4 text-emerald-400" />
-          <span className="text-gray-300 dark:text-gray-300 text-slate-700 font-medium">Смена: <span className="font-mono font-bold text-emerald-400 text-sm">{totalWorkers} чел.</span></span>
-          <span className="font-mono text-xs text-gray-400 dark:text-gray-400 text-slate-500 hidden md:inline">
-            (🟢 Свободны: <span className="text-emerald-400 font-bold">{freeCount}</span> | 🔵 В пути: <span className="text-sky-400 font-bold">{inTransitCount}</span> | 🔴 На объекте: <span className="text-red-400 font-bold">{workingCount}</span>)
+        {/* INTERACTIVE CLICKABLE SHIFT BADGE */}
+        <button
+          onClick={onOpenShiftConfig}
+          className="flex items-center space-x-2 bg-[#121820] dark:bg-[#121820] bg-slate-100 hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-emerald-500/60 text-xs md:text-sm transition-colors cursor-pointer group shadow-sm"
+          title="Нажмите для настройки состава смены и пересчета инженеров"
+        >
+          <Users className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+          <span className="text-gray-300 dark:text-gray-300 text-slate-700 font-medium flex items-center gap-1">
+            Смена: <span className="font-mono font-bold text-emerald-400 text-sm">{totalWorkers} чел.</span>
+            <Settings2 className="w-3.5 h-3.5 text-gray-400 ml-1 group-hover:text-emerald-400" />
           </span>
-        </div>
+          <span className="font-mono text-xs text-gray-400 dark:text-gray-400 text-slate-500 hidden lg:inline border-l border-slate-300 dark:border-[#263345] pl-2">
+            (🟢 <span className="text-emerald-400 font-bold">{freeCount}</span> | 🔵 <span className="text-sky-400 font-bold">{inTransitCount}</span> | 🔴 <span className="text-red-400 font-bold">{workingCount}</span>)
+          </span>
+        </button>
 
         {/* Theme Toggle Button */}
         <button

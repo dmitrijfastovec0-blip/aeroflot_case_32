@@ -1,5 +1,5 @@
 import { Worker, Stand, CategoryCode, TaskCrewMember, VehicleType, Category, WorkerStatus } from '../types';
-import { REAL_SVO_FACILITIES, REALISTIC_SVO_CONFIG, SVO_STANDS, SVO_NODES, SVO_EDGES, SVO_FACILITIES, SVO_MAP_METERS, TECHNICIAN_NAMES } from '../constants';
+import { REAL_SVO_FACILITIES, REALISTIC_SVO_CONFIG, SVO_EDGES, SVO_FACILITIES, SVO_NODES, SVO_MAP_METERS, TECHNICIAN_NAMES } from '../constants';
 
 export function categoryCodeToEnum(code: CategoryCode): Category {
   switch (code) {
@@ -17,12 +17,13 @@ export function categoryEnumToCode(cat: Category): CategoryCode {
   }
 }
 
-// Generate Shift Workers: 85% stationary at bases, 15% patrolling. ALL INITIAL WORKERS ARE GREEN!
-export function generateShiftWorkers(count: number): Worker[] {
-  const b1Count = Math.round(count * REALISTIC_SVO_CONFIG.qualificationsRatio.ENGINES_AIRFRAME);
-  const b2Count = Math.round(count * REALISTIC_SVO_CONFIG.qualificationsRatio.AVIONICS);
-  const catACount = Math.max(0, count - b1Count - b2Count);
-
+// Generate Shift Workers with Custom Qualification Counts and Vehicles
+export function generateShiftWorkersWithCustomCounts(
+  b1Count: number,
+  b2Count: number,
+  catACount: number,
+  vehicleCount: number
+): Worker[] {
   const categories: Category[] = [
     ...Array(b1Count).fill('ENGINES_AIRFRAME'),
     ...Array(b2Count).fill('AVIONICS'),
@@ -50,7 +51,7 @@ export function generateShiftWorkers(count: number): Worker[] {
       currentY += (Math.cos(idx * 2.5) * 2.0);
     }
 
-    const hasVehicle = idx < REALISTIC_SVO_CONFIG.availableVehicles;
+    const hasVehicle = idx < vehicleCount;
     const vehicle: VehicleType = hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN';
 
     return {
@@ -65,6 +66,14 @@ export function generateShiftWorkers(count: number): Worker[] {
       vehicle
     };
   });
+}
+
+// Default generation using ratios
+export function generateShiftWorkers(count: number): Worker[] {
+  const b1Count = Math.round(count * REALISTIC_SVO_CONFIG.qualificationsRatio.ENGINES_AIRFRAME);
+  const b2Count = Math.round(count * REALISTIC_SVO_CONFIG.qualificationsRatio.AVIONICS);
+  const catACount = Math.max(0, count - b1Count - b2Count);
+  return generateShiftWorkersWithCustomCounts(b1Count, b2Count, catACount, REALISTIC_SVO_CONFIG.availableVehicles);
 }
 
 // Distance in meters between two percentage coordinates
