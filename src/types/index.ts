@@ -81,6 +81,7 @@ export interface OtoTask {
   withinSla: boolean;
   createdAt: string;
   elapsedQueueSec?: number; // Queued time accumulated in simulation seconds
+  elapsedTransitSec?: number; // Time spent in transit
   elapsedWorkSec: number;   // Elapsed work time in seconds (0 to 120s)
   targetWorkSec: number;    // Target 120s (2 real minutes)
 }

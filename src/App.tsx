@@ -35,6 +35,8 @@ export function App() {
   const {
     workers,
     tasks,
+    workersRef,
+    tasksRef,
     simSpeed,
     setSimSpeed,
     isPaused,
@@ -70,7 +72,15 @@ export function App() {
     }
   };
 
-  const queuedTasks = tasks.filter(t => t.status === 'QUEUED');
+  const queuedTasks = tasks
+    .filter(t => t.status === 'QUEUED')
+    .sort((a, b) => {
+      const getRank = (p: string) => p === 'AOG' ? 1 : p === 'URGENT' ? 2 : 3;
+      const rankA = getRank(a.priority);
+      const rankB = getRank(b.priority);
+      if (rankA !== rankB) return rankA - rankB;
+      return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
+    });
   const activeTaskForSelectedStand = tasks.find(t => t.standId === selectedStandId);
 
   return (
@@ -122,8 +132,8 @@ export function App() {
       <div className="flex-1 flex overflow-hidden relative">
         {/* B. Central CAD/GIS Airport Canvas */}
         <CanvasMap
-          workers={workers}
-          tasks={tasks}
+          workersRef={workersRef}
+          tasksRef={tasksRef}
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
           theme={theme}

@@ -3,8 +3,8 @@ import { Worker, OtoTask, ThemeMode } from '../types/index';
 import { useCanvasEngine } from '../hooks/useCanvasEngine';
 
 interface CanvasMapProps {
-  workers: Worker[];
-  tasks: OtoTask[];
+  workersRef: React.MutableRefObject<Worker[]>;
+  tasksRef: React.MutableRefObject<OtoTask[]>;
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   theme: ThemeMode;

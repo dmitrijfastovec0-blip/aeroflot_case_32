@@ -3,8 +3,8 @@ import { Worker, OtoTask, HoverTooltipData, ThemeMode, TaskCrewMember } from '..
 import { SVO_BUILDINGS, SVO_FACILITIES, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
 
 interface UseCanvasEngineProps {
-  workers: Worker[];
-  tasks: OtoTask[];
+  workersRef: React.MutableRefObject<Worker[]>;
+  tasksRef: React.MutableRefObject<OtoTask[]>;
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   theme: ThemeMode;
@@ -14,8 +14,8 @@ interface UseCanvasEngineProps {
 }
 
 export function useCanvasEngine({
-  workers,
-  tasks,
+  workersRef,
+  tasksRef,
   selectedStandId,
   onSelectStand,
   theme,
@@ -87,6 +87,9 @@ export function useCanvasEngine({
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    
+    const workers = workersRef.current;
+    const tasks = tasksRef.current;
 
     const dpr = window.devicePixelRatio || 1;
     const width = container.clientWidth;
@@ -456,7 +459,7 @@ export function useCanvasEngine({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workers, tasks, selectedStandId, dashOffset, hoveredNodeId, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, dashOffset, hoveredNodeId, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
 
   // CONTINUOUS 60 FPS ANIMATION RENDER LOOP!
   useEffect(() => {
@@ -540,7 +543,7 @@ export function useCanvasEngine({
     let foundHit: HoverTooltipData | null = null;
 
     const groupedMap = new Map<string, Worker[]>();
-    workers.forEach(w => {
+    workersRef.current.forEach(w => {
       if (w.status === 'IN_TRANSIT' && w.vehicle === 'APRON_VEHICLE' && w.currentTaskId) {
         const k = `${w.currentTaskId}_${w.baseId}`;
         if (!groupedMap.has(k)) groupedMap.set(k, []);
@@ -555,7 +558,7 @@ export function useCanvasEngine({
       const pos = pctToLogical(avgX, avgY);
 
       if (Math.hypot(lx - pos.x, ly - pos.y) <= 18) {
-        const task = tasks.find(t => t.id === grp[0].currentTaskId);
+        const task = tasksRef.current.find(t => t.id === grp[0].currentTaskId);
         const standLabel = task ? task.standLabel : 'Стоянка назначения';
 
         foundHit = {

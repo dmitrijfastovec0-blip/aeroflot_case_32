@@ -19,13 +19,8 @@ export function useSimulationEngine() {
   const workersRef = useRef<Worker[]>(workers);
   const tasksRef = useRef<OtoTask[]>(tasks);
 
-  useEffect(() => {
-    workersRef.current = workers;
-  }, [workers]);
-
-  useEffect(() => {
-    tasksRef.current = tasks;
-  }, [tasks]);
+  // We no longer sync refs from state, because refs ARE the source of truth
+  // and state is just a throttled snapshot for the UI.
 
   const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
     setNotificationBanner(msg);
@@ -110,8 +105,10 @@ export function useSimulationEngine() {
 
     if (stateChanged) {
       workersRef.current = currentWorkers;
-      setWorkers(currentWorkers);
       tasksRef.current = currentTasks;
+      // Note: setWorkers and setTasks are throttled in the main loop, 
+      // but we force a UI update on dispatch to ensure immediate feedback.
+      setWorkers(currentWorkers);
       setTasks(currentTasks);
     }
   }, []);
@@ -120,6 +117,7 @@ export function useSimulationEngine() {
   // MAIN 60 FPS SIMULATION TICK LOOP
   // -----------------------------------------------------------------
   const lastTimeRef = useRef<number>(Date.now());
+  const lastRenderTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     let animFrameId: number;
@@ -130,14 +128,9 @@ export function useSimulationEngine() {
       lastTimeRef.current = now;
 
       if (!isPaused) {
-        let workersChanged = false;
-        let tasksChanged = false;
-
         // 1. UPDATE WORKER POSITIONS (LERP)
         const nextWorkers = workersRef.current.map((worker): Worker => {
           if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') {
-            workersChanged = true;
-
             // AUTO-ARRIVAL SAFETY GUARANTEE: If waypoints missing or <= 1, instantly arrived!
             if (!worker.pathWaypoints || worker.pathWaypoints.length <= 1) {
               const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
@@ -207,7 +200,6 @@ export function useSimulationEngine() {
 
           // Patrolling workers logic
           if (worker.status === 'FREE_PATROLLING') {
-            workersChanged = true;
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
               const currentNodeId = getClosestNodeId(worker.x, worker.y);
               const roadWaypoints = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
@@ -252,10 +244,8 @@ export function useSimulationEngine() {
           return worker;
         });
 
-        if (workersChanged) {
-          workersRef.current = nextWorkers;
-          setWorkers(nextWorkers);
-        }
+        // UNCONDITIONAL update to preserve fractional LERP progress
+        workersRef.current = nextWorkers;
 
         // 2. UPDATE TASKS ARRIVAL, QUEUE WAIT TIME & MAINTENANCE TIMERS
         if (tasksRef.current.length > 0) {
@@ -263,7 +253,6 @@ export function useSimulationEngine() {
 
           const nextTasks = tasksRef.current.map(task => {
             if (task.status === 'QUEUED') {
-              tasksChanged = true;
               return {
                 ...task,
                 elapsedQueueSec: (task.elapsedQueueSec || 0) + dtSec * simSpeed
@@ -290,9 +279,11 @@ export function useSimulationEngine() {
             } else {
               status = 'DISPATCHED';
 
+              // Track transit time for failsafe
+              const currentTransitSec = (task.elapsedTransitSec || 0) + dtSec * simSpeed;
+
               // FAILSAFE DISPATCH TIMEOUT: If worker in transit for > 15 simulation seconds, force arrive!
-              const dispatchedTime = (task.elapsedQueueSec || 0) + dtSec * simSpeed;
-              if (dispatchedTime > 15.0) {
+              if (currentTransitSec > 15.0) {
                 task.crew.forEach(member => {
                   workersRef.current = workersRef.current.map(w => {
                     if (w.id === member.workerId && w.status === 'IN_TRANSIT') {
@@ -310,23 +301,23 @@ export function useSimulationEngine() {
                 });
                 status = 'WORKING';
               }
-            }
-
-            if (task.arrivedCount !== arrivedCount || task.status !== status || Math.floor(task.elapsedWorkSec) !== Math.floor(elapsedWorkSec)) {
-              tasksChanged = true;
+              
+              // We mutate elapsedTransitSec directly here to save allocating another property in mapping,
+              // or we just return it. We'll return it below.
+              task.elapsedTransitSec = currentTransitSec;
             }
 
             return {
               ...task,
               arrivedCount: isAllArrived ? task.crew.length : arrivedCount,
               elapsedWorkSec,
+              elapsedTransitSec: task.elapsedTransitSec,
               status
             };
           });
 
           // 3. HANDLE TASK COMPLETIONS & RE-DRAIN QUEUE
           if (completedTaskIds.length > 0) {
-            tasksChanged = true;
             const remainingTasks = nextTasks.filter(t => !completedTaskIds.includes(t.id));
 
             completedTaskIds.forEach(cId => {
@@ -362,19 +353,29 @@ export function useSimulationEngine() {
                 });
 
                 workersRef.current = updatedWorkers;
-                setWorkers(updatedWorkers);
               }
             });
 
             tasksRef.current = remainingTasks;
-            setTasks(remainingTasks);
+            
+            // Force UI update on completion
+            setWorkers([...workersRef.current]);
+            setTasks([...remainingTasks]);
+            lastRenderTimeRef.current = now;
 
             // Instantly drain queue with newly freed workers!
             setTimeout(() => drainQueueWithFreeWorkers(), 50);
-          } else if (tasksChanged) {
+          } else {
+            // UNCONDITIONAL update to preserve fractional timer progress
             tasksRef.current = nextTasks;
-            setTasks(nextTasks);
           }
+        }
+        
+        // 4. THROTTLE UI UPDATES to ~10 FPS (100ms) to prevent React blocking the main thread
+        if (now - lastRenderTimeRef.current > 100) {
+          setWorkers([...workersRef.current]);
+          setTasks([...tasksRef.current]);
+          lastRenderTimeRef.current = now;
         }
       }
 
@@ -516,6 +517,8 @@ export function useSimulationEngine() {
   return {
     workers,
     tasks,
+    workersRef,
+    tasksRef,
     simSpeed,
     setSimSpeed,
     isPaused,
