@@ -53,6 +53,7 @@ export interface Worker {
   currentSegmentIndex?: number;
   dutyStandId?: string;
   isPatrolPreference?: boolean;
+  dispatchedCount?: number;
 }
 
 export interface TaskCrewMember {
@@ -89,6 +90,7 @@ export interface OtoTask {
   elapsedTransitSec?: number; // Time spent in transit
   elapsedWorkSec: number;   // Elapsed work time in seconds (0 to 120s)
   targetWorkSec: number;    // Target 120s (2 real minutes)
+  reservedWorkerId?: string; // Lookahead: queued task promised to a worker still on duty
 }
 
 export interface HoverTooltipData {

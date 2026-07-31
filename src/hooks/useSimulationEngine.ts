@@ -83,39 +83,61 @@ export function useSimulationEngine() {
     setTimeout(() => setNotificationBanner(null), durationMs);
   }, []);
 
-  // Priority Rank Helper (AOG = 1, URGENT = 2, ROUTINE = 3)
-  const getPriorityRank = (p: TaskPriority) => {
-    switch (p) {
-      case 'AOG': return 1;
-      case 'URGENT': return 2;
-      case 'ROUTINE': return 3;
-    }
-  };
-
-  // Helper to sort queued tasks strictly by Priority (AOG > URGENT > ROUTINE), then by wait time
-  const sortQueuedTasks = (taskList: OtoTask[]) => {
-    return [...taskList].sort((a, b) => {
-      const rankA = getPriorityRank(a.priority);
-      const rankB = getPriorityRank(b.priority);
-      if (rankA !== rankB) return rankA - rankB; // 1 before 2, 2 before 3
-      return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0); // Older wait time first
+  // SLA-aware queue ordering (item 1): AOG first, then by "slack" = remaining
+  // time-to-deadline minus the best achievable ETA, so a ROUTINE call about to
+  // breach its 15-min limit outranks a comfortable URGENT one. Tasks that
+  // cannot be staffed right now sink to the back instead of jamming the front.
+  const sortQueuedBySla = (taskList: OtoTask[], workerIdx: Map<string, Worker>, busy: Set<string>): OtoTask[] => {
+    const scored = taskList.map(q => {
+      const stand = STAND_BY_ID.get(q.standId);
+      let minEta = Infinity;
+      if (stand) {
+        if (q.crew.length > 0) {
+          const members = q.crew.map(m => workerIdx.get(m.workerId)).filter((w): w is Worker => !!w);
+          const allFree = members.length === q.crew.length &&
+            members.every(w => !busy.has(w.id) && (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING'));
+          if (allFree) {
+            minEta = Math.max(...members.map(w => calculateWorkerToStandEta(w, stand).etaMinutes));
+          }
+        } else {
+          for (const w of workerIdx.values()) {
+            if (busy.has(w.id)) continue;
+            if (!(w.categoryCode === q.categoryCode || q.categoryCode === 'A')) continue;
+            if (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') {
+              const eta = calculateWorkerToStandEta(w, stand).etaMinutes;
+              if (eta < minEta) minEta = eta;
+            }
+          }
+        }
+      }
+      const slack = minEta === Infinity
+        ? 1e9
+        : q.slaLimitMinutes - (q.elapsedQueueSec || 0) / 60 - minEta;
+      const base = q.priority === 'AOG' ? -1e9 : 0;
+      return { q, score: base + slack };
     });
+    return scored.sort((a, b) => a.score - b.score).map(s => s.q);
   };
 
   // -----------------------------------------------------------------
-  // DRAIN QUEUE ALGORITHM: SERVICING HIGHEST PRIORITY TASKS FIRST
+  // DRAIN QUEUE ALGORITHM: GLOBAL GREEDY ASSIGNMENT (items 2+3)
   // -----------------------------------------------------------------
-  // Designed to scale: O(T + W) per drain via hash indexes and
-  // incremental busy/load tracking (no nested full scans).
+  // Builds every (task × worker) candidate pair with a weighted cost
+  // (ETA + fair-share penalty + zone guard), sorts globally by cost and
+  // assigns greedily, so no free engineer idles while a matching queued
+  // call exists and the nearest engineer is never "raped" by a series.
+  // Lookahead (item 4): an engineer finishing maintenance counts as an
+  // almost-available candidate; if they win, the call is reserved to them
+  // instead of dragging a distant worker across the apron.
   const drainQueueWithFreeWorkers = useCallback(() => {
-    const queuedList = sortQueuedTasks(tasksRef.current.filter(t => t.status === 'QUEUED'));
-    if (queuedList.length === 0) return;
+    const queuedAll = tasksRef.current.filter(t => t.status === 'QUEUED');
+    if (queuedAll.length === 0) return;
 
-    // O(1) index over the static stand list
+    // O(1) index over workers
     const workerById = new Map<string, Worker>();
     for (const w of workersRef.current) workerById.set(w.id, w);
 
-    // Incremental busy-set + per-worker active load built once, updated on the fly
+    // Incremental busy-set + per-worker active load built once
     const busy = new Set<string>();
     const load: Record<string, number> = {};
     for (const t of tasksRef.current) {
@@ -127,111 +149,202 @@ export function useSimulationEngine() {
       }
     }
 
-    // Batched mutations applied once after the loop (avoids O(T × W) mapping)
+    // Item 1: SLA-aware ordering (AOG first, then by slack-to-deadline)
+    const ordered = sortQueuedBySla(queuedAll, workerById, busy);
+    // Only reservations that still hold block the task: the reserved engineer
+    // must be mid-maintenance. A stale reservation (cancelled/restaffed) unblocks.
+    const reservedTaskIds = new Set(
+      ordered.filter(t => {
+        if (!t.reservedWorkerId) return false;
+        const rw = workerById.get(t.reservedWorkerId);
+        return !!rw && rw.status === 'WORKING_ON_SITE';
+      }).map(t => t.id)
+    );
+
+    // Batched mutations applied once after the loops
     const dispatchedTasks: Record<string, OtoTask> = {};
     const dispatchedWorkers: Record<string, Worker> = {};
     const newStats: DispatchStat[] = [];
 
-    for (const qTask of queuedList) {
+    // Pace: traverse the pixel path in EXACTLY the displayed ETA (sim-seconds)
+    const pathSpeedFor = (member: TaskCrewMember): number => {
+      let totalPct = 0;
+      for (let i = 0; i < member.waypoints.length - 1; i++) {
+        totalPct += Math.hypot(
+          member.waypoints[i + 1].x - member.waypoints[i].x,
+          member.waypoints[i + 1].y - member.waypoints[i].y
+        );
+      }
+      const etaSimSec = Math.max(1, member.etaMinutes * 60);
+      return Math.max(0.01, totalPct / etaSimSec);
+    };
+
+    const pushStat = (q: OtoTask, systemEta: number) => {
+      const targetStand = STAND_BY_ID.get(q.standId);
+      if (!targetStand) return;
+      const naivePick = findNaiveNearestWorkerOfCategory(q.categoryCode, targetStand, workersRef.current, busy);
+      if (!naivePick) return;
+      const saved = Math.max(0, Math.round((naivePick.etaMinutes - systemEta) * 10) / 10);
+      newStats.push({
+        taskId: q.id,
+        standLabel: q.standLabel,
+        categoryCode: q.categoryCode,
+        defectLabel: q.defectLabel,
+        intuitiveEtaMinutes: naivePick.etaMinutes,
+        systemEtaMinutes: systemEta,
+        savedMinutes: saved,
+        within15: systemEta <= 15,
+        createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
+      });
+    };
+
+    // ---- Step 1: manual (user-assembled) crews, in SLA order ----
+    for (const qTask of ordered) {
+      if (reservedTaskIds.has(qTask.id)) continue;
+      if (qTask.crew.length === 0) continue;
       const targetStand = STAND_BY_ID.get(qTask.standId);
       if (!targetStand) continue;
 
-      const usedInLoop = new Set<string>();
-      let crewMembers: TaskCrewMember[] = [];
-
-      if (qTask.crew.length > 0) {
-        // User-assembled crew: dispatch the exact selected engineers,
-        // but only once the WHOLE crew is available (no partial dispatch).
-        let allAvailable = true;
-        for (const member of qTask.crew) {
-          const w = workerById.get(member.workerId);
-          if (!w || usedInLoop.has(w.id) || busy.has(w.id) ||
-              (w.status !== 'FREE_STATIONARY' && w.status !== 'FREE_PATROLLING')) {
-            allAvailable = false;
-            break;
-          }
+      let allAvailable = true;
+      for (const member of qTask.crew) {
+        const w = workerById.get(member.workerId);
+        if (!w || busy.has(w.id) ||
+            (w.status !== 'FREE_STATIONARY' && w.status !== 'FREE_PATROLLING')) {
+          allAvailable = false;
+          break;
         }
-
-        if (!allAvailable) continue;
-
-        crewMembers = qTask.crew;
-        for (const m of crewMembers) {
-          usedInLoop.add(m.workerId);
-          busy.add(m.workerId);
-          load[m.workerId] = (load[m.workerId] || 0) + 1;
-        }
-      } else {
-        // Auto-assemble crew from task category (stress test / system tasks)
-        const nearest = findNearestFreeWorkerOfCategory(qTask.categoryCode, targetStand, workersRef.current, usedInLoop);
-        if (!nearest) continue;
-        usedInLoop.add(nearest.workerId);
-        busy.add(nearest.workerId);
-        load[nearest.workerId] = (load[nearest.workerId] || 0) + 1;
-        crewMembers = [nearest];
       }
+      if (!allAvailable) continue;
 
-      // Recompute fresh ETA & waypoints against the workers' current positions
-      const freshMembers: TaskCrewMember[] = crewMembers.map(member => {
-        const workerObj = workerById.get(member.workerId)!;
-        return calculateWorkerToStandEta(workerObj, targetStand);
+      const freshMembers: TaskCrewMember[] = qTask.crew.map(member => {
+        const w = workerById.get(member.workerId)!;
+        busy.add(w.id);
+        load[w.id] = (load[w.id] || 0) + 1;
+        dispatchedWorkers[w.id] = {
+          ...w,
+          status: 'IN_TRANSIT' as WorkerStatus,
+          currentTaskId: qTask.id,
+          pathWaypoints: member.waypoints,
+          pathSpeedPctPerSimSec: pathSpeedFor(member),
+          currentSegmentIndex: 0,
+          dispatchedCount: (w.dispatchedCount || 0) + 1
+        };
+        return calculateWorkerToStandEta(w, targetStand);
       });
 
-      // Pacing: traverse the pixel path in EXACTLY the displayed ETA (sim-seconds),
-      // so the arrival time always matches the ETA badge regardless of distance model.
-      const pathSpeedFor = (member: TaskCrewMember): number => {
-        let totalPct = 0;
-        for (let i = 0; i < member.waypoints.length - 1; i++) {
-          totalPct += Math.hypot(
-            member.waypoints[i + 1].x - member.waypoints[i].x,
-            member.waypoints[i + 1].y - member.waypoints[i].y
-          );
-        }
-        const etaSimSec = Math.max(1, member.etaMinutes * 60);
-        return Math.max(0.01, totalPct / etaSimSec);
-      };
-
       const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
-
-      // Record "intuitive dispatcher vs system" analytics for this dispatch
-      const naivePick = findNaiveNearestWorkerOfCategory(qTask.categoryCode, targetStand, workersRef.current, busy);
-      if (naivePick) {
-        const systemBestEta = Math.min(...freshMembers.map(m => m.etaMinutes));
-        const saved = Math.max(0, Math.round((naivePick.etaMinutes - systemBestEta) * 10) / 10);
-        newStats.push({
-          taskId: qTask.id,
-          standLabel: qTask.standLabel,
-          categoryCode: qTask.categoryCode,
-          defectLabel: qTask.defectLabel,
-          intuitiveEtaMinutes: naivePick.etaMinutes,
-          systemEtaMinutes: systemBestEta,
-          savedMinutes: saved,
-          within15: systemBestEta <= 15,
-          createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
-        });
-      }
-
-      // Update task: set full crew and transition to DISPATCHED
       dispatchedTasks[qTask.id] = {
         ...qTask,
         status: 'DISPATCHED' as const,
         crew: freshMembers,
         arrivedCount: 0,
         maxEtaMinutes,
-        intuitiveEtaMinutes: naivePick?.etaMinutes
+        reservedWorkerId: undefined
+      };
+      pushStat(qTask, Math.min(...freshMembers.map(m => m.etaMinutes)));
+    }
+
+    // ---- Step 2: auto tasks → global greedy with weighted cost + lookahead ----
+    const autoTasks = ordered.filter(t => t.crew.length === 0 && !reservedTaskIds.has(t.id));
+    if (autoTasks.length > 0) {
+      // Item 2: zone guard — don't strip a base below 2 idle technicians
+      const freeByBase = new Map<string, number>();
+      for (const w of workersRef.current) {
+        if (busy.has(w.id)) continue;
+        if (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') {
+          freeByBase.set(w.baseId, (freeByBase.get(w.baseId) || 0) + 1);
+        }
+      }
+      const consumeBase = (baseId: string) => {
+        freeByBase.set(baseId, Math.max(0, (freeByBase.get(baseId) || 0) - 1));
       };
 
-      // Dispatch every crew member with their own vehicle & waypoints
-      for (const member of freshMembers) {
-        const w = workerById.get(member.workerId);
-        if (!w) continue;
-        dispatchedWorkers[member.workerId] = {
-          ...w,
+      interface DispatchPair {
+        q: OtoTask;
+        w: Worker;
+        eta: number;
+        cost: number;
+        delay: number;
+        member?: TaskCrewMember;
+      }
+
+      const pairs: DispatchPair[] = [];
+
+      for (const q of autoTasks) {
+        const stand = STAND_BY_ID.get(q.standId);
+        if (!stand) continue;
+        for (const w of workerById.values()) {
+          if (!(w.categoryCode === q.categoryCode || q.categoryCode === 'A')) continue;
+
+          if (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') {
+            if (busy.has(w.id)) continue;
+            const member = calculateWorkerToStandEta(w, stand);
+            const zoneFree = freeByBase.get(w.baseId) || 0;
+            const zonePenalty = zoneFree - 1 < 2 ? 3 : 0;
+            const eta = member.etaMinutes;
+            const cost = eta + eta * 0.1 * Math.min(w.dispatchedCount || 0, 4) + zonePenalty;
+            pairs.push({ q, w, eta, cost, delay: 0, member });
+          } else if (w.status === 'WORKING_ON_SITE') {
+            // Item 4: lookahead — engineer mid-maintenance, frees up shortly
+            const active = tasksRef.current.find(t => t.id === w.currentTaskId && t.status === 'WORKING');
+            if (!active) continue;
+            const remainingSimMin = Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60);
+            const travel = calculateWorkerToStandEta(w, stand).etaMinutes;
+            const eta = remainingSimMin + travel;
+            const cost = eta + eta * 0.1 * Math.min(w.dispatchedCount || 0, 4);
+            pairs.push({ q, w, eta, cost, delay: remainingSimMin });
+          }
+        }
+      }
+
+      // Global greedy: cheapest pairs first, no double-assignment
+      pairs.sort((a, b) => a.cost - b.cost);
+
+      const assignedWorker = new Set<string>();
+      const assignedTask = new Set<string>();
+
+      for (const p of pairs) {
+        if (assignedTask.has(p.q.id)) continue;
+
+        if (p.delay > 0) {
+          // Lookahead wins → reserve the call for the engineer who is about to finish
+          if (assignedWorker.has(p.w.id)) continue;
+          assignedTask.add(p.q.id);
+          dispatchedTasks[p.q.id] = { ...p.q, reservedWorkerId: p.w.id };
+          showNotification(`⏳ Задача ${p.q.id} (${p.q.priority}) зарезервирована за ${p.w.name} — закончит ТО и выедет сразу, не возвращаясь в базу.`);
+          continue;
+        }
+
+        if (assignedWorker.has(p.w.id) || busy.has(p.w.id)) continue;
+
+        const targetStand = STAND_BY_ID.get(p.q.standId);
+        if (!targetStand || !p.member) continue;
+
+        assignedWorker.add(p.w.id);
+        assignedTask.add(p.q.id);
+        busy.add(p.w.id);
+        consumeBase(p.w.baseId);
+        load[p.w.id] = (load[p.w.id] || 0) + 1;
+
+        dispatchedWorkers[p.w.id] = {
+          ...p.w,
           status: 'IN_TRANSIT' as WorkerStatus,
-          currentTaskId: qTask.id,
-          pathWaypoints: member.waypoints,
-          pathSpeedPctPerSimSec: pathSpeedFor(member),
-          currentSegmentIndex: 0
+          currentTaskId: p.q.id,
+          pathWaypoints: p.member.waypoints,
+          pathSpeedPctPerSimSec: pathSpeedFor(p.member),
+          currentSegmentIndex: 0,
+          dispatchedCount: (p.w.dispatchedCount || 0) + 1
         };
+
+        dispatchedTasks[p.q.id] = {
+          ...p.q,
+          status: 'DISPATCHED' as const,
+          crew: [p.member],
+          arrivedCount: 0,
+          maxEtaMinutes: p.eta,
+          reservedWorkerId: undefined
+        };
+        pushStat(p.q, p.eta);
       }
     }
 
@@ -252,7 +365,7 @@ export function useSimulationEngine() {
       statsRef.current = [...newStats, ...statsRef.current].slice(0, 100);
       setDispatchStats([...statsRef.current]);
     }
-  }, []);
+  }, [showNotification]);
 
   // -----------------------------------------------------------------
   // MAIN 60 FPS SIMULATION TICK LOOP
@@ -487,13 +600,26 @@ export function useSimulationEngine() {
             const freedIds = new Set(freedWorkers.map(f => f.id));
 
             // CHAIN: send freed workers straight to the next queued job instead of
-            // dragging them back to base first (priority AOG > URGENT > ROUTINE, then wait time).
-            const queuedPool = sortQueuedTasks(remainingTasks.filter(t => t.status === 'QUEUED'));
+            // dragging them back to base first. Order = SLA-aware (item 1).
+            const busySet = new Set<string>();
+            for (const t of tasksRef.current) {
+              if (t.status === 'DISPATCHED' || t.status === 'WORKING') t.crew.forEach(m => busySet.add(m.workerId));
+            }
+            const queuedPool = sortQueuedBySla(remainingTasks.filter(t => t.status === 'QUEUED'), workerIdx, busySet);
             const takenTaskIds = new Set<string>();
             const chainAssign = new Map<string, OtoTask>(); // workerId -> next task
 
             for (const w of freedWorkers) {
               if (chainAssign.has(w.id)) continue;
+
+              // Lookahead (item 4): honor a reservation made by the dispatcher
+              const reserved = queuedPool.find(q => q.reservedWorkerId === w.id && !takenTaskIds.has(q.id));
+              if (reserved) {
+                takenTaskIds.add(reserved.id);
+                chainAssign.set(w.id, reserved);
+                continue;
+              }
+
               for (const q of queuedPool) {
                 if (takenTaskIds.has(q.id)) continue;
                 if (q.crew.length > 0) {
@@ -534,7 +660,8 @@ export function useSimulationEngine() {
                 arrivedCount: 0,
                 elapsedTransitSec: 0,
                 elapsedWorkSec: 0,
-                maxEtaMinutes: Math.max(...freshMembers.map(m => m.etaMinutes))
+                maxEtaMinutes: Math.max(...freshMembers.map(m => m.etaMinutes)),
+                reservedWorkerId: undefined
               });
             });
 
@@ -561,7 +688,8 @@ export function useSimulationEngine() {
                     currentTaskId: chained.id,
                     pathWaypoints: member.waypoints,
                     pathSpeedPctPerSimSec: Math.max(0.01, totalPct / etaSimSec),
-                    currentSegmentIndex: 0
+                    currentSegmentIndex: 0,
+                    dispatchedCount: (w.dispatchedCount || 0) + 1
                   });
                   return;
                 }

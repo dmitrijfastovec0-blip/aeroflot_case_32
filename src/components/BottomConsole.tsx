@@ -325,6 +325,11 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
                       </td>
                       <td className="py-2 px-3 text-purple-300 font-bold">
                         Требуется Cat {t.categoryCode}
+                        {t.reservedWorkerId && (
+                          <span className="ml-2 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/60 text-sky-300 text-[10px] font-bold whitespace-nowrap">
+                            ⏳ Резерв инженера (почти свободен)
+                          </span>
+                        )}
                       </td>
                       <td className="py-2 px-3 text-amber-400 font-bold">
                         ⏳ {waitMinStr}
