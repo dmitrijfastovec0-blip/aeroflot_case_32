@@ -359,7 +359,7 @@ export function useCanvasEngine({
       });
     });
 
-    // WORKER RENDERING
+    // WORKER RENDERING WITH VISUAL CLUSTER JITTER FOR BASE WORKERS
     const groupedTransitWorkers = new Map<string, Worker[]>();
     const individualWorkers: Worker[] = [];
 
@@ -375,8 +375,26 @@ export function useCanvasEngine({
       }
     });
 
+    // Count stationary workers per base to arrange them in a neat visual grid cluster
+    const baseWorkerCounts = new Map<string, number>();
+
     individualWorkers.forEach(worker => {
-      const pos = pctToLogical(worker.x, worker.y);
+      let renderX = worker.x;
+      let renderY = worker.y;
+
+      if (worker.status === 'FREE_STATIONARY') {
+        const baseId = worker.baseId;
+        const count = baseWorkerCounts.get(baseId) || 0;
+        baseWorkerCounts.set(baseId, count + 1);
+
+        // Visual offset grid around base badge so all 10 workers at base are distinctly visible!
+        const col = count % 4;
+        const row = Math.floor(count / 4);
+        renderX = worker.x + (col - 1.5) * 1.5;
+        renderY = worker.y + 2.5 + row * 1.5;
+      }
+
+      const pos = pctToLogical(renderX, renderY);
 
       ctx.save();
       let statusColor = '#238636'; // FREE = Green
@@ -440,8 +458,15 @@ export function useCanvasEngine({
     ctx.restore(); // Restore dpr
   }, [panOffset, zoomScale, workers, tasks, selectedStandId, dashOffset, hoveredNodeId, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
 
+  // CONTINUOUS 60 FPS ANIMATION RENDER LOOP!
   useEffect(() => {
-    renderCanvas();
+    let animFrameId: number;
+    const loop = () => {
+      renderCanvas();
+      animFrameId = requestAnimationFrame(loop);
+    };
+    animFrameId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animFrameId);
   }, [renderCanvas]);
 
   const handlePresetFocus = (preset: 'ALL' | 'NORTH' | 'SOUTH' | 'RESET') => {

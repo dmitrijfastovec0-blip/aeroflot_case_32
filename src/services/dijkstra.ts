@@ -1,4 +1,4 @@
-import { Worker, Stand, CategoryCode, TaskCrewMember, Category, VehicleType } from '../types/index';
+import { Worker, Stand, CategoryCode, TaskCrewMember, Category } from '../types/index';
 import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, TECHNICIAN_NAMES } from '../constants/index';
 
 // 1. Find Closest Node by Percentage Coordinates
@@ -186,7 +186,7 @@ export function calculateCrewMaxEta(crew: TaskCrewMember[], slaLimitMinutes: num
   };
 }
 
-// 7. Generate Shift Personnel with Custom Counts
+// 7. Generate Shift Personnel with Custom Counts & Vivid Apron Patrol
 export function generateShiftWorkersWithCustomCounts(
   b1Count: number = 22,
   b2Count: number = 12,
@@ -198,6 +198,7 @@ export function generateShiftWorkersWithCustomCounts(
   let vehicleAllocated = 0;
 
   const bases = SVO_FACILITIES;
+  const roadWaypoints = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
 
   const createWorkerBatch = (count: number, cat: Category, code: CategoryCode) => {
     for (let i = 0; i < count; i++) {
@@ -205,16 +206,28 @@ export function generateShiftWorkersWithCustomCounts(
       const hasVehicle = vehicleAllocated < vehiclesCount;
       if (hasVehicle) vehicleAllocated++;
 
+      const isPatrolling = i % 2 === 1; // 50% patrolling for vivid apron movement!
+      let waypoints: { x: number; y: number }[] | undefined = undefined;
+
+      if (isPatrolling && roadWaypoints.length > 0) {
+        const startNodeId = getClosestNodeId(baseObj.x, baseObj.y);
+        const randomTargetId = roadWaypoints[Math.floor(Math.random() * roadWaypoints.length)];
+        const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
+        waypoints = getWaypointsForNodePath({ x: baseObj.x, y: baseObj.y }, nodePath);
+      }
+
       workers.push({
         id: `WRK-${String(workers.length + 1).padStart(3, '0')}`,
         name: TECHNICIAN_NAMES[nameIdx % TECHNICIAN_NAMES.length] + (nameIdx >= TECHNICIAN_NAMES.length ? ` ${Math.floor(nameIdx / TECHNICIAN_NAMES.length) + 1}` : ''),
         category: cat,
         categoryCode: code,
-        status: 'FREE_STATIONARY', // ALL GREEN AT START!
+        status: isPatrolling ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
         baseId: baseObj.id,
         x: baseObj.x,
         y: baseObj.y,
-        vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN'
+        vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN',
+        pathWaypoints: waypoints,
+        currentSegmentIndex: 0
       });
       nameIdx++;
     }
