@@ -19,7 +19,6 @@ export function useSimulationEngine() {
   const workersRef = useRef<Worker[]>(workers);
   const tasksRef = useRef<OtoTask[]>(tasks);
 
-  // Keep refs in sync
   useEffect(() => {
     workersRef.current = workers;
   }, [workers]);
@@ -28,12 +27,12 @@ export function useSimulationEngine() {
     tasksRef.current = tasks;
   }, [tasks]);
 
-  const showNotification = (msg: string, durationMs: number = 4000) => {
+  const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
     setNotificationBanner(msg);
     setTimeout(() => setNotificationBanner(null), durationMs);
-  };
+  }, []);
 
-  // Priority Rank Helper
+  // Priority Rank Helper (AOG = 1, URGENT = 2, ROUTINE = 3)
   const getPriorityRank = (p: TaskPriority) => {
     switch (p) {
       case 'AOG': return 1;
@@ -41,6 +40,81 @@ export function useSimulationEngine() {
       case 'ROUTINE': return 3;
     }
   };
+
+  // Helper to sort queued tasks strictly by Priority (AOG > URGENT > ROUTINE), then by wait time
+  const sortQueuedTasks = (taskList: OtoTask[]) => {
+    return [...taskList].sort((a, b) => {
+      const rankA = getPriorityRank(a.priority);
+      const rankB = getPriorityRank(b.priority);
+      if (rankA !== rankB) return rankA - rankB; // 1 before 2, 2 before 3
+      return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0); // Older wait time first
+    });
+  };
+
+  // -----------------------------------------------------------------
+  // DRAIN QUEUE ALGORITHM: SERVICING HIGHEST PRIORITY TASKS FIRST
+  // -----------------------------------------------------------------
+  const drainQueueWithFreeWorkers = useCallback(() => {
+    let currentWorkers = [...workersRef.current];
+    let currentTasks = [...tasksRef.current];
+    let stateChanged = false;
+
+    // Get all QUEUED tasks sorted strictly by Priority (AOG > URGENT > ROUTINE)
+    const queuedList = sortQueuedTasks(currentTasks.filter(t => t.status === 'QUEUED'));
+
+    for (const qTask of queuedList) {
+      const targetStand = SVO_STANDS.find(s => s.id === qTask.standId);
+      if (!targetStand) continue;
+
+      // Find nearest free worker eligible for this queued task
+      const usedInLoop = new Set<string>();
+      const eligibleWorker = findNearestFreeWorkerOfCategory(qTask.categoryCode, targetStand, currentWorkers, usedInLoop);
+
+      if (eligibleWorker) {
+        stateChanged = true;
+        const etaMember = calculateWorkerToStandEta(
+          currentWorkers.find(w => w.id === eligibleWorker.workerId)!,
+          targetStand
+        );
+
+        // Update task: set crew to this worker and transition to DISPATCHED
+        currentTasks = currentTasks.map(t => {
+          if (t.id === qTask.id) {
+            return {
+              ...t,
+              status: 'DISPATCHED' as const,
+              crew: [etaMember],
+              arrivedCount: 0,
+              maxEtaMinutes: etaMember.etaMinutes
+            };
+          }
+          return t;
+        });
+
+        // Dispatch worker
+        currentWorkers = currentWorkers.map(w => {
+          if (w.id === eligibleWorker.workerId) {
+            return {
+              ...w,
+              status: 'IN_TRANSIT' as WorkerStatus,
+              vehicle: 'APRON_VEHICLE' as const,
+              currentTaskId: qTask.id,
+              pathWaypoints: etaMember.waypoints,
+              currentSegmentIndex: 0
+            };
+          }
+          return w;
+        });
+      }
+    }
+
+    if (stateChanged) {
+      workersRef.current = currentWorkers;
+      setWorkers(currentWorkers);
+      tasksRef.current = currentTasks;
+      setTasks(currentTasks);
+    }
+  }, []);
 
   // -----------------------------------------------------------------
   // MAIN 60 FPS SIMULATION TICK LOOP
@@ -59,17 +133,21 @@ export function useSimulationEngine() {
         let workersChanged = false;
         let tasksChanged = false;
 
-        // 1. UPDATE WORKER POSITIONS
+        // 1. UPDATE WORKER POSITIONS (LERP)
         const nextWorkers = workersRef.current.map((worker): Worker => {
-          // A. IN_TRANSIT or RETURNING_TO_BASE
           if ((worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') && worker.pathWaypoints && worker.pathWaypoints.length > 1) {
             workersChanged = true;
             const currIdx = worker.currentSegmentIndex || 0;
 
+            // Reached destination waypoint index
             if (currIdx >= worker.pathWaypoints.length - 1) {
               const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
+              const lastPt = worker.pathWaypoints[worker.pathWaypoints.length - 1];
+
               return {
                 ...worker,
+                x: lastPt ? lastPt.x : worker.x,
+                y: lastPt ? lastPt.y : worker.y,
                 status: finalStatus,
                 pathWaypoints: undefined,
                 currentSegmentIndex: undefined
@@ -81,7 +159,8 @@ export function useSimulationEngine() {
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            if (distPct < 0.5) {
+            // Distance snap threshold (0.6% distance threshold for robust arrival)
+            if (distPct < 0.6) {
               const nextIdx = currIdx + 1;
               if (nextIdx >= worker.pathWaypoints.length - 1) {
                 const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
@@ -97,9 +176,9 @@ export function useSimulationEngine() {
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // Smooth movement speed calculation
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 8.0 : 2.5;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 4.5;
+            // Movement step
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 9.0 : 3.0;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 5.0;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -110,7 +189,7 @@ export function useSimulationEngine() {
             };
           }
 
-          // B. FREE_PATROLLING
+          // Patrolling workers logic
           if (worker.status === 'FREE_PATROLLING') {
             workersChanged = true;
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
@@ -133,7 +212,7 @@ export function useSimulationEngine() {
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            if (distPct < 0.5) {
+            if (distPct < 0.6) {
               return {
                 ...worker,
                 x: targetPt.x,
@@ -167,7 +246,6 @@ export function useSimulationEngine() {
           const completedTaskIds: string[] = [];
 
           const nextTasks = tasksRef.current.map(task => {
-            // A. QUEUED TASKS: Accumulate queue wait time
             if (task.status === 'QUEUED') {
               tasksChanged = true;
               return {
@@ -176,12 +254,13 @@ export function useSimulationEngine() {
               };
             }
 
-            // B. DISPATCHED & WORKING TASKS
+            // Count arrived workers for this task
             const arrivedCount = task.crew.filter(member => {
               const w = workersRef.current.find(wrk => wrk.id === member.workerId);
               return w?.status === 'WORKING_ON_SITE';
             }).length;
 
+            // Robust arrival check: if task has crew and arrivedCount === crew.length
             const isAllArrived = task.crew.length > 0 && arrivedCount === task.crew.length;
             let elapsedWorkSec = task.elapsedWorkSec || 0;
             let status: OtoTask['status'] = task.status;
@@ -208,7 +287,7 @@ export function useSimulationEngine() {
             };
           });
 
-          // 3. PROCESS COMPLETED TASKS & AUTO-ASSIGN QUEUED TASKS
+          // 3. HANDLE TASK COMPLETIONS & RE-DRAIN QUEUE
           if (completedTaskIds.length > 0) {
             tasksChanged = true;
             const remainingTasks = nextTasks.filter(t => !completedTaskIds.includes(t.id));
@@ -216,63 +295,19 @@ export function useSimulationEngine() {
             completedTaskIds.forEach(cId => {
               const doneTask = tasksRef.current.find(t => t.id === cId);
               if (doneTask) {
-                showNotification(`✅ 2 мин ТО завершено на стоянке ${doneTask.standLabel}! Карточка закрыта.`);
+                showNotification(`✅ 2 мин ТО завершено на стоянке ${doneTask.standLabel}! Инженеры освобождены.`);
 
                 const crewIds = new Set(doneTask.crew.map(c => c.workerId));
                 let updatedWorkers = [...workersRef.current];
 
-                // For each worker in completed task crew
+                // Set finished crew workers to FREE_STATIONARY or RETURNING_TO_BASE
                 crewIds.forEach(wId => {
-                  const workerObj = updatedWorkers.find(w => w.id === wId);
-                  if (!workerObj) return;
-
-                  // Find queued task for this worker
-                  const queuedTasks = remainingTasks.filter(t => t.status === 'QUEUED');
-                  const sortedQueued = [...queuedTasks].sort((a, b) => {
-                    const rankA = getPriorityRank(a.priority);
-                    const rankB = getPriorityRank(b.priority);
-                    if (rankA !== rankB) return rankA - rankB;
-                    return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
-                  });
-
-                  const matchingTaskIndex = sortedQueued.findIndex(q =>
-                    q.categoryCode === 'A' || workerObj.categoryCode === q.categoryCode
-                  );
-
-                  if (matchingTaskIndex !== -1) {
-                    const matchedTask = sortedQueued[matchingTaskIndex];
-                    const targetStand = SVO_STANDS.find(s => s.id === matchedTask.standId);
-
-                    if (targetStand) {
-                      const etaMember = calculateWorkerToStandEta(workerObj, targetStand);
-
-                      // CRITICAL FIX: Set matchedTask.crew = [etaMember] so crew length is 1!
-                      matchedTask.crew = [etaMember];
-                      matchedTask.status = 'DISPATCHED';
-                      matchedTask.arrivedCount = 0;
-
-                      updatedWorkers = updatedWorkers.map(w => {
-                        if (w.id === wId) {
-                          return {
-                            ...w,
-                            status: 'IN_TRANSIT' as WorkerStatus,
-                            vehicle: 'APRON_VEHICLE', // Express shuttle!
-                            currentTaskId: matchedTask.id,
-                            pathWaypoints: etaMember.waypoints,
-                            currentSegmentIndex: 0
-                          };
-                        }
-                        return w;
-                      });
-
-                      showNotification(`⚡ Инженер ${workerObj.name} авто-перенаправлен на очередную задачу ${matchedTask.id} (${matchedTask.standLabel})!`);
-                    }
-                  } else {
-                    // No queued task -> Return to Base
-                    const closestNodeId = getClosestNodeId(workerObj.x, workerObj.y);
-                    const homeBaseId = workerObj.baseId;
+                  const wObj = updatedWorkers.find(w => w.id === wId);
+                  if (wObj) {
+                    const closestNodeId = getClosestNodeId(wObj.x, wObj.y);
+                    const homeBaseId = wObj.baseId;
                     const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
-                    const returnWaypoints = getWaypointsForNodePath({ x: workerObj.x, y: workerObj.y }, nodePath);
+                    const returnWaypoints = getWaypointsForNodePath({ x: wObj.x, y: wObj.y }, nodePath);
 
                     updatedWorkers = updatedWorkers.map(w => {
                       if (w.id === wId) {
@@ -296,6 +331,9 @@ export function useSimulationEngine() {
 
             tasksRef.current = remainingTasks;
             setTasks(remainingTasks);
+
+            // Instantly drain queue with newly freed workers!
+            setTimeout(() => drainQueueWithFreeWorkers(), 50);
           } else if (tasksChanged) {
             tasksRef.current = nextTasks;
             setTasks(nextTasks);
@@ -308,54 +346,37 @@ export function useSimulationEngine() {
 
     animFrameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameId);
-  }, [isPaused, simSpeed]);
+  }, [isPaused, simSpeed, drainQueueWithFreeWorkers, showNotification]);
 
   // -----------------------------------------------------------------
-  // USER ACTIONS
+  // USER ACTIONS: SUBMIT TASK, CANCEL TASK, STRESS TEST, RECONFIG
   // -----------------------------------------------------------------
 
   const submitTask = useCallback((newTask: OtoTask) => {
-    let updatedWorkers = [...workersRef.current];
+    // 1. Add new task to tasks list in QUEUED status
+    const queuedTask: OtoTask = {
+      ...newTask,
+      status: 'QUEUED',
+      elapsedQueueSec: 0,
+      crew: [], // Crew will be assigned strictly by priority queue drainage!
+      arrivedCount: 0
+    };
 
-    const allCrewFree = newTask.crew.length > 0 && newTask.crew.every(c => {
-      const w = updatedWorkers.find(wrk => wrk.id === c.workerId);
-      return w && (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING');
-    });
+    const nextTasks = [queuedTask, ...tasksRef.current];
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
 
-    if (allCrewFree) {
-      const dispatchedTask: OtoTask = { ...newTask, status: 'DISPATCHED' };
+    // 2. Immediately run priority queue drain!
+    drainQueueWithFreeWorkers();
 
-      newTask.crew.forEach(cMember => {
-        updatedWorkers = updatedWorkers.map(w => {
-          if (w.id === cMember.workerId) {
-            return {
-              ...w,
-              status: 'IN_TRANSIT',
-              currentTaskId: dispatchedTask.id,
-              pathWaypoints: cMember.waypoints,
-              currentSegmentIndex: 0
-            };
-          }
-          return w;
-        });
-      });
-
-      workersRef.current = updatedWorkers;
-      setWorkers(updatedWorkers);
-
-      setTasks(prev => [dispatchedTask, ...prev]);
-      showNotification(`🚀 Задача ${dispatchedTask.id} запущена! Инженеры выехали на стоянку ${dispatchedTask.standLabel}.`);
+    // Check if task was dispatched immediately
+    const checkTask = tasksRef.current.find(t => t.id === newTask.id);
+    if (checkTask && checkTask.status === 'DISPATCHED') {
+      showNotification(`🚀 Задача ${checkTask.id} (${checkTask.priority}) запущена! Инженеры выехали на стоянку ${checkTask.standLabel}.`);
     } else {
-      const queuedTask: OtoTask = {
-        ...newTask,
-        status: 'QUEUED',
-        elapsedQueueSec: 0
-      };
-
-      setTasks(prev => [queuedTask, ...prev]);
-      showNotification(`⏳ Дефицит персонала! Задача ${queuedTask.id} поставлена в Приоритетную Очередь (${queuedTask.priority}).`);
+      showNotification(`⏳ Задача ${newTask.id} (${newTask.priority}) поставлена в Приоритетную Очередь (Ожидание кадров).`);
     }
-  }, []);
+  }, [drainQueueWithFreeWorkers, showNotification]);
 
   const cancelTask = useCallback((taskId: string) => {
     const targetTask = tasksRef.current.find(t => t.id === taskId);
@@ -389,57 +410,36 @@ export function useSimulationEngine() {
 
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
-    setTasks(prev => prev.filter(t => t.id !== taskId));
-    showNotification(`🗑️ Задача ${taskId} отменена. Инженеры возвращаются на базы.`);
-  }, []);
+
+    const remaining = tasksRef.current.filter(t => t.id !== taskId);
+    tasksRef.current = remaining;
+    setTasks(remaining);
+
+    showNotification(`🗑️ Задача ${taskId} отменена.`);
+    setTimeout(() => drainQueueWithFreeWorkers(), 50);
+  }, [drainQueueWithFreeWorkers, showNotification]);
 
   const promoteTaskToAog = useCallback((taskId: string) => {
-    setTasks(prev =>
-      prev.map(t => (t.id === taskId ? { ...t, priority: 'AOG' as TaskPriority } : t))
+    const nextTasks = tasksRef.current.map(t =>
+      t.id === taskId ? { ...t, priority: 'AOG' as TaskPriority } : t
     );
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+
     showNotification(`⚡ Задача ${taskId} повышена до Высшего Приоритета AOG!`);
-  }, []);
+    drainQueueWithFreeWorkers();
+  }, [drainQueueWithFreeWorkers, showNotification]);
 
   const triggerStressTest = useCallback(() => {
     const standsSample = [...SVO_STANDS].sort(() => 0.5 - Math.random()).slice(0, 10);
     const priorities: TaskPriority[] = ['AOG', 'AOG', 'URGENT', 'URGENT', 'URGENT', 'ROUTINE', 'ROUTINE', 'ROUTINE', 'ROUTINE', 'ROUTINE'];
 
-    let updatedWorkers = [...workersRef.current];
     const newTasks: OtoTask[] = [];
-    const usedWorkerIds = new Set<string>();
 
     standsSample.forEach((stand, idx) => {
       const priority = priorities[idx % priorities.length];
       const catCode = idx % 2 === 0 ? 'B1' : 'B2';
-
-      const freeMember = findNearestFreeWorkerOfCategory(catCode, stand, updatedWorkers, usedWorkerIds);
-      const crew: TaskCrewMember[] = [];
-
-      if (freeMember) {
-        crew.push(freeMember);
-        usedWorkerIds.add(freeMember.workerId);
-      }
-
-      const { maxEtaMinutes } = calculateCrewMaxEta(crew, 15.0);
-      const isDispatched = crew.length > 0;
       const taskId = `STRESS-${Date.now().toString().slice(-4)}-${idx + 1}`;
-
-      if (isDispatched) {
-        crew.forEach(c => {
-          updatedWorkers = updatedWorkers.map(w => {
-            if (w.id === c.workerId) {
-              return {
-                ...w,
-                status: 'IN_TRANSIT',
-                currentTaskId: taskId,
-                pathWaypoints: c.waypoints,
-                currentSegmentIndex: 0
-              };
-            }
-            return w;
-          });
-        });
-      }
 
       const task: OtoTask = {
         id: taskId,
@@ -449,10 +449,10 @@ export function useSimulationEngine() {
         categoryCode: catCode,
         categoryLabel: `ОТО (${priority})`,
         priority,
-        status: isDispatched ? 'DISPATCHED' : 'QUEUED',
-        crew: isDispatched ? crew : [], // Empty crew if queued!
+        status: 'QUEUED',
+        crew: [],
         arrivedCount: 0,
-        maxEtaMinutes: maxEtaMinutes || 12.0,
+        maxEtaMinutes: 12.0,
         slaLimitMinutes: 15.0,
         withinSla: true,
         createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
@@ -464,19 +464,21 @@ export function useSimulationEngine() {
       newTasks.push(task);
     });
 
-    workersRef.current = updatedWorkers;
-    setWorkers(updatedWorkers);
+    const combinedTasks = [...newTasks, ...tasksRef.current];
+    tasksRef.current = combinedTasks;
+    setTasks(combinedTasks);
 
-    setTasks(prev => [...newTasks, ...prev]);
-    showNotification(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал выехал на стоянки, остальные задачи встали в очередь.`);
-  }, []);
+    // Run strict priority queue drainage!
+    drainQueueWithFreeWorkers();
+    showNotification(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал выехал по приоритету AOG > URGENT > ROUTINE.`);
+  }, [drainQueueWithFreeWorkers, showNotification]);
 
   const applyShiftConfig = useCallback((b1: number, b2: number, catA: number, vehicles: number) => {
     const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
     showNotification(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
-  }, []);
+  }, [showNotification]);
 
   return {
     workers,
