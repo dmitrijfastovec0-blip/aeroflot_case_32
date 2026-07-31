@@ -91,6 +91,20 @@ export function useSimulationEngine() {
         return calculateWorkerToStandEta(workerObj, targetStand);
       });
 
+      // Pacing: traverse the pixel path in EXACTLY the displayed ETA (sim-seconds),
+      // so the arrival time always matches the ETA badge regardless of distance model.
+      const pathSpeedFor = (member: TaskCrewMember): number => {
+        let totalPct = 0;
+        for (let i = 0; i < member.waypoints.length - 1; i++) {
+          totalPct += Math.hypot(
+            member.waypoints[i + 1].x - member.waypoints[i].x,
+            member.waypoints[i + 1].y - member.waypoints[i].y
+          );
+        }
+        const etaSimSec = Math.max(1, member.etaMinutes * 60);
+        return Math.max(0.01, totalPct / etaSimSec);
+      };
+
       const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
       stateChanged = true;
 
@@ -118,6 +132,7 @@ export function useSimulationEngine() {
           vehicle: w.vehicle,
           currentTaskId: qTask.id,
           pathWaypoints: member.waypoints,
+          pathSpeedPctPerSimSec: pathSpeedFor(member),
           currentSegmentIndex: 0
         };
       });
@@ -205,9 +220,14 @@ export function useSimulationEngine() {
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // Movement step (speed calibrated to match ETA: 20 km/h vehicle, 4.5 km/h pedestrian)
-            const speedKmH = worker.vehicle === 'APRON_VEHICLE' ? 20.0 : 4.5;
-            const pctPerSec = ((speedKmH * 1000 / 3600) / 4000) * 100 * simSpeed;
+            // Movement step: dispatched workers pace to arrive exactly at the displayed ETA.
+            // Return-to-base workers (no ETA) fall back to real-world speeds.
+            const etaSpeedPct = worker.pathSpeedPctPerSimSec;
+            const fallbackSpeedKmH = worker.vehicle === 'APRON_VEHICLE' ? 20.0 : 4.5;
+            const pctPerSec = (etaSpeedPct != null
+              ? etaSpeedPct
+              : ((fallbackSpeedKmH * 1000 / 3600) / 4000) * 100
+            ) * simSpeed;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -366,6 +386,7 @@ export function useSimulationEngine() {
                           status: 'RETURNING_TO_BASE' as WorkerStatus,
                           currentTaskId: undefined,
                           pathWaypoints: returnWaypoints,
+                          pathSpeedPctPerSimSec: undefined,
                           currentSegmentIndex: 0
                         };
                       }
@@ -443,7 +464,9 @@ export function useSimulationEngine() {
 
     crewIds.forEach(wId => {
       const wObj = updatedWorkers.find(w => w.id === wId);
-      if (wObj) {
+      // Only send back to base workers that are actually engaged on this task.
+      // Queued-task crew members are still free (stationary/patrolling) — leave them as-is.
+      if (wObj && (wObj.status === 'IN_TRANSIT' || wObj.status === 'WORKING_ON_SITE')) {
         const closestNodeId = getClosestNodeId(wObj.x, wObj.y);
         const homeBaseId = wObj.baseId;
         const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
@@ -456,11 +479,17 @@ export function useSimulationEngine() {
               status: 'RETURNING_TO_BASE',
               currentTaskId: undefined,
               pathWaypoints: returnWaypoints,
+              pathSpeedPctPerSimSec: undefined,
               currentSegmentIndex: 0
             };
           }
           return w;
         });
+      } else if (wObj) {
+        // Free worker reserved for a queued task: just release the task reference
+        updatedWorkers = updatedWorkers.map(w =>
+          w.id === wId ? { ...w, currentTaskId: undefined } : w
+        );
       }
     });
 
@@ -532,8 +561,23 @@ export function useSimulationEngine() {
     const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
+
+    // Old workers no longer exist, so every active/queued task would hang forever.
+    // Re-queue all tasks with an empty crew so the queue re-assembles the new shift.
+    const nextTasks = tasksRef.current.map(t => ({
+      ...t,
+      status: 'QUEUED' as const,
+      crew: [],
+      arrivedCount: 0,
+      elapsedTransitSec: 0,
+      elapsedWorkSec: 0
+    }));
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+
+    drainQueueWithFreeWorkers();
     showNotification(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
-  }, [showNotification]);
+  }, [drainQueueWithFreeWorkers, showNotification]);
 
   return {
     workers,

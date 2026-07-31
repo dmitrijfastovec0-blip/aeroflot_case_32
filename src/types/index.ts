@@ -49,6 +49,7 @@ export interface Worker {
   vehicle: VehicleType;
   currentTaskId?: string;
   pathWaypoints?: { x: number; y: number }[];
+  pathSpeedPctPerSimSec?: number;
   currentSegmentIndex?: number;
 }
 
