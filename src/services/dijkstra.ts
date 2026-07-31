@@ -1,6 +1,132 @@
 import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus } from '../types/index';
 import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, TECHNICIAN_NAMES } from '../constants/index';
 
+// ============================================================================
+// OPTIMIZED ROUTING ENGINE
+// ----------------------------------------------------------------------------
+// The road graph is static and tiny (25 apron nodes + 4 duty stations, 33 edges),
+// so instead of re-running Dijkstra (O(V^2) with a linear-scan priority queue)
+// for EVERY worker->stand query, we precompute ALL-PAIRS shortest paths ONCE at
+// module load using Dijkstra with a binary min-heap from each vertex.
+// Then every ETA/distance/path lookup is O(1)/O(path length).
+// ============================================================================
+
+const NODE_COORD: Record<string, { x: number; y: number }> = {};
+const GRAPH_VERTEX_IDS: string[] = [];
+const GRAPH_INDEX: Record<string, number> = {};
+const GRAPH_ADJ: { to: number; distance: number; isTunnel: boolean }[][] = [];
+const TUNNEL_EDGE: Set<string> = new Set();
+
+// Coordinates for an id that may be a node or a facility
+const coordFor = (id: string): { x: number; y: number } => {
+  const node = SVO_NODES.find(n => n.id === id);
+  if (node) return { x: node.x, y: node.y };
+  const fac = SVO_FACILITIES.find(f => f.id === id);
+  if (fac) return { x: fac.x, y: fac.y };
+  return { x: SVO_NODES[0].x, y: SVO_NODES[0].y };
+};
+
+// Build the vertex set: nodes + facilities (+ any stray edge endpoints)
+{
+  const seen = new Set<string>();
+  const pushVertex = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const c = coordFor(id);
+    NODE_COORD[id] = { x: c.x, y: c.y };
+    GRAPH_INDEX[id] = GRAPH_VERTEX_IDS.length;
+    GRAPH_VERTEX_IDS.push(id);
+  };
+  SVO_NODES.forEach(n => pushVertex(n.id));
+  SVO_FACILITIES.forEach(f => pushVertex(f.id));
+  SVO_EDGES.forEach(e => {
+    pushVertex(e.from);
+    pushVertex(e.to);
+  });
+  GRAPH_VERTEX_IDS.forEach(() => GRAPH_ADJ.push([]));
+  SVO_EDGES.forEach(e => {
+    const u = GRAPH_INDEX[e.from];
+    const v = GRAPH_INDEX[e.to];
+    if (u === undefined || v === undefined) return;
+    const isTunnel = e.type === 'TUNNEL';
+    if (isTunnel) {
+      TUNNEL_EDGE.add(`${u}|${v}`);
+      TUNNEL_EDGE.add(`${v}|${u}`);
+    }
+    GRAPH_ADJ[u].push({ to: v, distance: e.distance, isTunnel });
+    GRAPH_ADJ[v].push({ to: u, distance: e.distance, isTunnel });
+  });
+}
+
+// Binary min-heap keyed by an external distance array (Dijkstra priority queue)
+class MinHeap {
+  private items: number[] = [];
+  private key: (i: number) => number;
+  constructor(key: (i: number) => number) { this.key = key; }
+  get size(): number { return this.items.length; }
+  push(v: number): void {
+    const a = this.items;
+    a.push(v);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (this.key(a[p]) <= this.key(a[i])) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+  pop(): number | undefined {
+    const a = this.items;
+    if (a.length === 0) return undefined;
+    const top = a[0];
+    const last = a.pop()!;
+    if (a.length > 0) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && this.key(a[l]) < this.key(a[m])) m = l;
+        if (r < a.length && this.key(a[r]) < this.key(a[m])) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
+}
+
+const N = GRAPH_VERTEX_IDS.length;
+
+// ALL_PAIRS_DIST[s][t]  = shortest distance from vertex s to vertex t
+// ALL_PAIRS_NEXT[s][t]  = predecessor index of t on the shortest path from s
+const ALL_PAIRS_DIST: number[][] = new Array(N);
+const ALL_PAIRS_NEXT: number[][] = new Array(N);
+
+for (let s = 0; s < N; s++) {
+  const dist = new Array<number>(N).fill(Infinity);
+  const next = new Array<number>(N).fill(-1);
+  dist[s] = 0;
+  const heap = new MinHeap(i => dist[i]);
+  heap.push(s);
+  while (heap.size > 0) {
+    const u = heap.pop()!;
+    const du = dist[u];
+    for (const e of GRAPH_ADJ[u]) {
+      const alt = du + e.distance;
+      if (alt < dist[e.to]) {
+        dist[e.to] = alt;
+        next[e.to] = u;
+        heap.push(e.to);
+      }
+    }
+  }
+  ALL_PAIRS_DIST[s] = dist;
+  ALL_PAIRS_NEXT[s] = next;
+}
+
 // 1. Find Closest Node by Percentage Coordinates
 export function getClosestNodeId(pctX: number, pctY: number): string {
   let minDistanceSq = Infinity;
@@ -18,111 +144,65 @@ export function getClosestNodeId(pctX: number, pctY: number): string {
   return closestId;
 }
 
-// 2. Dijkstra Shortest Path Finder
+// Resolve any id (node / facility / stand / unknown) to a graph vertex index
+const resolveVertexIndex = (id: string): number => {
+  const direct = GRAPH_INDEX[id];
+  if (direct !== undefined) return direct;
+  return GRAPH_INDEX[getClosestNodeId(coordFor(id).x, coordFor(id).y)];
+};
+
+// Internal: O(1) distance + O(path length) tunnel detection + node path
+const routeBetween = (startNodeId: string, endId: string) => {
+  const s = resolveVertexIndex(startNodeId);
+  const t = resolveVertexIndex(endId);
+  const nodePath: string[] = [GRAPH_VERTEX_IDS[t]];
+  let distanceMeters = 0;
+  let hasTunnel = false;
+
+  let cur = t;
+  while (cur !== s) {
+    const pred = ALL_PAIRS_NEXT[s][cur];
+    if (pred === -1) {
+      // Graph is connected in practice; guard for safety
+      distanceMeters = Infinity;
+      break;
+    }
+    if (TUNNEL_EDGE.has(`${pred}|${cur}`)) hasTunnel = true;
+    nodePath.push(GRAPH_VERTEX_IDS[pred]);
+    cur = pred;
+  }
+
+  nodePath.reverse();
+  if (nodePath[0] !== startNodeId) nodePath.unshift(startNodeId);
+  if (nodePath[nodePath.length - 1] !== endId) nodePath.push(endId);
+
+  if (distanceMeters !== Infinity) {
+    let acc = 0;
+    for (let i = 0; i < nodePath.length - 1; i++) {
+      const edge = SVO_EDGES.find(
+        e => (e.from === nodePath[i] && e.to === nodePath[i + 1]) || (e.from === nodePath[i + 1] && e.to === nodePath[i])
+      );
+      acc += edge ? edge.distance : 300;
+    }
+    distanceMeters = acc;
+  }
+
+  return { nodePath, distanceMeters, hasTunnel };
+};
+
+// 2. Shortest Path Finder (O(1) lookup + path reconstruction from precomputed tables)
 export function findDijkstraShortestPath(startNodeId: string, endNodeId: string): string[] {
-  if (startNodeId === endNodeId) return [startNodeId];
-
-  // Graph vertices = road nodes + facilities (bases). Facilities appear as edge endpoints.
-  const vertices = new Set<string>();
-  SVO_NODES.forEach(n => vertices.add(n.id));
-  SVO_FACILITIES.forEach(f => vertices.add(f.id));
-  SVO_EDGES.forEach(e => { vertices.add(e.from); vertices.add(e.to); });
-
-  // Resolve an id that may be a facility (base) down to a traversable graph vertex
-  const resolveVertex = (id: string): string => {
-    if (vertices.has(id)) return id;
-    const fac = SVO_FACILITIES.find(f => f.id === id);
-    if (fac) return getClosestNodeId(fac.x, fac.y);
-    const node = SVO_NODES.find(n => n.id === id);
-    if (node) return getClosestNodeId(node.x, node.y);
-    return SVO_NODES[0].id;
-  };
-
-  const startId = resolveVertex(startNodeId);
-  const endId = resolveVertex(endNodeId);
-
-  if (startId === endId) return [startNodeId, endNodeId];
-
-  const distances: Record<string, number> = {};
-  const previous: Record<string, string | null> = {};
-  const unvisited = new Set<string>();
-
-  vertices.forEach(vId => {
-    distances[vId] = Infinity;
-    previous[vId] = null;
-    unvisited.add(vId);
-  });
-  distances[startId] = 0;
-
-  const adjList: Record<string, { to: string; distance: number }[]> = {};
-  vertices.forEach(vId => { adjList[vId] = []; });
-
-  SVO_EDGES.forEach(e => {
-    adjList[e.from]?.push({ to: e.to, distance: e.distance });
-    adjList[e.to]?.push({ to: e.from, distance: e.distance });
-  });
-
-  while (unvisited.size > 0) {
-    let currentId: string | null = null;
-    let smallestDist = Infinity;
-
-    for (const nodeId of unvisited) {
-      if (distances[nodeId] < smallestDist) {
-        smallestDist = distances[nodeId];
-        currentId = nodeId;
-      }
-    }
-
-    if (!currentId || smallestDist === Infinity) break;
-    if (currentId === endId) break;
-
-    unvisited.delete(currentId);
-
-    const neighbors = adjList[currentId] || [];
-    for (const neighbor of neighbors) {
-      if (unvisited.has(neighbor.to)) {
-        const alt = distances[currentId] + neighbor.distance;
-        if (alt < distances[neighbor.to]) {
-          distances[neighbor.to] = alt;
-          previous[neighbor.to] = currentId;
-        }
-      }
-    }
-  }
-
-  const path: string[] = [];
-  let curr: string | null = endId;
-
-  while (curr) {
-    path.unshift(curr);
-    curr = previous[curr];
-  }
-
-  // Always anchor the path with the original endpoints (which may be base facilities)
-  if (path[0] !== startNodeId) path.unshift(startNodeId);
-  if (path[path.length - 1] !== endNodeId) path.push(endNodeId);
-
-  if (path.length === 1) return [startNodeId, endNodeId];
-
-  return path;
+  if (startNodeId === endNodeId) return [startNodeId, endNodeId];
+  return routeBetween(startNodeId, endNodeId).nodePath;
 }
 
-// 3. Convert Node Path to Percentage Waypoints
+// 3. Convert Node Path to Percentage Waypoints (O(path) with precomputed coords)
 export function getWaypointsForNodePath(startPoint: { x: number; y: number }, nodePath: string[]): { x: number; y: number }[] {
   const points: { x: number; y: number }[] = [startPoint];
 
   for (const nodeId of nodePath) {
-    const node = SVO_NODES.find(n => n.id === nodeId);
-    if (node) {
-      points.push({ x: node.x, y: node.y });
-      continue;
-    }
-
-    // Facility/base nodes (PTO_1, AK_4, ...) live in SVO_FACILITIES, not SVO_NODES
-    const fac = SVO_FACILITIES.find(f => f.id === nodeId);
-    if (fac) {
-      points.push({ x: fac.x, y: fac.y });
-    }
+    const coord = NODE_COORD[nodeId];
+    if (coord) points.push({ x: coord.x, y: coord.y });
   }
 
   // GUARANTEE AT LEAST 2 POINTS SO ANIMATION LOOP NEVER SKIPS!
@@ -136,33 +216,14 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
 // 4. Calculate ETA for Single Worker to Target Stand
 export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCrewMember {
   const startNodeId = getClosestNodeId(worker.x, worker.y);
-  const targetNodeId = stand.id;
-  const nodePath = findDijkstraShortestPath(startNodeId, targetNodeId);
-
-  let totalDistanceMeters = 0;
-  let hasTunnel = false;
-
-  for (let i = 0; i < nodePath.length - 1; i++) {
-    const fromId = nodePath[i];
-    const toId = nodePath[i + 1];
-    const edge = SVO_EDGES.find(
-      e => (e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId)
-    );
-
-    if (edge) {
-      totalDistanceMeters += edge.distance;
-      if (edge.type === 'TUNNEL') hasTunnel = true;
-    } else {
-      totalDistanceMeters += 300;
-    }
-  }
+  const { nodePath, distanceMeters, hasTunnel } = routeBetween(startNodeId, stand.id);
 
   const isVehicle = worker.vehicle === 'APRON_VEHICLE';
   const speedKmH = isVehicle ? (hasTunnel ? 35 : 20) : 4.5;
   const speedMetersPerMin = (speedKmH * 1000) / 60;
 
   const penaltyMinutes = isVehicle ? (hasTunnel ? 2.0 : 1.0) : 0;
-  const travelMinutes = totalDistanceMeters / speedMetersPerMin;
+  const travelMinutes = distanceMeters / speedMetersPerMin;
   const etaMinutes = Math.max(1.0, Math.round((travelMinutes + penaltyMinutes) * 10) / 10);
 
   const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
@@ -173,7 +234,7 @@ export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCre
     workerName: worker.name,
     categoryCode: worker.categoryCode,
     startLocationText: baseObj ? baseObj.code : `База (${worker.baseId})`,
-    distanceMeters: Math.round(totalDistanceMeters),
+    distanceMeters: Math.round(distanceMeters),
     vehicle: worker.vehicle,
     vehicleLabel: isVehicle ? (hasTunnel ? '🏎️ Шаттл тоннеля' : '🚘 Спецавтомобиль') : '🚶 Пешком',
     etaMinutes,

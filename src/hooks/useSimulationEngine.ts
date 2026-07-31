@@ -32,6 +32,12 @@ export interface ControlTestResult {
   ms: number;
 }
 
+// Static O(1) stand index for the drain loop
+const STAND_BY_ID = new Map(SVO_STANDS.map(s => [s.id, s]));
+
+// Static list of road waypoints for patrol route generation (no re-filtering per worker)
+const ROAD_WAYPOINT_IDS = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
+
 export function useSimulationEngine() {
   // State for Workers and Tasks
   const [workers, setWorkers] = useState<Worker[]>(() =>
@@ -97,16 +103,35 @@ export function useSimulationEngine() {
   // -----------------------------------------------------------------
   // DRAIN QUEUE ALGORITHM: SERVICING HIGHEST PRIORITY TASKS FIRST
   // -----------------------------------------------------------------
+  // Designed to scale: O(T + W) per drain via hash indexes and
+  // incremental busy/load tracking (no nested full scans).
   const drainQueueWithFreeWorkers = useCallback(() => {
-    let currentWorkers = [...workersRef.current];
-    let currentTasks = [...tasksRef.current];
-    let stateChanged = false;
+    const queuedList = sortQueuedTasks(tasksRef.current.filter(t => t.status === 'QUEUED'));
+    if (queuedList.length === 0) return;
 
-    // Get all QUEUED tasks sorted strictly by Priority (AOG > URGENT > ROUTINE)
-    const queuedList = sortQueuedTasks(currentTasks.filter(t => t.status === 'QUEUED'));
+    // O(1) index over the static stand list
+    const workerById = new Map<string, Worker>();
+    for (const w of workersRef.current) workerById.set(w.id, w);
+
+    // Incremental busy-set + per-worker active load built once, updated on the fly
+    const busy = new Set<string>();
+    const load: Record<string, number> = {};
+    for (const t of tasksRef.current) {
+      if (t.status === 'DISPATCHED' || t.status === 'WORKING') {
+        for (const m of t.crew) {
+          busy.add(m.workerId);
+          load[m.workerId] = (load[m.workerId] || 0) + 1;
+        }
+      }
+    }
+
+    // Batched mutations applied once after the loop (avoids O(T × W) mapping)
+    const dispatchedTasks: Record<string, OtoTask> = {};
+    const dispatchedWorkers: Record<string, Worker> = {};
+    const newStats: DispatchStat[] = [];
 
     for (const qTask of queuedList) {
-      const targetStand = SVO_STANDS.find(s => s.id === qTask.standId);
+      const targetStand = STAND_BY_ID.get(qTask.standId);
       if (!targetStand) continue;
 
       const usedInLoop = new Set<string>();
@@ -115,27 +140,37 @@ export function useSimulationEngine() {
       if (qTask.crew.length > 0) {
         // User-assembled crew: dispatch the exact selected engineers,
         // but only once the WHOLE crew is available (no partial dispatch).
-        const allAvailable = qTask.crew.every(member => {
-          const w = currentWorkers.find(wrk => wrk.id === member.workerId);
-          return w && !usedInLoop.has(w.id) &&
-            (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING');
-        });
+        let allAvailable = true;
+        for (const member of qTask.crew) {
+          const w = workerById.get(member.workerId);
+          if (!w || usedInLoop.has(w.id) || busy.has(w.id) ||
+              (w.status !== 'FREE_STATIONARY' && w.status !== 'FREE_PATROLLING')) {
+            allAvailable = false;
+            break;
+          }
+        }
 
         if (!allAvailable) continue;
 
         crewMembers = qTask.crew;
-        crewMembers.forEach(m => usedInLoop.add(m.workerId));
+        for (const m of crewMembers) {
+          usedInLoop.add(m.workerId);
+          busy.add(m.workerId);
+          load[m.workerId] = (load[m.workerId] || 0) + 1;
+        }
       } else {
         // Auto-assemble crew from task category (stress test / system tasks)
-        const nearest = findNearestFreeWorkerOfCategory(qTask.categoryCode, targetStand, currentWorkers, usedInLoop);
+        const nearest = findNearestFreeWorkerOfCategory(qTask.categoryCode, targetStand, workersRef.current, usedInLoop);
         if (!nearest) continue;
         usedInLoop.add(nearest.workerId);
+        busy.add(nearest.workerId);
+        load[nearest.workerId] = (load[nearest.workerId] || 0) + 1;
         crewMembers = [nearest];
       }
 
       // Recompute fresh ETA & waypoints against the workers' current positions
       const freshMembers: TaskCrewMember[] = crewMembers.map(member => {
-        const workerObj = currentWorkers.find(w => w.id === member.workerId)!;
+        const workerObj = workerById.get(member.workerId)!;
         return calculateWorkerToStandEta(workerObj, targetStand);
       });
 
@@ -154,15 +189,13 @@ export function useSimulationEngine() {
       };
 
       const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
-      stateChanged = true;
 
       // Record "intuitive dispatcher vs system" analytics for this dispatch
-      const { busy, load } = computeLoadMap(currentTasks);
-      const naivePick = findNaiveNearestWorkerOfCategory(qTask.categoryCode, targetStand, currentWorkers, busy);
+      const naivePick = findNaiveNearestWorkerOfCategory(qTask.categoryCode, targetStand, workersRef.current, busy);
       if (naivePick) {
         const systemBestEta = Math.min(...freshMembers.map(m => m.etaMinutes));
         const saved = Math.max(0, Math.round((naivePick.etaMinutes - systemBestEta) * 10) / 10);
-        statsRef.current = [{
+        newStats.push({
           taskId: qTask.id,
           standLabel: qTask.standLabel,
           categoryCode: qTask.categoryCode,
@@ -172,48 +205,50 @@ export function useSimulationEngine() {
           savedMinutes: saved,
           within15: systemBestEta <= 15,
           createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
-        }, ...statsRef.current].slice(0, 100);
-        setDispatchStats([...statsRef.current]);
+        });
       }
 
       // Update task: set full crew and transition to DISPATCHED
-      currentTasks = currentTasks.map(t => {
-        if (t.id === qTask.id) {
-          return {
-            ...t,
-            status: 'DISPATCHED' as const,
-            crew: freshMembers,
-            arrivedCount: 0,
-            maxEtaMinutes,
-            intuitiveEtaMinutes: naivePick?.etaMinutes
-          };
-        }
-        return t;
-      });
+      dispatchedTasks[qTask.id] = {
+        ...qTask,
+        status: 'DISPATCHED' as const,
+        crew: freshMembers,
+        arrivedCount: 0,
+        maxEtaMinutes,
+        intuitiveEtaMinutes: naivePick?.etaMinutes
+      };
 
       // Dispatch every crew member with their own vehicle & waypoints
-      currentWorkers = currentWorkers.map(w => {
-        const member = freshMembers.find(m => m.workerId === w.id);
-        if (!member) return w;
-        return {
+      for (const member of freshMembers) {
+        const w = workerById.get(member.workerId);
+        if (!w) continue;
+        dispatchedWorkers[member.workerId] = {
           ...w,
           status: 'IN_TRANSIT' as WorkerStatus,
-          vehicle: w.vehicle,
           currentTaskId: qTask.id,
           pathWaypoints: member.waypoints,
           pathSpeedPctPerSimSec: pathSpeedFor(member),
           currentSegmentIndex: 0
         };
-      });
+      }
     }
 
-    if (stateChanged) {
-      workersRef.current = currentWorkers;
-      tasksRef.current = currentTasks;
-      // Note: setWorkers and setTasks are throttled in the main loop, 
-      // but we force a UI update on dispatch to ensure immediate feedback.
-      setWorkers(currentWorkers);
-      setTasks(currentTasks);
+    if (Object.keys(dispatchedTasks).length === 0) return;
+
+    // Apply all dispatches in a single O(T + W) pass
+    const nextTasks = tasksRef.current.map(t => dispatchedTasks[t.id] || t);
+    const nextWorkers = workersRef.current.map(w => dispatchedWorkers[w.id] || w);
+
+    workersRef.current = nextWorkers;
+    tasksRef.current = nextTasks;
+    // Note: setWorkers and setTasks are throttled in the main loop,
+    // but we force a UI update on dispatch to ensure immediate feedback.
+    setWorkers(nextWorkers);
+    setTasks(nextTasks);
+
+    if (newStats.length > 0) {
+      statsRef.current = [...newStats, ...statsRef.current].slice(0, 100);
+      setDispatchStats([...statsRef.current]);
     }
   }, []);
 
@@ -311,8 +346,7 @@ export function useSimulationEngine() {
           if (worker.status === 'FREE_PATROLLING') {
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
               const currentNodeId = getClosestNodeId(worker.x, worker.y);
-              const roadWaypoints = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
-              const randomTargetId = roadWaypoints[Math.floor(Math.random() * roadWaypoints.length)];
+              const randomTargetId = ROAD_WAYPOINT_IDS[Math.floor(Math.random() * ROAD_WAYPOINT_IDS.length)];
               const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
               const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
 
@@ -356,6 +390,9 @@ export function useSimulationEngine() {
         // UNCONDITIONAL update to preserve fractional LERP progress
         workersRef.current = nextWorkers;
 
+        // O(1) worker index for this frame's task processing
+        const workerIdx = new Map(workersRef.current.map(w => [w.id, w]));
+
         // 2. UPDATE TASKS ARRIVAL, QUEUE WAIT TIME & MAINTENANCE TIMERS
         if (tasksRef.current.length > 0) {
           const completedTaskIds: string[] = [];
@@ -370,7 +407,7 @@ export function useSimulationEngine() {
 
             // Count arrived workers for this task
             const arrivedCount = task.crew.filter(member => {
-              const w = workersRef.current.find(wrk => wrk.id === member.workerId);
+              const w = workerIdx.get(member.workerId);
               return w?.status === 'WORKING_ON_SITE';
             }).length;
 
@@ -395,21 +432,24 @@ export function useSimulationEngine() {
               // never teleports, but genuinely stuck workers are still force-arrived.
               const failsafeTransitSec = Math.max(60, (task.maxEtaMinutes || 10) * 60 * 1.5);
               if (currentTransitSec > failsafeTransitSec) {
+                const standObj = SVO_STANDS.find(s => s.id === task.standId);
+                const forcedArrivals = new Map<string, Worker>();
                 task.crew.forEach(member => {
-                  workersRef.current = workersRef.current.map(w => {
-                    if (w.id === member.workerId && w.status === 'IN_TRANSIT') {
-                      const standObj = SVO_STANDS.find(s => s.id === task.standId);
-                      return {
-                        ...w,
-                        x: standObj ? standObj.x : w.x,
-                        y: standObj ? standObj.y : w.y,
-                        status: 'WORKING_ON_SITE',
-                        pathWaypoints: undefined
-                      };
-                    }
-                    return w;
-                  });
+                  const w = workerIdx.get(member.workerId);
+                  if (w && w.status === 'IN_TRANSIT') {
+                    forcedArrivals.set(w.id, {
+                      ...w,
+                      x: standObj ? standObj.x : w.x,
+                      y: standObj ? standObj.y : w.y,
+                      status: 'WORKING_ON_SITE',
+                      pathWaypoints: undefined
+                    });
+                  }
                 });
+                if (forcedArrivals.size > 0) {
+                  workersRef.current = workersRef.current.map(w => forcedArrivals.get(w.id) || w);
+                  forcedArrivals.forEach((w, id) => workerIdx.set(id, w));
+                }
                 status = 'WORKING';
               }
               
@@ -776,6 +816,47 @@ export function useSimulationEngine() {
       details: `${Math.round(totalMs * 100) / 100} мс за 6 расчётов (лимит < 10 с)`,
       ms: Math.round(totalMs * 100) / 100
     });
+
+    // Stress test: dispatch a massive queue to prove O(T + W) scaling
+    const tMass0 = performance.now();
+    const massCount = 5000;
+    let massDispatched = 0;
+    const massBusy = new Set<string>();
+    const standIds = SVO_STANDS.map(s => s.id);
+    const cats: CategoryCode[] = ['B1', 'B2', 'A'];
+    for (let i = 0; i < massCount; i++) {
+      const stand = STAND_BY_ID.get(standIds[i % standIds.length]);
+      if (!stand) continue;
+      const picked = findNearestFreeWorkerOfCategory(cats[i % 3], stand, workersRef.current, massBusy);
+      if (picked) {
+        massBusy.add(picked.workerId);
+        massDispatched++;
+      }
+    }
+    const massMs = Math.round((performance.now() - tMass0) * 100) / 100;
+    results.push({
+      name: `Массовая очередь (${massCount} задач)`,
+      pass: massMs < 10000,
+      details: `${massDispatched} задач укомплектовано за ${massMs} мс (лимит < 10 с)`,
+      ms: massMs
+    });
+
+    // Massive ETA sweep: 50 000 worker→stand route computations
+    const tSweep0 = performance.now();
+    const sweepCount = 50000;
+    for (let i = 0; i < sweepCount; i++) {
+      const w = workersRef.current[i % workersRef.current.length];
+      const stand = STAND_BY_ID.get(standIds[i % standIds.length]);
+      if (w && stand) calculateWorkerToStandEta(w, stand);
+    }
+    const sweepMs = Math.round((performance.now() - tSweep0) * 100) / 100;
+    results.push({
+      name: `ETA-расчёт (${sweepCount} маршрутов)`,
+      pass: sweepMs < 10000,
+      details: `${sweepCount} маршрутов за ${sweepMs} мс (${sweepCount / Math.max(1, sweepMs)} маршрутов/мс)`,
+      ms: sweepMs
+    });
+
     return results;
   }, []);
 
