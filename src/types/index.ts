@@ -51,6 +51,8 @@ export interface Worker {
   pathWaypoints?: { x: number; y: number }[];
   pathSpeedPctPerSimSec?: number;
   currentSegmentIndex?: number;
+  dutyStandId?: string;
+  isPatrolPreference?: boolean;
 }
 
 export interface TaskCrewMember {

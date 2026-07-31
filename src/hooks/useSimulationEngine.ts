@@ -9,7 +9,8 @@ import {
   findNearestFreeWorkerOfCategory,
   generateShiftWorkersWithCustomCounts,
   getCategoryCandidates,
-  findNaiveNearestWorkerOfCategory
+  findNaiveNearestWorkerOfCategory,
+  PATROL_TARGET_IDS
 } from '../services/dijkstra';
 
 // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
@@ -36,7 +37,8 @@ export interface ControlTestResult {
 const STAND_BY_ID = new Map(SVO_STANDS.map(s => [s.id, s]));
 
 // Static list of road waypoints for patrol route generation (no re-filtering per worker)
-const ROAD_WAYPOINT_IDS = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
+// Patrol targets: roads AND stands, so the far corners stay manned
+const PATROL_TARGETS = PATROL_TARGET_IDS;
 
 export function useSimulationEngine() {
   // State for Workers and Tasks
@@ -346,7 +348,7 @@ export function useSimulationEngine() {
           if (worker.status === 'FREE_PATROLLING') {
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
               const currentNodeId = getClosestNodeId(worker.x, worker.y);
-              const randomTargetId = ROAD_WAYPOINT_IDS[Math.floor(Math.random() * ROAD_WAYPOINT_IDS.length)];
+              const randomTargetId = PATROL_TARGETS[Math.floor(Math.random() * PATROL_TARGETS.length)];
               const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
               const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
 
@@ -467,56 +469,148 @@ export function useSimulationEngine() {
             };
           });
 
-          // 3. HANDLE TASK COMPLETIONS & RE-DRAIN QUEUE
+          // 3. HANDLE TASK COMPLETIONS, CHAIN FREED WORKERS TO NEXT QUEUED TASKS & RE-DRAIN QUEUE
           if (completedTaskIds.length > 0) {
             const remainingTasks = nextTasks.filter(t => !completedTaskIds.includes(t.id));
 
+            // Collect every worker freed by the completed tasks (deduped)
+            const freedWorkers: Worker[] = [];
             completedTaskIds.forEach(cId => {
               const doneTask = tasksRef.current.find(t => t.id === cId);
-              if (doneTask) {
-                showNotification(`✅ 2 мин ТО завершено на стоянке ${doneTask.standLabel}! Инженеры освобождены.`);
+              if (!doneTask) return;
+              showNotification(`✅ 2 мин ТО завершено на стоянке ${doneTask.standLabel}! Инженеры освобождены.`);
+              doneTask.crew.forEach(m => {
+                const w = workerIdx.get(m.workerId);
+                if (w && !freedWorkers.some(f => f.id === w.id)) freedWorkers.push(w);
+              });
+            });
+            const freedIds = new Set(freedWorkers.map(f => f.id));
 
-                const crewIds = new Set(doneTask.crew.map(c => c.workerId));
-                let updatedWorkers = [...workersRef.current];
+            // CHAIN: send freed workers straight to the next queued job instead of
+            // dragging them back to base first (priority AOG > URGENT > ROUTINE, then wait time).
+            const queuedPool = sortQueuedTasks(remainingTasks.filter(t => t.status === 'QUEUED'));
+            const takenTaskIds = new Set<string>();
+            const chainAssign = new Map<string, OtoTask>(); // workerId -> next task
 
-                // Set finished crew workers to FREE_STATIONARY or RETURNING_TO_BASE
-                crewIds.forEach(wId => {
-                  const wObj = updatedWorkers.find(w => w.id === wId);
-                  if (wObj) {
-                    const closestNodeId = getClosestNodeId(wObj.x, wObj.y);
-                    const homeBaseId = wObj.baseId;
-                    const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
-                    const returnWaypoints = getWaypointsForNodePath({ x: wObj.x, y: wObj.y }, nodePath);
-
-                    updatedWorkers = updatedWorkers.map(w => {
-                      if (w.id === wId) {
-                        return {
-                          ...w,
-                          status: 'RETURNING_TO_BASE' as WorkerStatus,
-                          currentTaskId: undefined,
-                          pathWaypoints: returnWaypoints,
-                          pathSpeedPctPerSimSec: undefined,
-                          currentSegmentIndex: 0
-                        };
-                      }
-                      return w;
-                    });
-                  }
-                });
-
-                workersRef.current = updatedWorkers;
+            for (const w of freedWorkers) {
+              if (chainAssign.has(w.id)) continue;
+              for (const q of queuedPool) {
+                if (takenTaskIds.has(q.id)) continue;
+                if (q.crew.length > 0) {
+                  // Manual crew: this worker must be part of it AND the whole crew must
+                  // have been freed by the same completions (no partial dispatch).
+                  if (!q.crew.some(m => m.workerId === w.id)) continue;
+                  if (!q.crew.every(m => freedIds.has(m.workerId))) continue;
+                  q.crew.forEach(m => chainAssign.set(m.workerId, q));
+                  takenTaskIds.add(q.id);
+                  break;
+                }
+                if (q.categoryCode === 'A' || w.categoryCode === q.categoryCode) {
+                  takenTaskIds.add(q.id);
+                  chainAssign.set(w.id, q);
+                  break;
+                }
               }
+            }
+
+            // Build updated task objects for chained tasks (fresh ETA from current positions)
+            const chainedTaskById = new Map<string, OtoTask>();
+            chainAssign.forEach((q, workerId) => {
+              if (chainedTaskById.has(q.id)) return;
+              const targetStand = STAND_BY_ID.get(q.standId);
+              if (!targetStand) return;
+              const members = q.crew.length > 0
+                ? q.crew.map(m => workerIdx.get(m.workerId)).filter((x): x is Worker => !!x)
+                : (() => {
+                    const w = workerIdx.get(workerId);
+                    return w ? [w] : [];
+                  })();
+              if (members.length === 0) return;
+              const freshMembers = members.map(w => calculateWorkerToStandEta(w, targetStand));
+              chainedTaskById.set(q.id, {
+                ...q,
+                status: 'DISPATCHED' as const,
+                crew: freshMembers,
+                arrivedCount: 0,
+                elapsedTransitSec: 0,
+                elapsedWorkSec: 0,
+                maxEtaMinutes: Math.max(...freshMembers.map(m => m.etaMinutes))
+              });
             });
 
-            tasksRef.current = remainingTasks;
-            
+            // Re-route freed workers: chained → next task, patrol crews → patrol,
+            // stationary workers → back to their duty post so remote stands stay manned.
+            const freedFinal = new Map<string, Worker>();
+            freedWorkers.forEach(w => {
+              const chained = chainAssign.get(w.id);
+              if (chained) {
+                const targetStand = STAND_BY_ID.get(chained.standId);
+                if (targetStand) {
+                  const member = calculateWorkerToStandEta(w, targetStand);
+                  let totalPct = 0;
+                  for (let i = 0; i < member.waypoints.length - 1; i++) {
+                    totalPct += Math.hypot(
+                      member.waypoints[i + 1].x - member.waypoints[i].x,
+                      member.waypoints[i + 1].y - member.waypoints[i].y
+                    );
+                  }
+                  const etaSimSec = Math.max(1, member.etaMinutes * 60);
+                  freedFinal.set(w.id, {
+                    ...w,
+                    status: 'IN_TRANSIT' as WorkerStatus,
+                    currentTaskId: chained.id,
+                    pathWaypoints: member.waypoints,
+                    pathSpeedPctPerSimSec: Math.max(0.01, totalPct / etaSimSec),
+                    currentSegmentIndex: 0
+                  });
+                  return;
+                }
+              }
+
+              // No queued work → patrol crews keep patrolling the apron
+              if (w.isPatrolPreference) {
+                const currentNodeId = getClosestNodeId(w.x, w.y);
+                const randomTargetId = PATROL_TARGETS[Math.floor(Math.random() * PATROL_TARGETS.length)];
+                const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
+                freedFinal.set(w.id, {
+                  ...w,
+                  status: 'FREE_PATROLLING' as WorkerStatus,
+                  currentTaskId: undefined,
+                  pathWaypoints: getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath),
+                  pathSpeedPctPerSimSec: undefined,
+                  currentSegmentIndex: 0
+                });
+                return;
+              }
+
+              // Stationary worker → back to its duty post (or base)
+              const dutyStand = w.dutyStandId ? SVO_STANDS.find(s => s.id === w.dutyStandId) : undefined;
+              const targetNode = dutyStand || SVO_FACILITIES.find(f => f.id === w.baseId);
+              if (targetNode) {
+                const nodePath = findDijkstraShortestPath(getClosestNodeId(w.x, w.y), targetNode.id);
+                freedFinal.set(w.id, {
+                  ...w,
+                  status: 'RETURNING_TO_BASE' as WorkerStatus,
+                  currentTaskId: undefined,
+                  pathWaypoints: getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath),
+                  pathSpeedPctPerSimSec: undefined,
+                  currentSegmentIndex: 0
+                });
+                return;
+              }
+              freedFinal.set(w.id, { ...w, status: 'FREE_STATIONARY' as WorkerStatus, currentTaskId: undefined });
+            });
+
+            workersRef.current = workersRef.current.map(w => freedFinal.get(w.id) || w);
+            tasksRef.current = remainingTasks.map(t => chainedTaskById.get(t.id) || t);
+
             // Force UI update on completion
             setWorkers([...workersRef.current]);
-            setTasks([...remainingTasks]);
+            setTasks([...tasksRef.current]);
             lastRenderTimeRef.current = now;
 
-            // Instantly drain queue with newly freed workers!
-            setTimeout(() => drainQueueWithFreeWorkers(), 50);
+            // Instantly drain queue with freshly freed / patrolling workers!
+            drainQueueWithFreeWorkers();
           } else {
             // UNCONDITIONAL update to preserve fractional timer progress
             tasksRef.current = nextTasks;

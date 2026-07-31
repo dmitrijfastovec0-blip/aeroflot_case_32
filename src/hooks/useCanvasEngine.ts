@@ -32,6 +32,87 @@ if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D
   };
 }
 
+// ============================================================================
+// CLUSTER LAYOUT HELPERS
+// ----------------------------------------------------------------------------
+// Engineers at a base / stand are packed into a tight hexagonal ring cluster
+// (dense, no overlap, no "vertical line" look). Slots are assigned by the
+// worker's position inside its group (sorted by id), so clusters stay stable
+// and compact, and re-pack smoothly when someone is dispatched.
+// ============================================================================
+
+// Ring-packing slot: idx 0 = center, then rings of 6, 12, 18, ...
+const ringSlot = (idx: number, spacing: number) => {
+  if (idx <= 0) return { x: 0, y: 0 };
+  let ring = 1;
+  let base = 1;
+  while (idx >= base + ring * 6) {
+    base += ring * 6;
+    ring++;
+  }
+  const inRing = idx - base;
+  const seg = Math.floor(inRing / ring);
+  const along = inRing % ring;
+  const angle = (seg / 6) * Math.PI * 2 + (along / ring) * (Math.PI / 3) - Math.PI / 2;
+  const radius = ring * spacing;
+  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+};
+
+interface ClusterIndexes {
+  baseSlotIndex: Map<string, number>;
+  siteSlotIndex: Map<string, number>;
+}
+
+// Build stable per-group slot indexes for duty workers (by base) and
+// on-site workers (by their task), sorted by id for deterministic packing.
+function buildClusterIndexes(workers: Worker[]): ClusterIndexes {
+  const baseGroups = new Map<string, Worker[]>();
+  const siteGroups = new Map<string, Worker[]>();
+  for (const w of workers) {
+    if (w.status === 'FREE_STATIONARY') {
+      let g = baseGroups.get(w.baseId);
+      if (!g) { g = []; baseGroups.set(w.baseId, g); }
+      g.push(w);
+    } else if (w.status === 'WORKING_ON_SITE') {
+      const key = w.currentTaskId || w.baseId;
+      let g = siteGroups.get(key);
+      if (!g) { g = []; siteGroups.set(key, g); }
+      g.push(w);
+    }
+  }
+  const baseSlotIndex = new Map<string, number>();
+  const siteSlotIndex = new Map<string, number>();
+  for (const g of baseGroups.values()) {
+    g.sort((a, b) => a.id.localeCompare(b.id));
+    g.forEach((w, i) => baseSlotIndex.set(w.id, i));
+  }
+  for (const g of siteGroups.values()) {
+    g.sort((a, b) => a.id.localeCompare(b.id));
+    g.forEach((w, i) => siteSlotIndex.set(w.id, i));
+  }
+  return { baseSlotIndex, siteSlotIndex };
+}
+
+// Target render offset for a worker (percent units, added to worker.x/y)
+function workerClusterPos(worker: Worker, hash: number, idx: ClusterIndexes) {
+  if (worker.status === 'FREE_STATIONARY') {
+    const s = ringSlot(idx.baseSlotIndex.get(worker.id) ?? 0, 2.1);
+    return { x: worker.x + s.x, y: worker.y + 5 + s.y };
+  }
+  if (worker.status === 'WORKING_ON_SITE') {
+    const s = ringSlot(idx.siteSlotIndex.get(worker.id) ?? 0, 1.9);
+    return { x: worker.x + s.x, y: worker.y + 4 + s.y };
+  }
+  if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
+    // Stable jitter on the road so overlapping workers in convoy remain distinct
+    return {
+      x: worker.x + ((hash % 3) - 1) * 0.8,
+      y: worker.y + ((Math.floor(hash / 3) % 3) - 1) * 0.8
+    };
+  }
+  return { x: worker.x, y: worker.y };
+}
+
 interface UseCanvasEngineProps {
   workersRef: React.MutableRefObject<Worker[]>;
   tasksRef: React.MutableRefObject<OtoTask[]>;
@@ -458,7 +539,8 @@ export function useCanvasEngine({
 
     // STABLE VISUALIZATION FOR ALL WORKERS
     // Positions are exponentially smoothed so workers glide (no jumping when a
-    // status change alters their offset) and overlap-free via a stable hash offset.
+    // status change alters their offset) and packed into dense hex clusters.
+    const clusterIdx = buildClusterIndexes(workers);
     const smoothK = 1 - Math.exp(-dtSec * 12);
     if (workerSmoothRef.current.size > workers.length * 3) {
       const alive = new Set(workers.map(w => w.id));
@@ -468,26 +550,9 @@ export function useCanvasEngine({
     }
     workers.forEach(worker => {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
-      let renderX = worker.x;
-      let renderY = worker.y;
-
-      if (worker.status === 'FREE_STATIONARY') {
-        const col = hash % 6;
-        const row = Math.floor((hash % 30) / 6);
-        renderX = worker.x + (col - 2.5) * 2.8;
-        renderY = worker.y + 3.0 + row * 2.8;
-      } else if (worker.status === 'WORKING_ON_SITE') {
-        const col = hash % 4;
-        const row = Math.floor((hash % 16) / 4);
-        renderX = worker.x + (col - 1.5) * 2.5;
-        renderY = worker.y + 2.0 + row * 2.5;
-      } else if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
-        // Stable jitter on the road so overlapping workers in convoy remain distinct
-        const jitterX = ((hash % 3) - 1) * 0.8;
-        const jitterY = ((Math.floor(hash / 3) % 3) - 1) * 0.8;
-        renderX = worker.x + jitterX;
-        renderY = worker.y + jitterY;
-      }
+      const renderPos = workerClusterPos(worker, hash, clusterIdx);
+      const renderX = renderPos.x;
+      const renderY = renderPos.y;
 
       // Exponential smoothing toward the target position → buttery glide
       let smoothPos = workerSmoothRef.current.get(worker.id);
@@ -640,30 +705,12 @@ export function useCanvasEngine({
     let foundNodeId: string | null = null;
     let foundHit: HoverTooltipData | null = null;
 
-    // Direct worker hover test
+    // Direct worker hover test (uses the same cluster positions as rendering)
+    const clusterIdx = buildClusterIndexes(workersRef.current);
     for (const worker of workersRef.current) {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
-      let renderX = worker.x;
-      let renderY = worker.y;
-
-      if (worker.status === 'FREE_STATIONARY') {
-        const col = hash % 6;
-        const row = Math.floor((hash % 30) / 6);
-        renderX = worker.x + (col - 2.5) * 2.8;
-        renderY = worker.y + 3.0 + row * 2.8;
-      } else if (worker.status === 'WORKING_ON_SITE') {
-        const col = hash % 4;
-        const row = Math.floor((hash % 16) / 4);
-        renderX = worker.x + (col - 1.5) * 2.5;
-        renderY = worker.y + 2.0 + row * 2.5;
-      } else if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
-        const jitterX = ((hash % 3) - 1) * 0.8;
-        const jitterY = ((Math.floor(hash / 3) % 3) - 1) * 0.8;
-        renderX = worker.x + jitterX;
-        renderY = worker.y + jitterY;
-      }
-
-      const pos = pctToLogical(renderX, renderY);
+      const renderPos = workerClusterPos(worker, hash, clusterIdx);
+      const pos = pctToLogical(renderPos.x, renderPos.y);
 
       if (Math.hypot(lx - pos.x, ly - pos.y) <= 12) {
         let taskLabel = 'Ожидание';

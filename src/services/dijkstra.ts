@@ -1,5 +1,5 @@
 import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus } from '../types/index';
-import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, TECHNICIAN_NAMES } from '../constants/index';
+import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } from '../constants/index';
 
 // ============================================================================
 // OPTIMIZED ROUTING ENGINE
@@ -291,6 +291,7 @@ export interface DispatchCandidate {
   status: WorkerStatus;
   etaMinutes: number;
   vehicleLabel: string;
+  startLocationText: string;
   isAvailable: boolean;
   load: number;
 }
@@ -317,6 +318,7 @@ export function getCategoryCandidates(
         status: w.status,
         etaMinutes: member ? member.etaMinutes : 0,
         vehicleLabel: member ? member.vehicleLabel : w.vehicle === 'APRON_VEHICLE' ? '🚘 Спецавтомобиль' : '🚶 Пешком',
+        startLocationText: member ? member.startLocationText : (SVO_FACILITIES.find(f => f.id === w.baseId)?.code ?? `База (${w.baseId})`),
         isAvailable,
         load: loadMap?.[w.id] || 0
       };
@@ -362,6 +364,22 @@ export function findNaiveNearestWorkerOfCategory(
   return bestMember;
 }
 
+// Duty posts per base: stationary workers stand guard at the stands of their zone,
+// so even the far apron corners (St-101/102/105, St-201/204, F45, E38) never empty out.
+const BASE_POSTS: Record<string, string[]> = {
+  'PTO_1': ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27'],
+  'AK_4': ['STAND_101', 'STAND_102', 'STAND_105'],
+  'PTO_2': ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45'],
+  'AK_1': ['STAND_201', 'STAND_204', 'STAND_F45']
+};
+
+// Patrol targets cover the whole apron: roads AND remote stands, so patrolling
+// crews regularly show up at the far corners instead of hugging the center.
+export const PATROL_TARGET_IDS = [
+  ...SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id),
+  ...SVO_STANDS.map(s => s.id)
+];
+
 // 7. Generate Shift Personnel with Custom Counts & Vivid Apron Patrol
 export function generateShiftWorkersWithCustomCounts(
   b1Count: number = 22,
@@ -371,47 +389,72 @@ export function generateShiftWorkersWithCustomCounts(
 ): Worker[] {
   const workers: Worker[] = [];
   let nameIdx = 0;
-  let vehicleAllocated = 0;
 
   const bases = SVO_FACILITIES;
-  const roadWaypoints = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
 
-  const createWorkerBatch = (count: number, cat: Category, code: CategoryCode) => {
-    for (let i = 0; i < count; i++) {
-      const baseObj = bases[(workers.length) % bases.length];
-      const hasVehicle = vehicleAllocated < vehiclesCount;
-      if (hasVehicle) vehicleAllocated++;
+  // Global flow of all workers (categories in order: B1, B2, A). Stationary and
+  // patrolling halves round-robin over the bases with INDEPENDENT counters, so
+  // every base gets exactly the same headcount with a mix of standing + patrol,
+  // and the far-corner bases AK-4 / AK-1 never end up empty or patrol-only.
+  const total = b1Count + b2Count + catACount;
+  const stationCount = Math.ceil(total / 2);
+  const stationVehicles = Math.ceil(vehiclesCount / 2);
+  let stationIdx = 0;
+  let patrolIdx = 0;
+  let vehicleAllocated = 0;
+  const stationPerBase: Record<string, number> = {};
 
-      const isPatrolling = i % 2 === 1;
-      let waypoints: { x: number; y: number }[] | undefined = undefined;
+  for (let g = 0; g < total; g++) {
+    const isPatrolling = g % 2 === 1;
+    const cat: Category = g < b1Count ? 'ENGINES_AIRFRAME' : g < b1Count + b2Count ? 'AVIONICS' : 'GENERAL_MECHANIC';
+    const code: CategoryCode = cat === 'ENGINES_AIRFRAME' ? 'B1' : cat === 'AVIONICS' ? 'B2' : 'A';
 
-      if (isPatrolling && roadWaypoints.length > 0) {
-        const startNodeId = getClosestNodeId(baseObj.x, baseObj.y);
-        const randomTargetId = roadWaypoints[Math.floor(Math.random() * roadWaypoints.length)];
-        const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
-        waypoints = getWaypointsForNodePath({ x: baseObj.x, y: baseObj.y }, nodePath);
-      }
+    const rr = isPatrolling ? patrolIdx++ : stationIdx++;
+    const baseObj = bases[rr % bases.length];
 
-      workers.push({
-        id: `WRK-${String(workers.length + 1).padStart(3, '0')}`,
-        name: TECHNICIAN_NAMES[nameIdx % TECHNICIAN_NAMES.length] + (nameIdx >= TECHNICIAN_NAMES.length ? ` ${Math.floor(nameIdx / TECHNICIAN_NAMES.length) + 1}` : ''),
-        category: cat,
-        categoryCode: code,
-        status: isPatrolling ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
-        baseId: baseObj.id,
-        x: baseObj.x,
-        y: baseObj.y,
-        vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN',
-        pathWaypoints: waypoints,
-        currentSegmentIndex: 0
-      });
-      nameIdx++;
+    const hasVehicle = isPatrolling
+      ? vehicleAllocated >= stationVehicles && vehicleAllocated < vehiclesCount
+      : vehicleAllocated < stationVehicles;
+    if (hasVehicle) vehicleAllocated++;
+
+    // Stationary worker of this base mans the zone duty post (a nearby stand),
+    // so remote stands always have technicians present.
+    const posts = BASE_POSTS[baseObj.id] || [];
+    const dutyStandId = isPatrolling
+      ? undefined
+      : (posts.length > 0
+        ? posts[(stationPerBase[baseObj.id] = (stationPerBase[baseObj.id] || 0) + 1) % posts.length]
+        : undefined);
+    const dutyStand = dutyStandId ? SVO_STANDS.find(s => s.id === dutyStandId) : undefined;
+    const startX = dutyStand ? dutyStand.x : baseObj.x;
+    const startY = dutyStand ? dutyStand.y : baseObj.y;
+
+    let waypoints: { x: number; y: number }[] | undefined = undefined;
+
+    if (isPatrolling) {
+      const startNodeId = getClosestNodeId(startX, startY);
+      const randomTargetId = PATROL_TARGET_IDS[Math.floor(Math.random() * PATROL_TARGET_IDS.length)];
+      const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
+      waypoints = getWaypointsForNodePath({ x: startX, y: startY }, nodePath);
     }
-  };
 
-  createWorkerBatch(b1Count, 'ENGINES_AIRFRAME', 'B1');
-  createWorkerBatch(b2Count, 'AVIONICS', 'B2');
-  createWorkerBatch(catACount, 'GENERAL_MECHANIC', 'A');
+    workers.push({
+      id: `WRK-${String(workers.length + 1).padStart(3, '0')}`,
+      name: TECHNICIAN_NAMES[nameIdx % TECHNICIAN_NAMES.length] + (nameIdx >= TECHNICIAN_NAMES.length ? ` ${Math.floor(nameIdx / TECHNICIAN_NAMES.length) + 1}` : ''),
+      category: cat,
+      categoryCode: code,
+      status: isPatrolling ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
+      baseId: baseObj.id,
+      dutyStandId,
+      isPatrolPreference: isPatrolling,
+      x: startX,
+      y: startY,
+      vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN',
+      pathWaypoints: waypoints,
+      currentSegmentIndex: 0
+    });
+    nameIdx++;
+  }
 
   return workers;
 }
