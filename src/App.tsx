@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { OtoTask, ThemeMode, Stand } from './types';
-import { REALISTIC_SVO_CONFIG, SVO_STANDS } from './constants';
-import { generateShiftWorkersWithCustomCounts, getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath } from './utils/dispatchLogic';
+import { OtoTask, ThemeMode, Worker } from './types/index';
+import { SVO_STANDS } from './constants/index';
+import { generateShiftWorkersWithCustomCounts } from './services/dijkstra';
 import { useTaskQueueEngine } from './hooks/useTaskQueueEngine';
-import { useSimulationEngine } from './hooks/useSimulationEngine';
-import { HeaderBar } from './components/HeaderBar';
-import { AirportCanvas } from './components/AirportCanvas';
-import { RightDispatcherPanel } from './components/RightDispatcherPanel';
-import { BottomConsolePanel } from './components/BottomConsolePanel';
-import { SlaAlertModal } from './components/SlaAlertModal';
+import { useWorkerSimulation } from './hooks/useWorkerSimulation';
+import { Header } from './components/Header';
+import { CanvasMap } from './components/CanvasMap';
+import { RightPanel } from './components/RightPanel';
+import { BottomConsole } from './components/BottomConsole';
+import { SlaConfirmModal } from './components/SlaConfirmModal';
 import { ShiftConfigModal } from './components/ShiftConfigModal';
 
 export function App() {
@@ -63,28 +63,37 @@ export function App() {
     triggerStressTest
   } = useTaskQueueEngine();
 
-  // Task Completion Callback (Triggers Auto-Assignment of Queued Tasks!)
+  // Task Completion Callback
   const handleTaskCompleted = useCallback((completedTask: OtoTask) => {
-    setNotificationBanner(`✅ 2 мин ТО завершено на стоянке ${completedTask.standLabel}! Карточка задачи закрыта, инженеры переназначены.`);
+    setNotificationBanner(`✅ 2 мин ТО завершено на стоянке ${completedTask.standLabel}! Карточка задачи закрыта.`);
     setTimeout(() => setNotificationBanner(null), 5000);
 
     // Remove completed task
     setTasks(prev => prev.filter(t => t.id !== completedTask.id));
   }, [setTasks]);
 
+  // Worker Released Callback (Triggers Auto-Assignment of QUEUED tasks!)
+  const handleWorkerReleased = useCallback((releasedWorker: Worker) => {
+    const { assignedTask } = tryAutoAssignQueuedTasks(releasedWorker, []);
+    if (assignedTask) {
+      setNotificationBanner(`⚡ Спец ${releasedWorker.name} освободился и авто-перенаправлен на задачу ${assignedTask.id} (${assignedTask.standLabel})!`);
+      setTimeout(() => setNotificationBanner(null), 5000);
+    }
+  }, [tryAutoAssignQueuedTasks]);
+
   // Simulation Engine Custom Hook (60 FPS physics, LERP, 2-minute work timers)
   const {
     workersRef,
     workersState,
-    setWorkersState,
     dispatchWorkerToTask,
     returnWorkersToBase
-  } = useSimulationEngine({
+  } = useWorkerSimulation({
     initialWorkers,
     simSpeed,
     isPaused,
     tasks,
-    onTaskCompleted: handleTaskCompleted
+    onTaskCompleted: handleTaskCompleted,
+    onWorkerReleased: handleWorkerReleased
   });
 
   // Apply Custom Shift Configuration
@@ -111,7 +120,7 @@ export function App() {
       setNotificationBanner(`⏳ Нехватка персонала! Задача ${task.id} поставлена в Приоритетную Очередь (${task.priority}).`);
       setTimeout(() => setNotificationBanner(null), 6000);
     } else {
-      // Dispatch workers
+      // Dispatch workers to move immediately!
       task.crew.forEach(crewMember => {
         dispatchWorkerToTask(crewMember.workerId, task, crewMember.waypoints);
       });
@@ -141,18 +150,18 @@ export function App() {
     returnWorkersToBase(crewIds);
   };
 
-  // STRESS TEST: Simulate Peak Load Deficit (10 Simultaneous Aircraft Calls)
+  // STRESS TEST: Peak Load Simulation (10 Simultaneous Aircraft Calls)
   const handleTriggerStressTest = () => {
     const generatedTasks = triggerStressTest(workersRef.current);
 
-    // Dispatch available workers for dispatched tasks
+    // CRITICAL FIX: Immediately dispatch workers for all dispatched tasks so they run on Canvas!
     generatedTasks.forEach(task => {
       if (task.status === 'DISPATCHED') {
         task.crew.forEach(c => dispatchWorkerToTask(c.workerId, task, c.waypoints));
       }
     });
 
-    setNotificationBanner(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал задействован, остальные задачи встали в очередь.`);
+    setNotificationBanner(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Свободные спецы отправлены, остальные встали в очередь.`);
     setTimeout(() => setNotificationBanner(null), 6000);
   };
 
@@ -163,7 +172,7 @@ export function App() {
       theme === 'dark' ? 'bg-[#090d11] text-gray-100' : 'bg-slate-100 text-slate-900'
     }`}>
       {/* Custom SLA Warning Modal */}
-      <SlaAlertModal
+      <SlaConfirmModal
         isOpen={pendingSlaTask !== null}
         taskData={pendingSlaTask}
         onConfirm={handleConfirmSlaExceededTask}
@@ -191,7 +200,7 @@ export function App() {
       )}
 
       {/* A. Top Header Bar */}
-      <HeaderBar
+      <Header
         workers={workersState}
         simSpeed={simSpeed}
         onSimSpeedChange={setSimSpeed}
@@ -210,7 +219,7 @@ export function App() {
       {/* B & C. Central CAD Canvas & Right Task Panel */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* B. Central CAD/GIS Airport Canvas */}
-        <AirportCanvas
+        <CanvasMap
           workers={workersRef.current}
           tasks={tasks}
           selectedStandId={selectedStandId}
@@ -222,7 +231,7 @@ export function App() {
         />
 
         {/* C. Right Task Constructor Sidebar */}
-        <RightDispatcherPanel
+        <RightPanel
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
           workers={workersState}
@@ -234,7 +243,7 @@ export function App() {
       </div>
 
       {/* D. Bottom Active Tasks & Queue Console Table */}
-      <BottomConsolePanel
+      <BottomConsole
         tasks={tasks}
         queuedTasks={queuedTasks}
         workers={workersState}

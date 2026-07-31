@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { OtoTask, Worker, Stand, TaskPriority, TaskCrewMember } from '../types';
-import { SVO_STANDS } from '../constants';
-import { findNearestFreeWorkerOfCategory, calculateWorkerToStandEta, calculateCrewMaxEta } from '../utils/dispatchLogic';
+import { OtoTask, Worker, Stand, TaskPriority, TaskCrewMember } from '../types/index';
+import { SVO_STANDS } from '../constants/index';
+import { findNearestFreeWorkerOfCategory, calculateWorkerToStandEta, calculateCrewMaxEta, findDijkstraShortestPath, getClosestNodeId, getWaypointsForNodePath } from '../services/dijkstra';
 
 export function useTaskQueueEngine() {
   const [tasks, setTasks] = useState<OtoTask[]>([]);
@@ -20,9 +20,8 @@ export function useTaskQueueEngine() {
     }
   };
 
-  // Add Task to Engine (either DISPATCHED immediately or QUEUED on staff deficit)
+  // Submit Task to Engine (either DISPATCHED immediately or QUEUED on staff deficit)
   const submitTask = useCallback((newTask: OtoTask, currentWorkers: Worker[]): { isQueued: boolean; task: OtoTask } => {
-    const selectedWorkerIds = new Set(newTask.crew.map(c => c.workerId));
     const allCrewAvailable = newTask.crew.length > 0 && newTask.crew.every(c => {
       const w = currentWorkers.find(wrk => wrk.id === c.workerId);
       return w && (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING');
@@ -60,8 +59,8 @@ export function useTaskQueueEngine() {
   }, []);
 
   // Auto-Assign Queued Tasks upon Worker Release
-  const tryAutoAssignQueuedTasks = useCallback((releasedWorker: Worker, allWorkers: Worker[]): { assignedTaskId?: string; updatedWorker?: Worker } => {
-    let resultAssignedTaskId: string | undefined = undefined;
+  const tryAutoAssignQueuedTasks = useCallback((releasedWorker: Worker, allWorkers: Worker[]): { assignedTask?: OtoTask; assignedWorkerId?: string } => {
+    let resultAssignedTask: OtoTask | undefined = undefined;
 
     setTasks(prevTasks => {
       const queuedList = prevTasks.filter(t => t.status === 'QUEUED');
@@ -80,38 +79,32 @@ export function useTaskQueueEngine() {
         const targetStand = SVO_STANDS.find(s => s.id === qTask.standId);
         if (!targetStand) continue;
 
-        // Check if released worker fits task requirements
         const needsCategory = qTask.categoryCode;
         const matchesCategory =
           needsCategory === 'A' ||
           releasedWorker.categoryCode === needsCategory;
 
         if (matchesCategory) {
-          resultAssignedTaskId = qTask.id;
           const newEtaMember = calculateWorkerToStandEta(releasedWorker, targetStand);
+          const updatedCrew = [...qTask.crew, newEtaMember];
+          const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(updatedCrew, qTask.slaLimitMinutes);
 
-          // Update task crew and transition to DISPATCHED
-          return prevTasks.map(t => {
-            if (t.id === qTask.id) {
-              const updatedCrew = [...t.crew, newEtaMember];
-              const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(updatedCrew, t.slaLimitMinutes);
-              return {
-                ...t,
-                status: 'DISPATCHED',
-                crew: updatedCrew,
-                maxEtaMinutes,
-                withinSla
-              };
-            }
-            return t;
-          });
+          resultAssignedTask = {
+            ...qTask,
+            status: 'DISPATCHED',
+            crew: updatedCrew,
+            maxEtaMinutes,
+            withinSla
+          };
+
+          return prevTasks.map(t => (t.id === qTask.id ? resultAssignedTask! : t));
         }
       }
 
       return prevTasks;
     });
 
-    return { assignedTaskId: resultAssignedTaskId };
+    return { assignedTask: resultAssignedTask, assignedWorkerId: releasedWorker.id };
   }, []);
 
   // STRESS TEST: Generate Peak Load Deficit (10 Simultaneous Aircraft Calls)
@@ -126,8 +119,8 @@ export function useTaskQueueEngine() {
       const priority = priorities[idx % priorities.length];
       const catCode = idx % 2 === 0 ? 'B1' : 'B2';
 
-      // Try finding nearest free worker
-      const b1Member = findNearestFreeWorkerOfCategory('B1', stand, currentWorkers, usedWorkerIds);
+      // Find nearest available free worker
+      const b1Member = findNearestFreeWorkerOfCategory(catCode, stand, currentWorkers, usedWorkerIds);
       const crew: TaskCrewMember[] = [];
 
       if (b1Member) {
@@ -136,6 +129,7 @@ export function useTaskQueueEngine() {
       }
 
       const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(crew, 15.0);
+      const isDispatched = crew.length > 0;
 
       const task: OtoTask = {
         id: `STRESS-${Date.now().toString().slice(-4)}-${idx + 1}`,
@@ -145,14 +139,14 @@ export function useTaskQueueEngine() {
         categoryCode: catCode,
         categoryLabel: `ОТО (${priority})`,
         priority,
-        status: crew.length > 0 && idx < 4 ? 'DISPATCHED' : 'QUEUED',
+        status: isDispatched ? 'DISPATCHED' : 'QUEUED',
         crew,
         arrivedCount: 0,
         maxEtaMinutes: maxEtaMinutes || 12.0,
         slaLimitMinutes: 15.0,
         withinSla: true,
         createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
-        queueStartTimeMs: crew.length > 0 && idx < 4 ? undefined : Date.now(),
+        queueStartTimeMs: isDispatched ? undefined : Date.now(),
         elapsedWorkSec: 0,
         targetWorkSec: 120
       };

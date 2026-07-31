@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { ThemeMode } from '../types';
-import { Users, RefreshCw, XCircle } from 'lucide-react';
+import { ThemeMode } from '../types/index';
+import { Users, X, RefreshCw, Truck } from 'lucide-react';
 
 interface ShiftConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApplyShift: (b1Count: number, b2Count: number, catACount: number, vehicleCount: number) => void;
+  onApplyShift: (b1Count: number, b2Count: number, catACount: number, vehiclesCount: number) => void;
   currentB1: number;
   currentB2: number;
   currentCatA: number;
@@ -30,7 +30,7 @@ export const ShiftConfigModal: React.FC<ShiftConfigModalProps> = ({
 
   if (!isOpen) return null;
 
-  const total = b1 + b2 + catA;
+  const totalPersonnel = b1 + b2 + catA;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,115 +39,120 @@ export const ShiftConfigModal: React.FC<ShiftConfigModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl space-y-5 font-sans select-none ${
-        theme === 'dark' ? 'bg-[#0f172a] border-[#263345] text-gray-100' : 'bg-white border-slate-300 text-slate-900'
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fadeIn select-none font-sans">
+      <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl space-y-5 transition-all ${
+        theme === 'dark' ? 'bg-[#090d11] border-emerald-500/80 text-gray-100' : 'bg-white border-emerald-400 text-slate-900'
       }`}>
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-300 dark:border-[#263345] pb-3">
-          <div className="flex items-center space-x-2.5">
-            <Users className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-base font-bold uppercase tracking-wider">
-              👥 УПРАВЛЕНИЕ СОСТАВОМ СМЕНЫ
+        <div className="flex items-center justify-between border-b border-emerald-500/30 pb-3">
+          <div className="flex items-center space-x-3 text-emerald-400">
+            <Users className="w-6 h-6 shrink-0" />
+            <h3 className="font-bold text-base md:text-lg uppercase tracking-wide">
+              ⚙️ Управление составом смены
             </h3>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
-            <XCircle className="w-5 h-5" />
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Inputs */}
-        <form onSubmit={handleSubmit} className="space-y-4 font-mono text-sm">
-          <div className="space-y-3">
-            <div className={`p-3 rounded-xl border flex items-center justify-between ${
-              theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-slate-50 border-slate-200'
-            }`}>
-              <div>
-                <label className="font-bold text-purple-400">B1 (Планер и Двигатели)</label>
-                <div className="text-xs text-gray-400">Специалисты по техническому обслуживанию</div>
-              </div>
+        {/* Form Controls */}
+        <form onSubmit={handleSubmit} className="space-y-4 font-mono text-xs">
+          <div className={`p-4 rounded-xl border space-y-3 ${
+            theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-50 border-slate-200'
+          }`}>
+            <div className="flex items-center justify-between">
+              <label className="text-gray-300 font-bold flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-400" /> B1 (Планер и Двигатели):
+              </label>
               <input
                 type="number"
                 min="0"
                 max="100"
                 value={b1}
                 onChange={e => setB1(Math.max(0, parseInt(e.target.value) || 0))}
-                className={`w-20 p-2 rounded-lg border text-center font-bold text-base focus:border-purple-500 focus:outline-none ${
-                  theme === 'dark' ? 'bg-[#121820] border-[#263345] text-white' : 'bg-white border-slate-300 text-slate-900'
+                className={`w-20 p-1.5 rounded-lg border text-center font-bold text-sm focus:border-emerald-500 focus:outline-none ${
+                  theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-purple-300' : 'bg-white border-slate-300 text-purple-700'
                 }`}
               />
             </div>
 
-            <div className={`p-3 rounded-xl border flex items-center justify-between ${
-              theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-slate-50 border-slate-200'
-            }`}>
-              <div>
-                <label className="font-bold text-sky-400">B2 (Авионика и Электроника)</label>
-                <div className="text-xs text-gray-400">Специалисты бортовых радиоэлектронных систем</div>
-              </div>
+            <div className="flex items-center justify-between">
+              <label className="text-gray-300 font-bold flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-sky-400" /> B2 (Авионика и Электроника):
+              </label>
               <input
                 type="number"
                 min="0"
                 max="100"
                 value={b2}
                 onChange={e => setB2(Math.max(0, parseInt(e.target.value) || 0))}
-                className={`w-20 p-2 rounded-lg border text-center font-bold text-base focus:border-sky-500 focus:outline-none ${
-                  theme === 'dark' ? 'bg-[#121820] border-[#263345] text-white' : 'bg-white border-slate-300 text-slate-900'
+                className={`w-20 p-1.5 rounded-lg border text-center font-bold text-sm focus:border-emerald-500 focus:outline-none ${
+                  theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-sky-300' : 'bg-white border-slate-300 text-sky-700'
                 }`}
               />
             </div>
 
-            <div className={`p-3 rounded-xl border flex items-center justify-between ${
-              theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-slate-50 border-slate-200'
-            }`}>
-              <div>
-                <label className="font-bold text-emerald-400">Cat A (Линейные механики)</label>
-                <div className="text-xs text-gray-400">Линейный осмотр и мелкий ремонт</div>
-              </div>
+            <div className="flex items-center justify-between">
+              <label className="text-gray-300 font-bold flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Cat A (Линейные механики):
+              </label>
               <input
                 type="number"
                 min="0"
                 max="100"
                 value={catA}
                 onChange={e => setCatA(Math.max(0, parseInt(e.target.value) || 0))}
-                className={`w-20 p-2 rounded-lg border text-center font-bold text-base focus:border-emerald-500 focus:outline-none ${
-                  theme === 'dark' ? 'bg-[#121820] border-[#263345] text-white' : 'bg-white border-slate-300 text-slate-900'
+                className={`w-20 p-1.5 rounded-lg border text-center font-bold text-sm focus:border-emerald-500 focus:outline-none ${
+                  theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-emerald-300' : 'bg-white border-slate-300 text-emerald-700'
                 }`}
               />
             </div>
 
-            <div className={`p-3 rounded-xl border flex items-center justify-between ${
-              theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-slate-50 border-slate-200'
-            }`}>
-              <div>
-                <label className="font-bold text-amber-400">🚘 Спецавтомобили ОТО</label>
-                <div className="text-xs text-gray-400">Количество доступных машин на перроне</div>
-              </div>
+            <div className="flex items-center justify-between border-t border-slate-700 dark:border-[#263345] pt-3">
+              <label className="text-gray-300 font-bold flex items-center gap-1.5">
+                <Truck className="w-4 h-4 text-amber-400" /> 🚘 Спецавтомобили ОТО:
+              </label>
               <input
                 type="number"
                 min="0"
                 max="50"
                 value={vehicles}
                 onChange={e => setVehicles(Math.max(0, parseInt(e.target.value) || 0))}
-                className={`w-20 p-2 rounded-lg border text-center font-bold text-base focus:border-amber-500 focus:outline-none ${
-                  theme === 'dark' ? 'bg-[#121820] border-[#263345] text-white' : 'bg-white border-slate-300 text-slate-900'
+                className={`w-20 p-1.5 rounded-lg border text-center font-bold text-sm focus:border-emerald-500 focus:outline-none ${
+                  theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-white border-slate-300 text-amber-700'
                 }`}
               />
             </div>
           </div>
 
-          <div className="flex justify-between items-center px-1 pt-1 font-bold text-sm">
-            <span className="text-gray-400">Итого в смене:</span>
-            <span className="text-emerald-400 text-base">{total} специалистов</span>
+          <div className="flex justify-between items-center px-1 font-bold">
+            <span className="text-gray-400">Всего специалистов в смене:</span>
+            <span className="text-emerald-400 text-base">{totalPersonnel} чел.</span>
           </div>
 
-          <button
-            type="submit"
-            className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl border border-emerald-500 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-lg transition-colors uppercase tracking-wider cursor-pointer"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>🔄 Применить пересчет смены</span>
-          </button>
+          {/* Action Buttons */}
+          <div className="flex space-x-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className={`flex-1 py-2.5 px-4 rounded-xl border font-bold transition-colors cursor-pointer text-center ${
+                theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-gray-300 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+              }`}
+            >
+              Отмена
+            </button>
+            <button
+              type="submit"
+              className="flex-1 py-2.5 px-4 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 shadow-lg transition-colors cursor-pointer flex items-center justify-center space-x-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>🔄 Пересчитать</span>
+            </button>
+          </div>
         </form>
       </div>
     </div>
