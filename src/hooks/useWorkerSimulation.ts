@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Worker, OtoTask, WorkerStatus } from '../types/index';
 import { SVO_NODES } from '../constants/index';
-import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath, calculateWorkerToStandEta } from '../services/dijkstra';
+import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath } from '../services/dijkstra';
 
 interface UseWorkerSimulationProps {
   initialWorkers: Worker[];
   simSpeed: number;
   isPaused: boolean;
   tasks: OtoTask[];
+  onTasksUpdated: (updater: (prev: OtoTask[]) => OtoTask[]) => void;
   onTaskCompleted: (task: OtoTask) => void;
   onWorkerReleased: (worker: Worker) => void;
 }
@@ -17,14 +18,14 @@ export function useWorkerSimulation({
   simSpeed,
   isPaused,
   tasks,
+  onTasksUpdated,
   onTaskCompleted,
   onWorkerReleased
 }: UseWorkerSimulationProps) {
   const workersRef = useRef<Worker[]>(initialWorkers);
   const [workersState, setWorkersState] = useState<Worker[]>(initialWorkers);
-  const taskWorkTimersRef = useRef<Map<string, number>>(new Map());
 
-  // Sync initial workers if reset or reconfigured
+  // Sync initial workers when shift changes
   useEffect(() => {
     workersRef.current = initialWorkers;
     setWorkersState([...initialWorkers]);
@@ -43,6 +44,7 @@ export function useWorkerSimulation({
       if (!isPaused) {
         let workersUpdated = false;
 
+        // 1. UPDATE WORKER POSITIONS VIA LERP
         workersRef.current = workersRef.current.map((worker): Worker => {
           // A. IN_TRANSIT or RETURNING_TO_BASE
           if ((worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') && worker.pathWaypoints && worker.pathWaypoints.length > 1) {
@@ -76,7 +78,7 @@ export function useWorkerSimulation({
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // LERP Position Interpolation based on physical speed and simSpeed
+            // LERP Position Interpolation based on speed & simSpeed
             const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 5.55 : 1.25;
             const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3;
             const moveDistPct = pctPerSec * dtSec;
@@ -136,40 +138,79 @@ export function useWorkerSimulation({
           return worker;
         });
 
-        // 2-MINUTE MAINTENANCE WORK TIMER & AUTOMATIC TASK COMPLETION
-        if (workersUpdated || tasks.length > 0) {
-          tasks.forEach(task => {
-            if (task.status === 'WORKING') {
-              const currentMs = (taskWorkTimersRef.current.get(task.id) || 0) + (dtSec * 1000 * simSpeed);
-              taskWorkTimersRef.current.set(task.id, currentMs);
+        // 2. UPDATE TASK ARRIVAL & 2-MINUTE MAINTENANCE WORK TIMER
+        if (tasks.length > 0) {
+          onTasksUpdated(prevTasks => {
+            const finishedTaskIds: string[] = [];
 
-              if (currentMs >= 120000) { // 120 seconds target
-                taskWorkTimersRef.current.delete(task.id);
-                onTaskCompleted(task);
+            const updatedTasks = prevTasks.map(task => {
+              if (task.status === 'QUEUED') return task;
 
-                // Send assigned workers back to base or trigger release!
-                const crewIds = new Set(task.crew.map(c => c.workerId));
-                workersRef.current = workersRef.current.map(w => {
-                  if (crewIds.has(w.id)) {
-                    const closestNodeId = getClosestNodeId(w.x, w.y);
-                    const homeBaseId = w.baseId;
-                    const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
-                    const returnWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
+              // Count how many workers of this task's crew have arrived on site (WORKING_ON_SITE)
+              const arrivedCount = task.crew.filter(member => {
+                const w = workersRef.current.find(wrk => wrk.id === member.workerId);
+                return w?.status === 'WORKING_ON_SITE';
+              }).length;
 
-                    const released = {
-                      ...w,
-                      status: 'RETURNING_TO_BASE' as WorkerStatus,
-                      currentTaskId: undefined,
-                      pathWaypoints: returnWaypoints,
-                      currentSegmentIndex: 0
-                    };
-                    onWorkerReleased(released);
-                    return released;
-                  }
-                  return w;
-                });
+              const isAllCrewArrived = task.crew.length > 0 && arrivedCount === task.crew.length;
+              let elapsedWorkSec = task.elapsedWorkSec || 0;
+              let status: OtoTask['status'] = task.status;
+
+              if (isAllCrewArrived) {
+                status = 'WORKING';
+                elapsedWorkSec += dtSec * simSpeed;
+
+                if (elapsedWorkSec >= 120.0) { // 120 seconds target (2 real minutes)
+                  finishedTaskIds.push(task.id);
+                }
+              } else {
+                status = 'DISPATCHED';
               }
+
+              return {
+                ...task,
+                arrivedCount,
+                elapsedWorkSec,
+                status
+              };
+            });
+
+            // Handle Completed Tasks: Release workers to return to base or queued tasks!
+            if (finishedTaskIds.length > 0) {
+              finishedTaskIds.forEach(tId => {
+                const finishedTask = prevTasks.find(t => t.id === tId);
+                if (finishedTask) {
+                  onTaskCompleted(finishedTask);
+
+                  // Send assigned crew back to base
+                  const crewIds = new Set(finishedTask.crew.map(c => c.workerId));
+                  workersRef.current = workersRef.current.map(w => {
+                    if (crewIds.has(w.id)) {
+                      const closestNodeId = getClosestNodeId(w.x, w.y);
+                      const homeBaseId = w.baseId;
+                      const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
+                      const returnWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
+
+                      const returningWorker: Worker = {
+                        ...w,
+                        status: 'RETURNING_TO_BASE',
+                        currentTaskId: undefined,
+                        pathWaypoints: returnWaypoints,
+                        currentSegmentIndex: 0
+                      };
+
+                      onWorkerReleased(returningWorker);
+                      return returningWorker;
+                    }
+                    return w;
+                  });
+                }
+              });
+
+              return updatedTasks.filter(t => !finishedTaskIds.includes(t.id));
             }
+
+            return updatedTasks;
           });
         }
       }
@@ -179,7 +220,7 @@ export function useWorkerSimulation({
 
     animFrameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameId);
-  }, [simSpeed, isPaused, tasks, onTaskCompleted, onWorkerReleased]);
+  }, [simSpeed, isPaused, tasks.length, onTasksUpdated, onTaskCompleted, onWorkerReleased]);
 
   // Throttled sync of workersRef to React state (every 250ms)
   useEffect(() => {
@@ -189,7 +230,7 @@ export function useWorkerSimulation({
     return () => clearInterval(syncInterval);
   }, []);
 
-  // Dispatch workers directly for a task
+  // Dispatch worker directly for a task
   const dispatchWorkerToTask = useCallback((workerId: string, task: OtoTask, waypoints: { x: number; y: number }[]) => {
     workersRef.current = workersRef.current.map(w => {
       if (w.id === workerId) {

@@ -72,16 +72,7 @@ export function App() {
     setTasks(prev => prev.filter(t => t.id !== completedTask.id));
   }, [setTasks]);
 
-  // Worker Released Callback (Triggers Auto-Assignment of QUEUED tasks!)
-  const handleWorkerReleased = useCallback((releasedWorker: Worker) => {
-    const { assignedTask } = tryAutoAssignQueuedTasks(releasedWorker, []);
-    if (assignedTask) {
-      setNotificationBanner(`⚡ Спец ${releasedWorker.name} освободился и авто-перенаправлен на задачу ${assignedTask.id} (${assignedTask.standLabel})!`);
-      setTimeout(() => setNotificationBanner(null), 5000);
-    }
-  }, [tryAutoAssignQueuedTasks]);
-
-  // Simulation Engine Custom Hook (60 FPS physics, LERP, 2-minute work timers)
+  // Worker Simulation Hook
   const {
     workersRef,
     workersState,
@@ -92,8 +83,16 @@ export function App() {
     simSpeed,
     isPaused,
     tasks,
+    onTasksUpdated: setTasks,
     onTaskCompleted: handleTaskCompleted,
-    onWorkerReleased: handleWorkerReleased
+    onWorkerReleased: (releasedWorker: Worker) => {
+      const { assignedTask, assignedWorkerId, waypoints } = tryAutoAssignQueuedTasks(releasedWorker, []);
+      if (assignedTask && assignedWorkerId && waypoints) {
+        dispatchWorkerToTask(assignedWorkerId, assignedTask, waypoints);
+        setNotificationBanner(`⚡ Спец ${releasedWorker.name} авто-перенаправлен на очередную задачу ${assignedTask.id} (${assignedTask.standLabel})!`);
+        setTimeout(() => setNotificationBanner(null), 5000);
+      }
+    }
   });
 
   // Apply Custom Shift Configuration
@@ -124,6 +123,8 @@ export function App() {
       task.crew.forEach(crewMember => {
         dispatchWorkerToTask(crewMember.workerId, task, crewMember.waypoints);
       });
+      setNotificationBanner(`🚀 Задача ${task.id} запущена! Инженеры выехали на стоянку ${task.standLabel}.`);
+      setTimeout(() => setNotificationBanner(null), 4000);
     }
   };
 
@@ -154,14 +155,14 @@ export function App() {
   const handleTriggerStressTest = () => {
     const generatedTasks = triggerStressTest(workersRef.current);
 
-    // CRITICAL FIX: Immediately dispatch workers for all dispatched tasks so they run on Canvas!
+    // Immediately dispatch workers for all dispatched tasks so they move on Canvas!
     generatedTasks.forEach(task => {
       if (task.status === 'DISPATCHED') {
         task.crew.forEach(c => dispatchWorkerToTask(c.workerId, task, c.waypoints));
       }
     });
 
-    setNotificationBanner(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Свободные спецы отправлены, остальные встали в очередь.`);
+    setNotificationBanner(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал задействован, остальные встали в очередь.`);
     setTimeout(() => setNotificationBanner(null), 6000);
   };
 

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { OtoTask, Worker, Stand, TaskPriority, TaskCrewMember } from '../types/index';
 import { SVO_STANDS } from '../constants/index';
-import { findNearestFreeWorkerOfCategory, calculateWorkerToStandEta, calculateCrewMaxEta, findDijkstraShortestPath, getClosestNodeId, getWaypointsForNodePath } from '../services/dijkstra';
+import { findNearestFreeWorkerOfCategory, calculateWorkerToStandEta, calculateCrewMaxEta } from '../services/dijkstra';
 
 export function useTaskQueueEngine() {
   const [tasks, setTasks] = useState<OtoTask[]>([]);
@@ -59,8 +59,9 @@ export function useTaskQueueEngine() {
   }, []);
 
   // Auto-Assign Queued Tasks upon Worker Release
-  const tryAutoAssignQueuedTasks = useCallback((releasedWorker: Worker, allWorkers: Worker[]): { assignedTask?: OtoTask; assignedWorkerId?: string } => {
+  const tryAutoAssignQueuedTasks = useCallback((releasedWorker: Worker, allWorkers: Worker[]): { assignedTask?: OtoTask; assignedWorkerId?: string; waypoints?: { x: number; y: number }[] } => {
     let resultAssignedTask: OtoTask | undefined = undefined;
+    let resultWaypoints: { x: number; y: number }[] | undefined = undefined;
 
     setTasks(prevTasks => {
       const queuedList = prevTasks.filter(t => t.status === 'QUEUED');
@@ -89,6 +90,7 @@ export function useTaskQueueEngine() {
           const updatedCrew = [...qTask.crew, newEtaMember];
           const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(updatedCrew, qTask.slaLimitMinutes);
 
+          resultWaypoints = newEtaMember.waypoints;
           resultAssignedTask = {
             ...qTask,
             status: 'DISPATCHED',
@@ -104,7 +106,7 @@ export function useTaskQueueEngine() {
       return prevTasks;
     });
 
-    return { assignedTask: resultAssignedTask, assignedWorkerId: releasedWorker.id };
+    return { assignedTask: resultAssignedTask, assignedWorkerId: releasedWorker.id, waypoints: resultWaypoints };
   }, []);
 
   // STRESS TEST: Generate Peak Load Deficit (10 Simultaneous Aircraft Calls)
