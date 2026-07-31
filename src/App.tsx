@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { OtoTask, ThemeMode, Worker } from './types/index';
+import React, { useState, useEffect } from 'react';
+import { OtoTask, ThemeMode } from './types/index';
 import { SVO_STANDS } from './constants/index';
-import { generateShiftWorkersWithCustomCounts } from './services/dijkstra';
-import { useTaskQueueEngine } from './hooks/useTaskQueueEngine';
-import { useWorkerSimulation } from './hooks/useWorkerSimulation';
+import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { Header } from './components/Header';
 import { CanvasMap } from './components/CanvasMap';
 import { RightPanel } from './components/RightPanel';
@@ -14,12 +12,6 @@ import { ShiftConfigModal } from './components/ShiftConfigModal';
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
 
-  // Simulation Speed Multiplier (1x, 5x, 10x, 25x)
-  const [simSpeed, setSimSpeed] = useState<number>(5);
-
-  // Pause / Resume Control
-  const [isPaused, setIsPaused] = useState<boolean>(false);
-
   // Light / Dark Theme Mode Engine
   const [theme, setTheme] = useState<ThemeMode>('dark');
 
@@ -27,20 +19,12 @@ export function App() {
   const [isDevMode, setIsDevMode] = useState<boolean>(false);
   const [showMapSublayer, setShowMapSublayer] = useState<boolean>(true);
 
-  // Notification Toast Banner
-  const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
-
   // Custom SLA Exceeded Warning Modal State
   const [pendingSlaTask, setPendingSlaTask] = useState<OtoTask | null>(null);
 
   // Shift Personnel Config Modal State
   const [isShiftModalOpen, setIsShiftModalOpen] = useState<boolean>(false);
   const [shiftCounts, setShiftCounts] = useState({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
-
-  // Initial Shift Generation
-  const [initialWorkers, setInitialWorkers] = useState(() =>
-    generateShiftWorkersWithCustomCounts(22, 12, 6, 20)
-  );
 
   // Sync theme with HTML root class
   useEffect(() => {
@@ -51,82 +35,38 @@ export function App() {
     }
   }, [theme]);
 
-  // Task Queue Engine Custom Hook
+  // UNIFIED SIMULATION ENGINE HOOK
   const {
+    workers,
     tasks,
-    setTasks,
-    queuedTasks,
-    submitTask,
-    promoteTaskToAog,
-    cancelTask,
-    tryAutoAssignQueuedTasks,
-    triggerStressTest
-  } = useTaskQueueEngine();
-
-  // Task Completion Callback
-  const handleTaskCompleted = useCallback((completedTask: OtoTask) => {
-    setNotificationBanner(`✅ 2 мин ТО завершено на стоянке ${completedTask.standLabel}! Инженеры освобождены.`);
-    setTimeout(() => setNotificationBanner(null), 5000);
-  }, []);
-
-  // Worker Simulation Hook
-  const {
-    workersRef,
-    workersState,
-    dispatchWorkerToTask,
-    returnWorkersToBase
-  } = useWorkerSimulation({
-    initialWorkers,
     simSpeed,
+    setSimSpeed,
     isPaused,
-    tasks,
-    onTasksUpdated: setTasks,
-    onTaskCompleted: handleTaskCompleted,
-    onAutoAssignQueue: (releasedWorker: Worker) => {
-      const { assignedTask, waypoints } = tryAutoAssignQueuedTasks(releasedWorker, workersRef.current);
-      if (assignedTask && waypoints && waypoints.length > 0) {
-        setNotificationBanner(`⚡ Спец ${releasedWorker.name} перенаправлен на очередную задачу ${assignedTask.id} (${assignedTask.standLabel})!`);
-        setTimeout(() => setNotificationBanner(null), 5000);
-        return { assignedTask, waypoints };
-      }
-      return {};
-    }
-  });
+    setIsPaused,
+    notificationBanner,
+    submitTask,
+    cancelTask,
+    promoteTaskToAog,
+    triggerStressTest,
+    applyShiftConfig
+  } = useSimulationEngine();
 
   // Apply Custom Shift Configuration
   const handleApplyShiftConfig = (b1: number, b2: number, catA: number, vehicles: number) => {
     setShiftCounts({ b1, b2, catA, vehicles });
-    const updatedShift = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
-    setInitialWorkers(updatedShift);
-
-    setNotificationBanner(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
-    setTimeout(() => setNotificationBanner(null), 5000);
+    applyShiftConfig(b1, b2, catA, vehicles);
   };
 
   // Dev Mode Coordinate Click Handler
   const handleDevPointClick = (pctX: number, pctY: number) => {
-    setNotificationBanner(`📍 Координаты разметки: { x: ${pctX}%, y: ${pctY}% } (Выведено в консоль F12)`);
-    setTimeout(() => setNotificationBanner(null), 4000);
-  };
-
-  // Execute Launch Task (DISPATCH or QUEUED on staff deficit)
-  const executeLaunchTask = (newTask: OtoTask) => {
-    const { isQueued, task } = submitTask(newTask, workersRef.current);
-
-    if (isQueued) {
-      setNotificationBanner(`⏳ Нехватка персонала! Задача ${task.id} поставлена в Приоритетную Очередь (${task.priority}).`);
-      setTimeout(() => setNotificationBanner(null), 6000);
-    } else {
-      // Dispatch workers to move immediately!
-      task.crew.forEach(crewMember => {
-        dispatchWorkerToTask(crewMember.workerId, task, crewMember.waypoints);
-      });
-      setNotificationBanner(`🚀 Задача ${task.id} запущена! Инженеры выехали на стоянку ${task.standLabel}.`);
-      setTimeout(() => setNotificationBanner(null), 4000);
-    }
+    console.log(`📍 SVO Calibration Node: { x: ${pctX}%, y: ${pctY}% }`);
   };
 
   // Intercept Task Launch if SLA Exceeded -> Show Custom Warning Modal
+  const handleLaunchTaskSubmit = (newTask: OtoTask) => {
+    submitTask(newTask);
+  };
+
   const handleTriggerSlaAlert = (newTask: OtoTask) => {
     setPendingSlaTask(newTask);
   };
@@ -134,36 +74,12 @@ export function App() {
   // Confirm Launch from Modal
   const handleConfirmSlaExceededTask = () => {
     if (pendingSlaTask) {
-      executeLaunchTask(pendingSlaTask);
+      submitTask(pendingSlaTask);
       setPendingSlaTask(null);
     }
   };
 
-  // Cancel Task
-  const handleCancelTask = (taskId: string) => {
-    const targetTask = tasks.find(t => t.id === taskId);
-    if (!targetTask) return;
-
-    const crewIds = new Set(targetTask.crew.map(c => c.workerId));
-    cancelTask(taskId);
-    returnWorkersToBase(crewIds);
-  };
-
-  // STRESS TEST: Peak Load Simulation (10 Simultaneous Aircraft Calls)
-  const handleTriggerStressTest = () => {
-    const generatedTasks = triggerStressTest(workersRef.current);
-
-    // Immediately dispatch workers for all dispatched tasks so they move on Canvas!
-    generatedTasks.forEach(task => {
-      if (task.status === 'DISPATCHED') {
-        task.crew.forEach(c => dispatchWorkerToTask(c.workerId, task, c.waypoints));
-      }
-    });
-
-    setNotificationBanner(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал задействован, остальные встали в очередь.`);
-    setTimeout(() => setNotificationBanner(null), 6000);
-  };
-
+  const queuedTasks = tasks.filter(t => t.status === 'QUEUED');
   const activeTaskForSelectedStand = tasks.find(t => t.standId === selectedStandId);
 
   return (
@@ -200,7 +116,7 @@ export function App() {
 
       {/* A. Top Header Bar */}
       <Header
-        workers={workersState}
+        workers={workers}
         simSpeed={simSpeed}
         onSimSpeedChange={setSimSpeed}
         isPaused={isPaused}
@@ -212,14 +128,14 @@ export function App() {
         onToggleDevMode={() => setIsDevMode(prev => !prev)}
         showMapSublayer={showMapSublayer}
         onToggleMapSublayer={() => setShowMapSublayer(prev => !prev)}
-        onTriggerStressTest={handleTriggerStressTest}
+        onTriggerStressTest={triggerStressTest}
       />
 
       {/* B & C. Central CAD Canvas & Right Task Panel */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* B. Central CAD/GIS Airport Canvas */}
         <CanvasMap
-          workers={workersRef.current}
+          workers={workers}
           tasks={tasks}
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
@@ -233,8 +149,8 @@ export function App() {
         <RightPanel
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
-          workers={workersState}
-          onLaunchTask={executeLaunchTask}
+          workers={workers}
+          onLaunchTask={handleLaunchTaskSubmit}
           onTriggerSlaAlert={handleTriggerSlaAlert}
           activeTaskForStand={activeTaskForSelectedStand}
           theme={theme}
@@ -245,8 +161,8 @@ export function App() {
       <BottomConsole
         tasks={tasks}
         queuedTasks={queuedTasks}
-        workers={workersState}
-        onCancelTask={handleCancelTask}
+        workers={workers}
+        onCancelTask={cancelTask}
         onPromoteToAog={promoteTaskToAog}
         onSelectTask={(task) => setSelectedStandId(task.standId)}
         theme={theme}
