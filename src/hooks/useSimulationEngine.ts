@@ -52,7 +52,6 @@ export function useSimulationEngine() {
 
     const tick = () => {
       const now = Date.now();
-      // Cap delta time to prevent stuttering/intermittent jumps on tab unfocus
       const dtSec = Math.min(0.1, (now - lastTimeRef.current) / 1000);
       lastTimeRef.current = now;
 
@@ -168,7 +167,7 @@ export function useSimulationEngine() {
           const completedTaskIds: string[] = [];
 
           const nextTasks = tasksRef.current.map(task => {
-            // A. QUEUED TASKS: Accumulate simulation queue wait time smoothly!
+            // A. QUEUED TASKS: Accumulate queue wait time
             if (task.status === 'QUEUED') {
               tasksChanged = true;
               return {
@@ -233,7 +232,7 @@ export function useSimulationEngine() {
                     const rankA = getPriorityRank(a.priority);
                     const rankB = getPriorityRank(b.priority);
                     if (rankA !== rankB) return rankA - rankB;
-                    return (a.elapsedQueueSec || 0) - (b.elapsedQueueSec || 0);
+                    return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
                   });
 
                   const matchingTaskIndex = sortedQueued.findIndex(q =>
@@ -246,15 +245,18 @@ export function useSimulationEngine() {
 
                     if (targetStand) {
                       const etaMember = calculateWorkerToStandEta(workerObj, targetStand);
-                      matchedTask.crew.push(etaMember);
+
+                      // CRITICAL FIX: Set matchedTask.crew = [etaMember] so crew length is 1!
+                      matchedTask.crew = [etaMember];
                       matchedTask.status = 'DISPATCHED';
+                      matchedTask.arrivedCount = 0;
 
                       updatedWorkers = updatedWorkers.map(w => {
                         if (w.id === wId) {
                           return {
                             ...w,
                             status: 'IN_TRANSIT' as WorkerStatus,
-                            vehicle: 'APRON_VEHICLE', // Express shuttle for fast airport transit!
+                            vehicle: 'APRON_VEHICLE', // Express shuttle!
                             currentTaskId: matchedTask.id,
                             pathWaypoints: etaMember.waypoints,
                             currentSegmentIndex: 0
@@ -309,20 +311,18 @@ export function useSimulationEngine() {
   }, [isPaused, simSpeed]);
 
   // -----------------------------------------------------------------
-  // USER ACTIONS: LAUNCH TASK, CANCEL TASK, STRESS TEST, RECONFIG SHIFT
+  // USER ACTIONS
   // -----------------------------------------------------------------
 
   const submitTask = useCallback((newTask: OtoTask) => {
     let updatedWorkers = [...workersRef.current];
 
-    // Check if required crew members are free
     const allCrewFree = newTask.crew.length > 0 && newTask.crew.every(c => {
       const w = updatedWorkers.find(wrk => wrk.id === c.workerId);
       return w && (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING');
     });
 
     if (allCrewFree) {
-      // DISPATCH TASK IMMEDIATELY!
       const dispatchedTask: OtoTask = { ...newTask, status: 'DISPATCHED' };
 
       newTask.crew.forEach(cMember => {
@@ -346,7 +346,6 @@ export function useSimulationEngine() {
       setTasks(prev => [dispatchedTask, ...prev]);
       showNotification(`🚀 Задача ${dispatchedTask.id} запущена! Инженеры выехали на стоянку ${dispatchedTask.standLabel}.`);
     } else {
-      // QUEUED STATUS ON STAFF DEFICIT
       const queuedTask: OtoTask = {
         ...newTask,
         status: 'QUEUED',
@@ -413,7 +412,6 @@ export function useSimulationEngine() {
       const priority = priorities[idx % priorities.length];
       const catCode = idx % 2 === 0 ? 'B1' : 'B2';
 
-      // Find nearest free worker
       const freeMember = findNearestFreeWorkerOfCategory(catCode, stand, updatedWorkers, usedWorkerIds);
       const crew: TaskCrewMember[] = [];
 
@@ -422,12 +420,11 @@ export function useSimulationEngine() {
         usedWorkerIds.add(freeMember.workerId);
       }
 
-      const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(crew, 15.0);
+      const { maxEtaMinutes } = calculateCrewMaxEta(crew, 15.0);
       const isDispatched = crew.length > 0;
       const taskId = `STRESS-${Date.now().toString().slice(-4)}-${idx + 1}`;
 
       if (isDispatched) {
-        // Dispatch worker
         crew.forEach(c => {
           updatedWorkers = updatedWorkers.map(w => {
             if (w.id === c.workerId) {
@@ -453,7 +450,7 @@ export function useSimulationEngine() {
         categoryLabel: `ОТО (${priority})`,
         priority,
         status: isDispatched ? 'DISPATCHED' : 'QUEUED',
-        crew,
+        crew: isDispatched ? crew : [], // Empty crew if queued!
         arrivedCount: 0,
         maxEtaMinutes: maxEtaMinutes || 12.0,
         slaLimitMinutes: 15.0,

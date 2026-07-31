@@ -15,10 +15,6 @@ export function App() {
   // Light / Dark Theme Mode Engine
   const [theme, setTheme] = useState<ThemeMode>('dark');
 
-  // Dev Mode Coordinate Calibration Toggle
-  const [isDevMode, setIsDevMode] = useState<boolean>(false);
-  const [showMapSublayer, setShowMapSublayer] = useState<boolean>(true);
-
   // Custom SLA Exceeded Warning Modal State
   const [pendingSlaTask, setPendingSlaTask] = useState<OtoTask | null>(null);
 
@@ -57,11 +53,6 @@ export function App() {
     applyShiftConfig(b1, b2, catA, vehicles);
   };
 
-  // Dev Mode Coordinate Click Handler
-  const handleDevPointClick = (pctX: number, pctY: number) => {
-    console.log(`📍 SVO Calibration Node: { x: ${pctX}%, y: ${pctY}% }`);
-  };
-
   // Intercept Task Launch if SLA Exceeded -> Show Custom Warning Modal
   const handleLaunchTaskSubmit = (newTask: OtoTask) => {
     submitTask(newTask);
@@ -83,7 +74,7 @@ export function App() {
   const activeTaskForSelectedStand = tasks.find(t => t.standId === selectedStandId);
 
   return (
-    <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans select-none transition-colors ${
+    <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans select-none transition-colors relative ${
       theme === 'dark' ? 'bg-[#090d11] text-gray-100' : 'bg-slate-100 text-slate-900'
     }`}>
       {/* Custom SLA Warning Modal */}
@@ -107,9 +98,9 @@ export function App() {
         theme={theme}
       />
 
-      {/* Notification Toast Banner */}
+      {/* FLOATING NON-LAYOUT-SHIFTING TOAST NOTIFICATION BANNER */}
       {notificationBanner && (
-        <div className="bg-emerald-600 text-white font-mono text-sm font-bold py-2 px-4 text-center border-b border-emerald-500 animate-pulse shadow-lg z-50 flex items-center justify-center space-x-2">
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 pointer-events-none bg-emerald-700/95 text-white font-mono text-xs md:text-sm font-bold py-2.5 px-6 rounded-xl border border-emerald-400 shadow-2xl animate-bounce flex items-center justify-center space-x-2">
           <span>{notificationBanner}</span>
         </div>
       )}
@@ -124,10 +115,6 @@ export function App() {
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
-        isDevMode={isDevMode}
-        onToggleDevMode={() => setIsDevMode(prev => !prev)}
-        showMapSublayer={showMapSublayer}
-        onToggleMapSublayer={() => setShowMapSublayer(prev => !prev)}
         onTriggerStressTest={triggerStressTest}
       />
 
@@ -140,9 +127,8 @@ export function App() {
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
           theme={theme}
-          isDevMode={isDevMode}
-          onDevPointClick={handleDevPointClick}
-          showMapSublayer={showMapSublayer}
+          isDevMode={false}
+          showMapSublayer={true}
         />
 
         {/* C. Right Task Constructor Sidebar */}

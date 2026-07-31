@@ -1,6 +1,6 @@
 import React from 'react';
 import { Worker, ThemeMode } from '../types/index';
-import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Wrench, Map, Flame } from 'lucide-react';
+import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Flame } from 'lucide-react';
 
 interface HeaderProps {
   workers: Worker[];
@@ -11,10 +11,6 @@ interface HeaderProps {
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenShiftConfig: () => void;
-  isDevMode: boolean;
-  onToggleDevMode: () => void;
-  showMapSublayer: boolean;
-  onToggleMapSublayer: () => void;
   onTriggerStressTest: () => void;
 }
 
@@ -27,10 +23,6 @@ export const Header: React.FC<HeaderProps> = ({
   theme,
   onToggleTheme,
   onOpenShiftConfig,
-  isDevMode,
-  onToggleDevMode,
-  showMapSublayer,
-  onToggleMapSublayer,
   onTriggerStressTest
 }) => {
   const totalWorkers = workers.length;
@@ -40,19 +32,14 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="h-[54px] min-h-[54px] bg-[#070a0e] dark:bg-[#070a0e] bg-white border-b border-[#263345] dark:border-[#263345] border-slate-300 flex items-center justify-between px-5 text-sm select-none transition-colors">
-      {/* 1. Logo & Title */}
+      {/* 1. Logo Only (Header text removed as requested) */}
       <div className="flex items-center space-x-3">
         <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-[#121820] dark:bg-[#121820] bg-slate-100 border border-[#263345] dark:border-[#263345] border-slate-300 text-sky-400 font-bold text-lg">
           ✈️
         </div>
-        <div>
-          <h1 className="font-bold text-base md:text-lg tracking-wide text-gray-100 dark:text-gray-100 text-slate-900 uppercase flex items-center gap-2">
-            АЭРОФЛОТ <span className="text-gray-500 dark:text-gray-500 text-slate-400 font-normal">|</span> <span className="text-sky-400">ЦУП ОТО</span> — Шереметьево
-          </h1>
-        </div>
       </div>
 
-      {/* 2. Controls, Stress Test, & Calibration Buttons */}
+      {/* 2. Clean Controls & Stress Test */}
       <div className="flex items-center space-x-2.5">
         {/* STRESS TEST BUTTON: PEAK LOAD SIMULATION */}
         <button
@@ -62,34 +49,6 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Flame className="w-4 h-4 text-red-500 group-hover:text-white animate-pulse" />
           <span>💥 Симуляция пиковой нагрузки (10 бортов)</span>
-        </button>
-
-        {/* Toggle SVO Map Background Sublayer */}
-        <button
-          onClick={onToggleMapSublayer}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border font-mono font-bold text-xs transition-colors cursor-pointer ${
-            showMapSublayer
-              ? 'bg-sky-500/20 border-sky-500 text-sky-400'
-              : 'bg-[#121820] dark:bg-[#121820] bg-slate-100 border-[#263345] dark:border-[#263345] text-gray-400'
-          }`}
-          title="Показать / Скрыть растровую подложку схемы Шереметьево (svo.png)"
-        >
-          <Map className="w-3.5 h-3.5" />
-          <span>🗺️ Подложка</span>
-        </button>
-
-        {/* Toggle Dev Calibration Mode */}
-        <button
-          onClick={onToggleDevMode}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border font-mono font-bold text-xs transition-colors cursor-pointer ${
-            isDevMode
-              ? 'bg-purple-500/20 border-purple-500 text-purple-300 animate-pulse'
-              : 'bg-[#121820] dark:bg-[#121820] bg-slate-100 border-[#263345] dark:border-[#263345] text-gray-400'
-          }`}
-          title="Включить / Выключить режим разметки координат при клике на Canvas"
-        >
-          <Wrench className="w-3.5 h-3.5 text-purple-400" />
-          <span>🛠️ Разметка</span>
         </button>
 
         {/* Pause / Resume Button */}
