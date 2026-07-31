@@ -1,8 +1,58 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OtoTask, Worker, ThemeMode } from '../types/index';
 import { DispatchStat, ControlTestResult } from '../hooks/useSimulationEngine';
 import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import { Terminal, Layers, Database, Download, FileText, Trash2, Clock, Flame, BarChart3, FlaskConical } from 'lucide-react';
+
+// Animated column bar that grows smoothly from 0 to its target height
+function AnimatedBar({ height, gradient }: { height: number; gradient: string }) {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setH(height));
+    return () => cancelAnimationFrame(raf);
+  }, [height]);
+  return (
+    <div
+      className={`w-full rounded-t-md bg-gradient-to-t ${gradient}`}
+      style={{ height: `${h}px`, transition: 'height 650ms cubic-bezier(0.22, 1, 0.36, 1)' }}
+    />
+  );
+}
+
+// Smooth animated donut (SLA compliance)
+function Donut({ pct, trackColor }: { pct: number; trackColor: string }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(pct));
+    return () => cancelAnimationFrame(raf);
+  }, [pct]);
+  const R = 40;
+  const C = 2 * Math.PI * R;
+  const dash = (C * shown) / 100;
+  return (
+    <div className="flex items-center gap-4">
+      <svg width="96" height="96" viewBox="0 0 96 96" className="-rotate-90 shrink-0">
+        <circle cx="48" cy="48" r={R} fill="none" stroke={trackColor} strokeWidth="12" />
+        <circle
+          cx="48"
+          cy="48"
+          r={R}
+          fill="none"
+          stroke="#10b981"
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeDasharray={C}
+          strokeDashoffset={C - dash}
+          style={{ transition: 'stroke-dashoffset 900ms cubic-bezier(0.22, 1, 0.36, 1)' }}
+        />
+      </svg>
+      <div>
+        <div className="text-3xl font-black text-emerald-400">{pct}%</div>
+        <div className="text-[11px] text-gray-500 leading-tight">вызовов в регламенте<br />≤ 15 мин</div>
+      </div>
+    </div>
+  );
+}
 
 interface BottomConsoleProps {
   tasks: OtoTask[];
@@ -413,6 +463,48 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
                 <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Эффект от сокращения простоя</div>
                 <div className="text-xl font-black text-amber-400">{Math.round(totalMoney).toLocaleString('ru-RU')} ₽</div>
                 <div className="text-[10px] text-gray-500">при ставке {AIRCRAFT_DOWNTIME_COST_PER_MIN.toLocaleString('ru-RU')} ₽/мин простоя ВС</div>
+              </div>
+            </div>
+
+            {/* Charts: economy per call + SLA donut */}
+            <div className="grid grid-cols-5 gap-3">
+              <div className={`col-span-3 rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-white border-slate-200'
+              }`}>
+                <div className="font-bold text-xs text-gray-400 uppercase tracking-wider mb-2">
+                  ⏱️ Экономия времени по последним вызовам (мин)
+                </div>
+                {dispatchStats.length > 0 ? (
+                  <div className="flex items-end justify-between gap-1.5 h-28">
+                    {[...dispatchStats].slice(0, 10).reverse().map((st, i) => {
+                      const value = Math.max(0, Math.min(76, st.savedMinutes * 8));
+                      return (
+                        <div key={i} className="flex-1 flex flex-col items-center gap-1 min-w-0 h-full">
+                          <div className="w-full flex-1 flex items-end justify-center">
+                            <AnimatedBar height={Math.max(4, value)} gradient={st.savedMinutes > 0 ? 'from-sky-500 to-cyan-400' : 'from-slate-600 to-slate-500'} />
+                          </div>
+                          <span className="text-[9px] text-gray-500 truncate w-full text-center">{st.standLabel.replace('Стоянка ', '')}</span>
+                          <span className={`text-[9px] font-bold ${st.savedMinutes > 0 ? 'text-amber-400' : 'text-gray-600'}`}>
+                            {st.savedMinutes > 0 ? `−${st.savedMinutes}` : '0'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="h-28 flex items-center justify-center text-gray-500 text-xs">
+                    Запустите любой сценарий — график построится автоматически
+                  </div>
+                )}
+              </div>
+
+              <div className={`col-span-2 rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-white border-slate-200'
+              }`}>
+                <div className="font-bold text-xs text-gray-400 uppercase tracking-wider mb-2">
+                  🎯 Соблюдение регламента
+                </div>
+                <Donut pct={within15Pct} trackColor={theme === 'dark' ? '#1e293b' : '#e2e8f0'} />
               </div>
             </div>
 

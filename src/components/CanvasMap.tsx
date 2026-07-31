@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Worker, OtoTask, ThemeMode } from '../types/index';
 import { useCanvasEngine } from '../hooks/useCanvasEngine';
 
@@ -27,6 +27,23 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
   } = useCanvasEngine(props);
 
   const { theme } = props;
+  const [focusPreset, setFocusPreset] = useState<'ALL' | 'NORTH' | 'SOUTH' | 'RESET'>('ALL');
+
+  const onPreset = (preset: 'ALL' | 'NORTH' | 'SOUTH' | 'RESET') => {
+    setFocusPreset(preset);
+    handlePresetFocus(preset);
+  };
+
+  // Smooth, premium map control buttons (shared styles)
+  const btnBase =
+    'px-3 py-1.5 rounded-lg font-mono text-xs font-bold transition-all duration-200 ease-out ' +
+    'hover:-translate-y-0.5 hover:shadow-lg active:scale-95 active:translate-y-0 cursor-pointer select-none';
+  const btnNeutral = (active: boolean, tint: string) =>
+    active
+      ? `bg-gradient-to-br ${tint} text-white shadow-lg border border-transparent`
+      : theme === 'dark'
+        ? 'bg-[#121820] hover:bg-[#1e293b] text-gray-200 border-[#263345]'
+        : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300';
 
   return (
     <div
@@ -44,39 +61,31 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
       <canvas ref={canvasRef} className="block w-full h-full" />
 
       {/* Floating View Controls */}
-      <div className={`absolute top-3 left-3 flex items-center border rounded-lg p-1.5 space-x-1.5 shadow-lg z-10 font-mono text-xs ${
-        theme === 'dark' ? 'bg-[#070a0e]/90 border-[#263345]' : 'bg-white/90 border-slate-300'
+      <div className={`absolute top-3 left-3 flex items-center border rounded-xl p-1.5 space-x-1.5 shadow-lg z-10 font-mono text-xs backdrop-blur-sm ${
+        theme === 'dark' ? 'bg-[#070a0e]/85 border-[#263345]' : 'bg-white/85 border-slate-300'
       }`}>
         <button
-          onClick={() => handlePresetFocus('ALL')}
-          className={`px-3 py-1 rounded border transition-colors ${
-            theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-gray-200 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
-          }`}
+          onClick={() => onPreset('ALL')}
+          className={`${btnBase} ${btnNeutral(focusPreset === 'ALL', 'from-sky-600 to-blue-700 text-sky-100')}`}
         >
           🗺️ Весь SVO
         </button>
         <button
-          onClick={() => handlePresetFocus('NORTH')}
-          className={`px-3 py-1 rounded border transition-colors ${
-            theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-sky-400 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-sky-600 border-slate-300'
-          }`}
+          onClick={() => onPreset('NORTH')}
+          className={`${btnBase} ${btnNeutral(focusPreset === 'NORTH', 'from-cyan-500 to-sky-600 text-cyan-50')}`}
         >
           🏢 Север B/C
         </button>
         <button
-          onClick={() => handlePresetFocus('SOUTH')}
-          className={`px-3 py-1 rounded border transition-colors ${
-            theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-emerald-400 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-emerald-600 border-slate-300'
-          }`}
+          onClick={() => onPreset('SOUTH')}
+          className={`${btnBase} ${btnNeutral(focusPreset === 'SOUTH', 'from-emerald-500 to-teal-600 text-emerald-50')}`}
         >
           🏬 Юг D/E/F
         </button>
         <div className="h-4 w-px bg-slate-400 dark:bg-[#263345] mx-1" />
         <button
-          onClick={() => handlePresetFocus('RESET')}
-          className={`px-2.5 py-1 rounded border transition-colors ${
-            theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-gray-400 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-slate-500 border-slate-300'
-          }`}
+          onClick={() => onPreset('RESET')}
+          className={`${btnBase} ${btnNeutral(focusPreset === 'RESET', 'from-slate-600 to-slate-700 text-slate-100')}`}
         >
           🔍 Сброс
         </button>

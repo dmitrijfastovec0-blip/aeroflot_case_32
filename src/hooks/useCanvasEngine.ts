@@ -79,15 +79,12 @@ export function useCanvasEngine({
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoverTooltip, setHoverTooltip] = useState<HoverTooltipData | null>(null);
 
-  // Animated dash offset for route lines
-  const [dashOffset, setDashOffset] = useState<number>(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setDashOffset(prev => (prev - 1.2) % 20);
-    }, 40);
-    return () => clearInterval(interval);
-  }, []);
+  // Smooth-render refs: exponential interpolation so workers glide (no jumping)
+  // and zoom/pan ease in beautifully instead of snapping.
+  const workerSmoothRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const currentZoomRef = useRef<number>(1);
+  const currentPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastFrameTimeRef = useRef<number>(performance.now());
 
   const LOGICAL_WIDTH = 1000;
   const LOGICAL_HEIGHT = 700;
@@ -139,9 +136,28 @@ export function useCanvasEngine({
     ctx.fillStyle = palette.bg;
     ctx.fillRect(0, 0, width, height);
 
+    // Frame timing for all animations in this render
+    const now = performance.now();
+    const dtSec = Math.min(0.1, (now - lastFrameTimeRef.current) / 1000);
+    lastFrameTimeRef.current = now;
+    const dashOffset = -(now / 26) % 20; // time-based flowing dashes (no React state churn)
+
+    // Smoothly ease zoom/pan toward the target; snap while dragging for 1:1 control
+    if (isDragging) {
+      currentZoomRef.current = zoomScale;
+      currentPanRef.current = { x: panOffset.x, y: panOffset.y };
+    } else {
+      const k = 1 - Math.exp(-dtSec * 10);
+      currentZoomRef.current += (zoomScale - currentZoomRef.current) * k;
+      currentPanRef.current.x += (panOffset.x - currentPanRef.current.x) * k;
+      currentPanRef.current.y += (panOffset.y - currentPanRef.current.y) * k;
+    }
+    const zs = currentZoomRef.current;
+    const ps = currentPanRef.current;
+
     ctx.save();
-    ctx.translate(panOffset.x, panOffset.y);
-    ctx.scale(zoomScale, zoomScale);
+    ctx.translate(ps.x, ps.y);
+    ctx.scale(zs, zs);
 
     // RASTER BACKGROUND SUBLAYER (svo.png)
     if (showMapSublayer && mapImageRef.current && isMapImageLoaded) {
@@ -250,26 +266,58 @@ export function useCanvasEngine({
       ctx.restore();
     });
 
-    // Road Topology Edges
+    // ROAD TOPOLOGY GRAPH — dual-layer lanes + slow flowing traffic dashes
     SVO_EDGES.forEach(edge => {
       const p1 = getNodePos(edge.from);
       const p2 = getNodePos(edge.to);
 
       ctx.save();
-      if (edge.type === 'TUNNEL') {
-        ctx.strokeStyle = palette.tunnelLine;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.lineDashOffset = dashOffset;
+      ctx.lineCap = 'round';
 
+      if (edge.type === 'TUNNEL') {
+        // Glowing animated tunnel (underground conveyor)
+        ctx.strokeStyle = palette.tunnelLine;
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = palette.tunnelLine;
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = dashOffset;
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
       } else {
+        // Wide soft underlay (the "street")
         ctx.strokeStyle = palette.roadLine;
-        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 3.6;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
 
+        // Bright centerline
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = palette.grid;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        // Slow moving dashes to convey traffic flow
+        ctx.strokeStyle = palette.textSubtle;
+        ctx.globalAlpha = theme === 'dark' ? 0.28 : 0.5;
+        ctx.lineWidth = 1.3;
+        ctx.setLineDash([3, 22]);
+        ctx.lineDashOffset = dashOffset * 0.5;
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
@@ -308,7 +356,7 @@ export function useCanvasEngine({
       ctx.restore();
     });
 
-    // Aircraft Stands Markers
+    // Aircraft Stands Markers (stable, no layout shift; pulsing ring when relevant)
     SVO_NODES.filter(n => n.type === 'STAND').forEach(stand => {
       const pos = pctToLogical(stand.x, stand.y);
       const isSelected = selectedStandId === stand.id;
@@ -335,9 +383,24 @@ export function useCanvasEngine({
         bgColor = '#f59e0b25';
       }
 
+      // Pulsing halo for selected / active / hovered stands
+      if (isSelected || isTaskActive || isHovered) {
+        const pulse = 3 + Math.sin(now / 180) * 1.8;
+        ctx.strokeStyle = isSelected ? '#38bdf8' : isTaskActive ? '#f59e0b' : '#238636';
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([2, 4]);
+        ctx.lineDashOffset = dashOffset;
+        ctx.beginPath();
+        ctx.roundRect(boxX - pulse, boxY - pulse, boxW + pulse * 2, boxH + pulse * 2, 7);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+
       ctx.fillStyle = bgColor;
       ctx.strokeStyle = borderColor;
-      ctx.lineWidth = isSelected || isHovered || isTaskActive ? 2.5 : 1.2;
+      ctx.lineWidth = isSelected || isHovered || isTaskActive ? 2.2 : 1.1;
 
       ctx.beginPath();
       ctx.roundRect(boxX, boxY, boxW, boxH, 4);
@@ -346,7 +409,7 @@ export function useCanvasEngine({
 
       if (isSelected) {
         ctx.shadowColor = '#38bdf8';
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 10;
         ctx.stroke();
         ctx.shadowBlur = 0;
       }
@@ -356,6 +419,7 @@ export function useCanvasEngine({
       ctx.textAlign = 'center';
       ctx.fillText(stand.label, pos.x, pos.y - 2);
 
+      // Small aircraft glyph below the label
       ctx.fillStyle = isSelected ? '#38bdf8' : isTaskActive ? '#fbbf24' : '#94a3b8';
       ctx.beginPath();
       ctx.arc(pos.x, pos.y + 8, 2, 0, Math.PI * 2);
@@ -392,7 +456,16 @@ export function useCanvasEngine({
       });
     });
 
-    // STABLE VISUALIZATION FOR ALL WORKERS (No grouping, stable offsets to prevent flickering)
+    // STABLE VISUALIZATION FOR ALL WORKERS
+    // Positions are exponentially smoothed so workers glide (no jumping when a
+    // status change alters their offset) and overlap-free via a stable hash offset.
+    const smoothK = 1 - Math.exp(-dtSec * 12);
+    if (workerSmoothRef.current.size > workers.length * 3) {
+      const alive = new Set(workers.map(w => w.id));
+      for (const id of [...workerSmoothRef.current.keys()]) {
+        if (!alive.has(id)) workerSmoothRef.current.delete(id);
+      }
+    }
     workers.forEach(worker => {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
       let renderX = worker.x;
@@ -416,7 +489,16 @@ export function useCanvasEngine({
         renderY = worker.y + jitterY;
       }
 
-      const pos = pctToLogical(renderX, renderY);
+      // Exponential smoothing toward the target position → buttery glide
+      let smoothPos = workerSmoothRef.current.get(worker.id);
+      if (!smoothPos) {
+        smoothPos = { x: renderX, y: renderY };
+        workerSmoothRef.current.set(worker.id, smoothPos);
+      }
+      smoothPos.x += (renderX - smoothPos.x) * smoothK;
+      smoothPos.y += (renderY - smoothPos.y) * smoothK;
+
+      const pos = pctToLogical(smoothPos.x, smoothPos.y);
 
       ctx.save();
       let statusColor = '#238636'; // FREE = Green
@@ -424,12 +506,28 @@ export function useCanvasEngine({
       if (worker.status === 'RETURNING_TO_BASE') statusColor = '#f59e0b'; // RETURNING = Amber
       if (worker.status === 'WORKING_ON_SITE') statusColor = '#da3633'; // WORKING = Red
 
+      // Soft glow halo behind every worker
+      ctx.shadowColor = statusColor;
+      ctx.shadowBlur = 8;
+
       if (worker.status === 'FREE_PATROLLING') {
         ctx.strokeStyle = '#23863688';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, 14, 0, Math.PI * 2);
         ctx.stroke();
+      }
+
+      // Breathing ring for idle duty workers
+      if (worker.status === 'FREE_STATIONARY') {
+        const breathe = 12.5 + Math.sin(now / 420 + hash * 0.7) * 1.5;
+        ctx.globalAlpha = 0.4;
+        ctx.strokeStyle = '#238636';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, breathe, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       }
 
       ctx.fillStyle = statusColor;
@@ -440,6 +538,8 @@ export function useCanvasEngine({
       ctx.arc(pos.x, pos.y, 11.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+
+      ctx.shadowBlur = 0;
 
       ctx.fillStyle = palette.bg;
       ctx.beginPath();
@@ -457,7 +557,7 @@ export function useCanvasEngine({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, dashOffset, hoveredNodeId, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
 
   // CONTINUOUS 60 FPS ANIMATION RENDER LOOP!
   useEffect(() => {
