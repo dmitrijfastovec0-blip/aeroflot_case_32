@@ -1,4 +1,4 @@
-import { Worker, Stand, CategoryCode, TaskCrewMember, Category } from '../types/index';
+import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus } from '../types/index';
 import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, TECHNICIAN_NAMES } from '../constants/index';
 
 // 1. Find Closest Node by Percentage Coordinates
@@ -220,6 +220,85 @@ export function calculateCrewMaxEta(crew: TaskCrewMember[], slaLimitMinutes: num
     maxEtaMinutes,
     withinSla: maxEtaMinutes <= slaLimitMinutes
   };
+}
+
+// 6.1. Candidate list for a category (for "system vs intuitive" comparison & workload display)
+export interface DispatchCandidate {
+  workerId: string;
+  workerName: string;
+  categoryCode: CategoryCode;
+  status: WorkerStatus;
+  etaMinutes: number;
+  vehicleLabel: string;
+  isAvailable: boolean;
+  load: number;
+}
+
+export function getCategoryCandidates(
+  catCode: CategoryCode,
+  targetStand: Stand,
+  allWorkers: Worker[],
+  busyIds?: Set<string>,
+  loadMap?: Record<string, number>
+): DispatchCandidate[] {
+  const matches = (w: Worker) =>
+    catCode === 'A' || w.categoryCode === catCode;
+
+  const candidates: DispatchCandidate[] = allWorkers
+    .filter(matches)
+    .map(w => {
+      const isAvailable = !busyIds?.has(w.id);
+      const member = isAvailable ? calculateWorkerToStandEta(w, targetStand) : null;
+      return {
+        workerId: w.id,
+        workerName: w.name,
+        categoryCode: w.categoryCode,
+        status: w.status,
+        etaMinutes: member ? member.etaMinutes : 0,
+        vehicleLabel: member ? member.vehicleLabel : w.vehicle === 'APRON_VEHICLE' ? '🚘 Спецавтомобиль' : '🚶 Пешком',
+        isAvailable,
+        load: loadMap?.[w.id] || 0
+      };
+    });
+
+  // Available candidates first, sorted by ETA; busy ones after
+  return candidates.sort((a, b) => {
+    if (a.isAvailable !== b.isAvailable) return a.isAvailable ? -1 : 1;
+    if (a.isAvailable) return a.etaMinutes - b.etaMinutes;
+    return a.workerId.localeCompare(b.workerId);
+  });
+}
+
+// 6.2. "Intuitive" dispatcher pick: nearest by straight-line distance (paper data),
+// ignoring the real road network. Used to prove the system beats the naive choice.
+export function findNaiveNearestWorkerOfCategory(
+  catCode: CategoryCode,
+  targetStand: Stand,
+  allWorkers: Worker[],
+  busyIds?: Set<string>
+): TaskCrewMember | null {
+  const matches = (w: Worker) =>
+    catCode === 'A' || w.categoryCode === catCode;
+
+  let bestMember: TaskCrewMember | null = null;
+  let bestStraightDist = Infinity;
+
+  for (const worker of allWorkers) {
+    if (!matches(worker)) continue;
+    if (busyIds?.has(worker.id)) continue;
+    if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') continue;
+
+    const dx = worker.x - targetStand.x;
+    const dy = worker.y - targetStand.y;
+    const straightDist = Math.hypot(dx, dy);
+
+    if (straightDist < bestStraightDist) {
+      bestStraightDist = straightDist;
+      bestMember = calculateWorkerToStandEta(worker, targetStand);
+    }
+  }
+
+  return bestMember;
 }
 
 // 7. Generate Shift Personnel with Custom Counts & Vivid Apron Patrol

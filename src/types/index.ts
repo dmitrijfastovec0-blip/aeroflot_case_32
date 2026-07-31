@@ -73,11 +73,13 @@ export interface OtoTask {
   aircraftType: string;
   categoryCode: CategoryCode;
   categoryLabel: string;
+  defectLabel?: string;
   priority: TaskPriority; // AOG (1), URGENT (2), ROUTINE (3)
   status: 'QUEUED' | 'DISPATCHED' | 'WORKING' | 'COMPLETED';
   crew: TaskCrewMember[];
   arrivedCount: number;
   maxEtaMinutes: number;
+  intuitiveEtaMinutes?: number;
   slaLimitMinutes: number;
   withinSla: boolean;
   createdAt: string;

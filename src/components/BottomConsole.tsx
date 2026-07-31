@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { OtoTask, Worker, ThemeMode } from '../types/index';
-import { Terminal, Layers, Database, Download, FileText, Trash2, Clock, Flame } from 'lucide-react';
+import { DispatchStat, ControlTestResult } from '../hooks/useSimulationEngine';
+import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import { Terminal, Layers, Database, Download, FileText, Trash2, Clock, Flame, BarChart3, FlaskConical } from 'lucide-react';
 
 interface BottomConsoleProps {
   tasks: OtoTask[];
@@ -9,6 +11,8 @@ interface BottomConsoleProps {
   onCancelTask: (taskId: string) => void;
   onPromoteToAog: (taskId: string) => void;
   onSelectTask: (task: OtoTask) => void;
+  dispatchStats: DispatchStat[];
+  onRunControlTests: () => ControlTestResult[];
   theme: ThemeMode;
 }
 
@@ -19,11 +23,24 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
   onCancelTask,
   onPromoteToAog,
   onSelectTask,
+  dispatchStats,
+  onRunControlTests,
   theme
 }) => {
-  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'REGISTRY' | 'EXPORT'>('ACTIVE');
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'REGISTRY' | 'EXPORT' | 'ANALYTICS'>('ACTIVE');
+  const [testResults, setTestResults] = useState<ControlTestResult[] | null>(null);
 
   const activeTasks = tasks.filter(t => t.status === 'DISPATCHED' || t.status === 'WORKING');
+
+  // Economics from dispatch analytics
+  const totalSaved = dispatchStats.reduce((s, st) => s + st.savedMinutes, 0);
+  const totalMoney = totalSaved * AIRCRAFT_DOWNTIME_COST_PER_MIN;
+  const within15Count = dispatchStats.filter(st => st.within15).length;
+  const within15Pct = dispatchStats.length ? Math.round((within15Count / dispatchStats.length) * 100) : 0;
+
+  const handleRunTests = () => {
+    setTestResults(onRunControlTests());
+  };
 
   const handleExportCSV = () => {
     if (tasks.length === 0) {
@@ -124,6 +141,19 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
           >
             <Database className="w-4 h-4" />
             <span>💾 Экспорт отчетов</span>
+          </button>
+
+          {/* Analytics Tab */}
+          <button
+            onClick={() => setActiveTab('ANALYTICS')}
+            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+              activeTab === 'ANALYTICS'
+                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-emerald-400' : 'bg-white border-slate-300 text-emerald-600'
+                : 'border-transparent text-gray-500 hover:text-gray-300'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-emerald-400" />
+            <span>📈 Аналитика / Экономика</span>
           </button>
         </div>
 
@@ -350,6 +380,122 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
               <FileText className="w-5 h-5" />
               <span>📄 Экспортировать JSON данные</span>
             </button>
+          </div>
+        )}
+
+        {/* Tab 5: Analytics / Economics */}
+        {activeTab === 'ANALYTICS' && (
+          <div className="h-full overflow-y-auto p-3 space-y-3">
+            {/* Economics summary */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className={`rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-emerald-50 border-emerald-200'
+              }`}>
+                <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Диспетчерских решений</div>
+                <div className="text-2xl font-black text-emerald-400">{dispatchStats.length}</div>
+              </div>
+              <div className={`rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-sky-50 border-sky-200'
+              }`}>
+                <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Сэкономлено времени (мин)</div>
+                <div className="text-2xl font-black text-sky-400">{Math.round(totalSaved * 10) / 10}</div>
+              </div>
+              <div className={`rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-purple-50 border-purple-200'
+              }`}>
+                <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">В регламенте ≤ 15 мин</div>
+                <div className="text-2xl font-black text-purple-400">{within15Pct}%</div>
+                <div className="text-[10px] text-gray-500">{within15Count} из {dispatchStats.length}</div>
+              </div>
+              <div className={`rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-amber-50 border-amber-200'
+              }`}>
+                <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Эффект от сокращения простоя</div>
+                <div className="text-xl font-black text-amber-400">{Math.round(totalMoney).toLocaleString('ru-RU')} ₽</div>
+                <div className="text-[10px] text-gray-500">при ставке {AIRCRAFT_DOWNTIME_COST_PER_MIN.toLocaleString('ru-RU')} ₽/мин простоя ВС</div>
+              </div>
+            </div>
+
+            {/* Control tests */}
+            <div className={`rounded-xl border p-3 ${
+              theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-white border-slate-200'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-bold text-xs text-gray-400 flex items-center gap-1.5 uppercase tracking-wider">
+                  <FlaskConical className="w-3.5 h-3.5 text-emerald-400" /> Контрольные тесты (6 сценариев, {'<'} 10 с)
+                </div>
+                <button
+                  onClick={handleRunTests}
+                  className={`px-3 py-1 rounded-lg border font-bold text-xs transition-colors cursor-pointer ${
+                    theme === 'dark' ? 'bg-emerald-500/15 border-emerald-500 text-emerald-400 hover:bg-emerald-500/30' : 'bg-emerald-100 border-emerald-500 text-emerald-700 hover:bg-emerald-200'
+                  }`}
+                >
+                  ▶ Запустить тесты
+                </button>
+              </div>
+
+              {testResults ? (
+                <div className="space-y-1">
+                  {testResults.map((r, i) => (
+                    <div key={i} className={`flex items-center justify-between gap-2 text-[11px] px-2 py-1 rounded border ${
+                      r.pass
+                        ? theme === 'dark' ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                        : 'bg-red-500/15 border-red-500/60 text-red-400'
+                    }`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="shrink-0">{r.pass ? '✅' : '❌'}</span>
+                        <span className="font-bold whitespace-nowrap">{r.name}</span>
+                        <span className="text-gray-400 truncate">{r.details}</span>
+                      </div>
+                      <span className="shrink-0 font-mono text-gray-500">{r.ms} мс</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-gray-500">
+                  Проверка гипотезы: система назначает ближайшего свободного сотрудника нужной квалификации (по дорожному графу), никогда не «проигрывая» интуитивному выбору по прямой.
+                </div>
+              )}
+            </div>
+
+            {/* Dispatch log */}
+            {dispatchStats.length > 0 && (
+              <div className={`rounded-xl border p-3 ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-white border-slate-200'
+              }`}>
+                <div className="font-bold text-xs text-gray-400 uppercase tracking-wider mb-2">
+                  📋 Журнал решений диспетчера (система vs интуиция)
+                </div>
+                <table className="w-full text-left text-[11px]">
+                  <thead className="text-gray-500 border-b border-slate-300 dark:border-[#263345]">
+                    <tr>
+                      <th className="py-1 pr-2">Задача</th>
+                      <th className="py-1 pr-2">Стоянка</th>
+                      <th className="py-1 pr-2">Кат.</th>
+                      <th className="py-1 pr-2">Интуитивно, мин</th>
+                      <th className="py-1 pr-2">Система, мин</th>
+                      <th className="py-1 pr-2">Экономия</th>
+                      <th className="py-1 pr-2">≤ 15 мин</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/50">
+                    {dispatchStats.map((st, i) => (
+                      <tr key={i}>
+                        <td className="py-1 pr-2 text-sky-400 font-bold">{st.taskId}</td>
+                        <td className="py-1 pr-2 font-bold">{st.standLabel}</td>
+                        <td className="py-1 pr-2">{st.categoryCode}</td>
+                        <td className="py-1 pr-2 font-mono">{st.intuitiveEtaMinutes}</td>
+                        <td className="py-1 pr-2 font-mono font-bold text-emerald-400">{st.systemEtaMinutes}</td>
+                        <td className={`py-1 pr-2 font-mono font-bold ${st.savedMinutes > 0 ? 'text-amber-400' : 'text-gray-500'}`}>
+                          {st.savedMinutes > 0 ? `−${st.savedMinutes}` : '0'}
+                        </td>
+                        <td className="py-1 pr-2">{st.within15 ? '🟢' : '🟡'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

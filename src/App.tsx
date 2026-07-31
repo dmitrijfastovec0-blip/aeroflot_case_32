@@ -46,7 +46,10 @@ export function App() {
     cancelTask,
     promoteTaskToAog,
     triggerStressTest,
-    applyShiftConfig
+    applyShiftConfig,
+    dispatchStats,
+    runScenario,
+    runControlTests
   } = useSimulationEngine();
 
   // Apply Custom Shift Configuration
@@ -126,6 +129,7 @@ export function App() {
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
         onTriggerStressTest={triggerStressTest}
+        onRunScenario={runScenario}
       />
 
       {/* B & C. Central CAD Canvas & Right Task Panel */}
@@ -161,6 +165,8 @@ export function App() {
         onCancelTask={cancelTask}
         onPromoteToAog={promoteTaskToAog}
         onSelectTask={(task) => setSelectedStandId(task.standId)}
+        dispatchStats={dispatchStats}
+        onRunControlTests={runControlTests}
         theme={theme}
       />
     </div>

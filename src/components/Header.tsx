@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Worker, ThemeMode } from '../types/index';
-import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Flame } from 'lucide-react';
+import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Flame, ChevronDown, Beaker } from 'lucide-react';
 
 interface HeaderProps {
   workers: Worker[];
@@ -12,7 +12,17 @@ interface HeaderProps {
   onToggleTheme: () => void;
   onOpenShiftConfig: () => void;
   onTriggerStressTest: () => void;
+  onRunScenario: (scenarioId: string) => void;
 }
+
+const SCENARIOS: { id: string; label: string; desc: string }[] = [
+  { id: 'peak', label: '💥 Пиковая нагрузка (10 бортов)', desc: '10 вызовов на разные стоянки — проверка приоритетной очереди' },
+  { id: 'deficit', label: '⚠️ Кадровый дефицит', desc: '4 инженера на 8 вызовов — работа в дефиците ресурсов' },
+  { id: 'series', label: '📋 Серия вызовов', desc: '4 плановых вызова подряд с интервалом' },
+  { id: 'aog', label: '⚡ AOG-перехват', desc: 'Рутинный вызов + срочные AOG сверху (перехват персонала)' },
+  { id: 'remote', label: '🗺️ Удалённые стоянки', desc: 'Вызовы в северные/южные секторы с учётом дорожной сети' },
+  { id: 'aogDefect', label: '🩸 AOG-дефект (гидравлика)', desc: 'Срыв рейса: утечка гидравлики → квалификация B1' }
+];
 
 export const Header: React.FC<HeaderProps> = ({
   workers,
@@ -23,8 +33,10 @@ export const Header: React.FC<HeaderProps> = ({
   theme,
   onToggleTheme,
   onOpenShiftConfig,
-  onTriggerStressTest
+  onTriggerStressTest,
+  onRunScenario
 }) => {
+  const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const totalWorkers = workers.length;
   const freeCount = workers.filter(w => w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING').length;
   const inTransitCount = workers.filter(w => w.status === 'IN_TRANSIT').length;
@@ -41,6 +53,44 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* 2. Clean Controls & Stress Test */}
       <div className="flex items-center space-x-2.5">
+        {/* SCENARIO PRESETS DROPDOWN */}
+        <div className="relative">
+          <button
+            onClick={() => setIsScenarioOpen(prev => !prev)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-sky-500 bg-sky-500/15 hover:bg-sky-600 text-sky-400 hover:text-white font-mono font-bold text-xs transition-all shadow-md cursor-pointer uppercase tracking-wider"
+            title="Готовые демонстрационные сценарии для презентации"
+          >
+            <Beaker className="w-4 h-4 text-sky-400" />
+            <span>🧪 Сценарии</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isScenarioOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {isScenarioOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setIsScenarioOpen(false)} />
+              <div className={`absolute right-0 top-full mt-2 z-50 w-80 rounded-xl border shadow-2xl p-1.5 font-mono ${
+                theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-white border-slate-300'
+              }`}>
+                {SCENARIOS.map(sc => (
+                  <button
+                    key={sc.id}
+                    onClick={() => {
+                      setIsScenarioOpen(false);
+                      onRunScenario(sc.id);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors cursor-pointer ${
+                      theme === 'dark' ? 'hover:bg-[#121820] text-gray-200' : 'hover:bg-slate-100 text-slate-800'
+                    }`}
+                  >
+                    <div className="font-bold">{sc.label}</div>
+                    <div className={`text-[10px] ${theme === 'dark' ? 'text-gray-500' : 'text-slate-500'}`}>{sc.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
         {/* STRESS TEST BUTTON: PEAK LOAD SIMULATION */}
         <button
           onClick={onTriggerStressTest}

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Stand, CategoryCode, OtoTask, TaskCrewMember, Worker, ThemeMode, TaskPriority } from '../types/index';
-import { SVO_STANDS } from '../constants/index';
-import { findNearestFreeWorkerOfCategory, calculateCrewMaxEta } from '../services/dijkstra';
-import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck, Timer, Flame, AlertCircle } from 'lucide-react';
+import { SVO_STANDS, DEFECT_TYPES } from '../constants/index';
+import { findNearestFreeWorkerOfCategory, calculateCrewMaxEta, getCategoryCandidates, findNaiveNearestWorkerOfCategory } from '../services/dijkstra';
+import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck, Timer, Flame, AlertCircle, Crosshair, BrainCircuit } from 'lucide-react';
 
 interface RightPanelProps {
   selectedStandId: string | null;
@@ -26,6 +26,10 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   const [standId, setStandId] = useState<string>(selectedStandId || SVO_STANDS[0].id);
   const [crew, setCrew] = useState<TaskCrewMember[]>([]);
 
+  // Defect-type selector → auto-maps required qualification (catalog: defect → Cat B1/B2/A)
+  const [defectId, setDefectId] = useState<string>('');
+  const selectedDefect = DEFECT_TYPES.find(d => d.id === defectId);
+
   // Task Priority Selector (AOG, URGENT, ROUTINE)
   const [priority, setPriority] = useState<TaskPriority>('ROUTINE');
 
@@ -33,6 +37,21 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   const [slaLimitMinutes, setSlaLimitMinutes] = useState<number>(15.0);
 
   const currentStand = SVO_STANDS.find(s => s.id === standId) || SVO_STANDS[0];
+
+  // Candidate comparison: system (road graph, min ETA) vs intuitive dispatcher (straight line)
+  const { systemCandidates, naivePick } = useMemo(() => {
+    const reqCat = selectedDefect?.categoryCode || (crew.length ? crew[crew.length - 1].categoryCode : 'B1');
+    const busy = new Set(
+      workers.filter(w => w.status === 'IN_TRANSIT' || w.status === 'WORKING_ON_SITE').map(w => w.id)
+    );
+    const load: Record<string, number> = {};
+    const systemCandidates = getCategoryCandidates(reqCat, currentStand, workers, busy, load)
+      .filter(c => c.isAvailable)
+      .sort((a, b) => a.etaMinutes - b.etaMinutes)
+      .slice(0, 4);
+    const naivePick = findNaiveNearestWorkerOfCategory(reqCat, currentStand, workers, busy);
+    return { systemCandidates, naivePick };
+  }, [selectedDefect, crew, currentStand, workers]);
 
   useEffect(() => {
     if (selectedStandId) {
@@ -69,8 +88,9 @@ export const RightPanel: React.FC<RightPanelProps> = ({
       standId: currentStand.id,
       standLabel: `Стоянка ${currentStand.label}`,
       aircraftType: `${currentStand.aircraftType} (${currentStand.airline || 'ПАО «Аэрофлот»'})`,
-      categoryCode: crew[0]?.categoryCode || 'B1',
-      categoryLabel: `Бригада ОТО (${crew.length} чел.)`,
+      categoryCode: crew[0]?.categoryCode || selectedDefect?.categoryCode || 'B1',
+      categoryLabel: selectedDefect ? `ОТО · ${selectedDefect.name}` : `Бригада ОТО (${crew.length} чел.)`,
+      defectLabel: selectedDefect?.name,
       priority,
       status: 'DISPATCHED',
       crew,
@@ -143,6 +163,96 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             </option>
           ))}
         </select>
+
+        {/* DEFECT-TYPE CATALOG → REQUIRED QUALIFICATION */}
+        <div className="space-y-1.5 font-mono text-xs">
+          <label className="text-gray-400 font-bold block flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 text-orange-400" /> Тип дефекта (каталог → квалификация):
+          </label>
+          <select
+            value={defectId}
+            onChange={e => {
+              setDefectId(e.target.value);
+              setCrew([]);
+            }}
+            className={`w-full border text-xs rounded-lg p-2 font-mono focus:border-sky-500 focus:outline-none ${
+              theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-100' : 'bg-white border-slate-300 text-slate-900'
+            }`}
+          >
+            <option value="">— Не указан (ручной выбор) —</option>
+            {DEFECT_TYPES.map(d => (
+              <option key={d.id} value={d.id}>
+                {d.name} → Cat {d.categoryCode}
+              </option>
+            ))}
+          </select>
+          {selectedDefect && (
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-gray-400">Требуемая квалификация:</span>
+              <span className={`px-2 py-0.5 rounded font-bold border ${
+                selectedDefect.categoryCode === 'B1' ? 'bg-purple-900/40 text-purple-300 border-purple-700' :
+                selectedDefect.categoryCode === 'B2' ? 'bg-sky-900/40 text-sky-300 border-sky-700' :
+                'bg-emerald-900/40 text-emerald-300 border-emerald-700'
+              }`}>
+                Cat {selectedDefect.categoryCode}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* SYSTEM vs INTUITIVE DISPATCH COMPARISON */}
+        <div className={`border rounded-xl p-3 space-y-2 ${
+          theme === 'dark' ? 'bg-[#0c1620] border-[#263345]' : 'bg-sky-50 border-sky-200'
+        }`}>
+          <div className="font-bold text-[11px] text-gray-400 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <BrainCircuit className="w-3.5 h-3.5 text-sky-400" /> Сравнение: система vs интуитивный выбор
+            </span>
+            <span className="text-[10px] text-gray-500">категория: {selectedDefect?.categoryCode || 'B1'}</span>
+          </div>
+
+          {systemCandidates.length > 0 ? (
+            <>
+              <div className="space-y-1">
+                {systemCandidates.map(c => {
+                  const isSystem = systemCandidates[0].workerId === c.workerId;
+                  const isNaive = naivePick?.workerId === c.workerId;
+                  return (
+                    <div key={c.workerId} className={`flex items-center justify-between text-[11px] rounded px-2 py-1 border ${
+                      isSystem ? 'bg-sky-500/15 border-sky-500/60 text-sky-300' : theme === 'dark' ? 'bg-[#070a0e] border-[#1e293b] text-gray-300' : 'bg-white border-slate-200 text-slate-600'
+                    }`}>
+                      <span className="font-bold truncate max-w-[150px]">{c.workerName} <span className="text-gray-400 font-normal">({c.categoryCode})</span></span>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-gray-400">{c.vehicleLabel.split(' ')[0]}</span>
+                        <span className="font-bold">{c.etaMinutes} мин</span>
+                        {isSystem && <span className="px-1.5 py-0.5 rounded bg-sky-500 text-white text-[9px] font-bold">СИСТЕМА</span>}
+                        {isNaive && <span className="px-1.5 py-0.5 rounded bg-amber-500/80 text-white text-[9px] font-bold">ИНТУИТ.</span>}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {naivePick && systemCandidates[0] && (
+                <div className={`flex items-center justify-between text-[11px] border-t pt-1.5 font-bold ${
+                  theme === 'dark' ? 'border-[#263345]' : 'border-sky-200'
+                }`}>
+                  <span className="text-gray-400 flex items-center gap-1">
+                    <Crosshair className="w-3 h-3 text-amber-400" /> Интуитивно: {naivePick.workerName} — {naivePick.etaMinutes} мин
+                  </span>
+                  <span className={naivePick.etaMinutes > systemCandidates[0].etaMinutes + 0.5 ? 'text-emerald-400' : 'text-gray-400'}>
+                    {naivePick.etaMinutes > systemCandidates[0].etaMinutes + 0.5
+                      ? `система быстрее на ${Math.round((naivePick.etaMinutes - systemCandidates[0].etaMinutes) * 10) / 10} мин`
+                      : 'результаты совпадают'}
+                  </span>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-[11px] text-gray-500 text-center py-1.5">
+              Нет свободных кандидатов нужной квалификации — задача уйдёт в очередь.
+            </div>
+          )}
+        </div>
 
         {/* Priority Selector (AOG, URGENT, ROUTINE) */}
         <div className="space-y-1.5 font-mono text-xs pt-1">

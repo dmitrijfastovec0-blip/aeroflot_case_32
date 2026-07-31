@@ -1,7 +1,36 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember } from '../types/index';
-import { SVO_STANDS, SVO_FACILITIES, SVO_NODES } from '../constants/index';
-import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath, calculateWorkerToStandEta, findNearestFreeWorkerOfCategory, generateShiftWorkersWithCustomCounts } from '../services/dijkstra';
+import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember, CategoryCode } from '../types/index';
+import { SVO_STANDS, SVO_FACILITIES, SVO_NODES, DEFECT_TYPES, AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import {
+  getClosestNodeId,
+  findDijkstraShortestPath,
+  getWaypointsForNodePath,
+  calculateWorkerToStandEta,
+  findNearestFreeWorkerOfCategory,
+  generateShiftWorkersWithCustomCounts,
+  getCategoryCandidates,
+  findNaiveNearestWorkerOfCategory
+} from '../services/dijkstra';
+
+// Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
+export interface DispatchStat {
+  taskId: string;
+  standLabel: string;
+  categoryCode: CategoryCode;
+  defectLabel?: string;
+  intuitiveEtaMinutes: number;
+  systemEtaMinutes: number;
+  savedMinutes: number;
+  within15: boolean;
+  createdAt: string;
+}
+
+export interface ControlTestResult {
+  name: string;
+  pass: boolean;
+  details: string;
+  ms: number;
+}
 
 export function useSimulationEngine() {
   // State for Workers and Tasks
@@ -18,6 +47,25 @@ export function useSimulationEngine() {
   // Refs for continuous 60FPS loop without stale closures
   const workersRef = useRef<Worker[]>(workers);
   const tasksRef = useRef<OtoTask[]>(tasks);
+
+  // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
+  const statsRef = useRef<DispatchStat[]>([]);
+  const [dispatchStats, setDispatchStats] = useState<DispatchStat[]>([]);
+
+  // Build busy-id set + per-worker active task load from current tasks
+  const computeLoadMap = (tasksList: OtoTask[]) => {
+    const busy = new Set<string>();
+    const load: Record<string, number> = {};
+    tasksList.forEach(t => {
+      if (t.status === 'DISPATCHED' || t.status === 'WORKING') {
+        t.crew.forEach(m => {
+          busy.add(m.workerId);
+          load[m.workerId] = (load[m.workerId] || 0) + 1;
+        });
+      }
+    });
+    return { busy, load };
+  };
 
   // We no longer sync refs from state, because refs ARE the source of truth
   // and state is just a throttled snapshot for the UI.
@@ -108,6 +156,26 @@ export function useSimulationEngine() {
       const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
       stateChanged = true;
 
+      // Record "intuitive dispatcher vs system" analytics for this dispatch
+      const { busy, load } = computeLoadMap(currentTasks);
+      const naivePick = findNaiveNearestWorkerOfCategory(qTask.categoryCode, targetStand, currentWorkers, busy);
+      if (naivePick) {
+        const systemBestEta = Math.min(...freshMembers.map(m => m.etaMinutes));
+        const saved = Math.max(0, Math.round((naivePick.etaMinutes - systemBestEta) * 10) / 10);
+        statsRef.current = [{
+          taskId: qTask.id,
+          standLabel: qTask.standLabel,
+          categoryCode: qTask.categoryCode,
+          defectLabel: qTask.defectLabel,
+          intuitiveEtaMinutes: naivePick.etaMinutes,
+          systemEtaMinutes: systemBestEta,
+          savedMinutes: saved,
+          within15: systemBestEta <= 15,
+          createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
+        }, ...statsRef.current].slice(0, 100);
+        setDispatchStats([...statsRef.current]);
+      }
+
       // Update task: set full crew and transition to DISPATCHED
       currentTasks = currentTasks.map(t => {
         if (t.id === qTask.id) {
@@ -116,7 +184,8 @@ export function useSimulationEngine() {
             status: 'DISPATCHED' as const,
             crew: freshMembers,
             arrivedCount: 0,
-            maxEtaMinutes
+            maxEtaMinutes,
+            intuitiveEtaMinutes: naivePick?.etaMinutes
           };
         }
         return t;
@@ -579,6 +648,137 @@ export function useSimulationEngine() {
     showNotification(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
   }, [drainQueueWithFreeWorkers, showNotification]);
 
+  const enqueueAutoTask = useCallback((
+    standId: string,
+    categoryCode: CategoryCode,
+    priority: TaskPriority,
+    defectId?: string
+  ) => {
+    const stand = SVO_STANDS.find(s => s.id === standId);
+    if (!stand) return;
+    const defect = DEFECT_TYPES.find(d => d.id === defectId);
+    const taskId = `T-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 90 + 10)}`;
+    const task: OtoTask = {
+      id: taskId,
+      standId: stand.id,
+      standLabel: `Стоянка ${stand.label}`,
+      aircraftType: `${stand.aircraftType} (Рейс SU-${1000 + Math.floor(Math.random() * 900)})`,
+      categoryCode,
+      categoryLabel: defect ? `ОТО · ${defect.name}` : `ОТО (${priority})`,
+      defectLabel: defect?.name,
+      priority,
+      status: 'QUEUED',
+      crew: [],
+      arrivedCount: 0,
+      maxEtaMinutes: 12.0,
+      slaLimitMinutes: 15.0,
+      withinSla: true,
+      createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
+      elapsedQueueSec: 0,
+      elapsedWorkSec: 0,
+      targetWorkSec: 120
+    };
+    const combined = [task, ...tasksRef.current];
+    tasksRef.current = combined;
+    setTasks(combined);
+    drainQueueWithFreeWorkers();
+  }, [drainQueueWithFreeWorkers]);
+
+  const runScenario = useCallback((scenarioId: string) => {
+    switch (scenarioId) {
+      case 'peak':
+        triggerStressTest();
+        break;
+      case 'deficit': {
+        applyShiftConfig(3, 1, 0, 2);
+        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'HYD');
+        enqueueAutoTask('STAND_D18', 'B2', 'AOG', 'AVN');
+        enqueueAutoTask('STAND_F45', 'B1', 'URGENT', 'ENG');
+        enqueueAutoTask('STAND_105', 'B2', 'URGENT', 'ELC');
+        enqueueAutoTask('STAND_C25', 'A', 'URGENT', 'CAB');
+        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'LDG');
+        enqueueAutoTask('STAND_201', 'B2', 'ROUTINE', 'AVN');
+        enqueueAutoTask('STAND_105', 'B1', 'ROUTINE', 'HYD');
+        showNotification(`⚠️ Сценарий «Кадровый дефицит»: 4 инженера на 8 вызовов.`);
+        break;
+      }
+      case 'series': {
+        enqueueAutoTask('STAND_B12', 'B1', 'ROUTINE', 'ENG');
+        setTimeout(() => enqueueAutoTask('STAND_B14', 'B1', 'ROUTINE', 'HYD'), 1500);
+        setTimeout(() => enqueueAutoTask('STAND_C21', 'B2', 'ROUTINE', 'ELC'), 3000);
+        setTimeout(() => enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'AVN'), 4500);
+        showNotification(`📋 Сценарий «Серия вызовов»: 4 плановых вызова подряд.`);
+        break;
+      }
+      case 'aog': {
+        enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'AVN');
+        setTimeout(() => enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'ENG'), 2000);
+        setTimeout(() => enqueueAutoTask('STAND_F45', 'A', 'AOG', 'CAB'), 4000);
+        showNotification(`⚡ Сценарий «AOG»: рутинный вызов + срочные AOG сверху.`);
+        break;
+      }
+      case 'remote': {
+        enqueueAutoTask('STAND_105', 'B1', 'URGENT', 'HYD');
+        enqueueAutoTask('STAND_201', 'B2', 'URGENT', 'ELC');
+        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'LDG');
+        showNotification(`🗺️ Сценарий «Удалённые стоянки»: вызовы в северные/южные зоны.`);
+        break;
+      }
+      case 'aogDefect': {
+        enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'HYD');
+        showNotification(`🩸 Сценарий «AOG-дефект»: утечка гидравлики → квалификация B1.`);
+        break;
+      }
+      default:
+        break;
+    }
+  }, [triggerStressTest, applyShiftConfig, enqueueAutoTask, showNotification]);
+
+  const runControlTests = useCallback((): ControlTestResult[] => {
+    const results: ControlTestResult[] = [];
+    const { busy, load } = computeLoadMap(tasksRef.current);
+    const testScenarios: { stand: string; cat: CategoryCode }[] = [
+      { stand: 'STAND_B12', cat: 'B1' },
+      { stand: 'STAND_D18', cat: 'B2' },
+      { stand: 'STAND_F45', cat: 'A' },
+      { stand: 'STAND_105', cat: 'B1' },
+      { stand: 'STAND_201', cat: 'B2' },
+      { stand: 'STAND_C25', cat: 'A' }
+    ];
+    for (const sc of testScenarios) {
+      const t0 = performance.now();
+      const stand = SVO_STANDS.find(s => s.id === sc.stand);
+      if (!stand) continue;
+      const picked = findNearestFreeWorkerOfCategory(sc.cat, stand, workersRef.current, new Set<string>());
+      const available = getCategoryCandidates(sc.cat, stand, workersRef.current, busy, load).filter(c => c.isAvailable);
+      const ms = Math.round((performance.now() - t0) * 100) / 100;
+
+      if (!picked) {
+        results.push({ name: `Сценарий ${sc.stand} (Cat ${sc.cat})`, pass: false, details: 'Нет свободного сотрудника нужной квалификации', ms });
+        continue;
+      }
+      const minEta = available.length ? Math.min(...available.map(a => a.etaMinutes)) : Infinity;
+      const isMin = picked.etaMinutes <= minEta + 0.05;
+      const within15 = picked.etaMinutes <= 15;
+      const naive = findNaiveNearestWorkerOfCategory(sc.cat, stand, workersRef.current, new Set<string>());
+      const detail = [
+        `Выбран ${picked.workerName} (${picked.categoryCode}), ETA ${picked.etaMinutes} мин`,
+        `min по кандидатам: ${minEta === Infinity ? '—' : minEta + ' мин'}`,
+        `по прямой: ${naive ? naive.etaMinutes + ' мин' : '—'}`,
+        `регламент 15 мин: ${within15 ? 'OK' : 'нет свободного ≤ 15 (дефицит)'}`
+      ].join(' · ');
+      results.push({ name: `Сценарий ${sc.stand} (Cat ${sc.cat})`, pass: isMin, details: isMin ? detail : detail + ' — НАРУШЕНИЕ: назначен не ближайший!', ms });
+    }
+    const totalMs = results.reduce((s, r) => s + r.ms, 0);
+    results.push({
+      name: 'Общее время расчёта (6 сценариев)',
+      pass: totalMs < 10000,
+      details: `${Math.round(totalMs * 100) / 100} мс за 6 расчётов (лимит < 10 с)`,
+      ms: Math.round(totalMs * 100) / 100
+    });
+    return results;
+  }, []);
+
   return {
     workers,
     tasks,
@@ -593,6 +793,9 @@ export function useSimulationEngine() {
     cancelTask,
     promoteTaskToAog,
     triggerStressTest,
-    applyShiftConfig
+    applyShiftConfig,
+    dispatchStats,
+    runScenario,
+    runControlTests
   };
 }

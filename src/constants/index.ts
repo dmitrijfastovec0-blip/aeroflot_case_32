@@ -179,3 +179,25 @@ export const TECHNICIAN_NAMES = [
   'Попов Е. В.', 'Васильев Н. О.', 'Соколов И. К.', 'Михайлов А. Г.', 'Новиков П. Д.',
   'Федоров С. С.', 'Морозов А. И.', 'Волков В. В.', 'Алексеев Д. М.', 'Лебедев К. А.'
 ];
+
+// Каталог типов неисправностей ВС -> требуемая квалификация
+export interface DefectType {
+  id: string;
+  name: string;
+  categoryCode: 'B1' | 'B2' | 'A';
+  description: string;
+}
+
+export const DEFECT_TYPES: DefectType[] = [
+  { id: 'HYD', name: 'Утечка гидравлики / масла', categoryCode: 'B1', description: 'Контроль контуров гидросистемы, планер и двигатели' },
+  { id: 'ENG', name: 'Помпаж / вибрация двигателя', categoryCode: 'B1', description: 'Силовая установка, узлы крепления' },
+  { id: 'LDG', name: 'Дефект шасси / тормозов', categoryCode: 'B1', description: 'Стойки, колеса, тормозная система' },
+  { id: 'AVN', name: 'Отказ авионики / индикации', categoryCode: 'B2', description: 'Электроника, дисплеи, системы управления' },
+  { id: 'ELC', name: 'Электрика / генератор', categoryCode: 'B2', description: 'Бортовая сеть, ВСУ, генераторы' },
+  { id: 'CAB', name: 'Отделка салона / кресла', categoryCode: 'A', description: 'Мелкий ремонт интерьера, багажных полок' },
+  { id: 'RAMP', name: 'Повреждение обшивки / створок', categoryCode: 'A', description: 'Внешний осмотр, лючки, обтекатели' }
+];
+
+// Справочная стоимость простоя ВС (₽/мин) для экономического обоснования
+// Значение настраиваемое — команда подставляет обоснованную оценку для ПАО «Аэрофлот».
+export const AIRCRAFT_DOWNTIME_COST_PER_MIN = 8000;
