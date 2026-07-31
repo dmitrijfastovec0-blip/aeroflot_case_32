@@ -1,6 +1,6 @@
 import React from 'react';
 import { Worker, ThemeMode } from '../types';
-import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Wrench, Map } from 'lucide-react';
+import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Wrench, Map, Flame } from 'lucide-react';
 
 interface HeaderBarProps {
   workers: Worker[];
@@ -15,6 +15,7 @@ interface HeaderBarProps {
   onToggleDevMode: () => void;
   showMapSublayer: boolean;
   onToggleMapSublayer: () => void;
+  onTriggerStressTest: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -29,7 +30,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   isDevMode,
   onToggleDevMode,
   showMapSublayer,
-  onToggleMapSublayer
+  onToggleMapSublayer,
+  onTriggerStressTest
 }) => {
   const totalWorkers = workers.length;
   const freeCount = workers.filter(w => w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING').length;
@@ -50,8 +52,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         </div>
       </div>
 
-      {/* 2. Controls & Calibration Buttons */}
+      {/* 2. Controls, Stress Test, & Calibration Buttons */}
       <div className="flex items-center space-x-2.5">
+        {/* STRESS TEST BUTTON: PEAK LOAD SIMULATION */}
+        <button
+          onClick={onTriggerStressTest}
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-red-500 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white font-mono font-bold text-xs transition-all shadow-md cursor-pointer uppercase tracking-wider group"
+          title="Одномоментно сгенерировать 10 вызовов ОТО на разные стоянки SVO для проверки работы приоритетной очереди!"
+        >
+          <Flame className="w-4 h-4 text-red-500 group-hover:text-white animate-pulse" />
+          <span>💥 Сгенерировать дефицит (10 бортов)</span>
+        </button>
+
         {/* Toggle SVO Map Background Sublayer */}
         <button
           onClick={onToggleMapSublayer}
@@ -63,7 +75,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           title="Показать / Скрыть растровую подложку схемы Шереметьево (svo.png)"
         >
           <Map className="w-3.5 h-3.5" />
-          <span>🗺️ Подложка SVO</span>
+          <span>🗺️ Подложка</span>
         </button>
 
         {/* Toggle Dev Calibration Mode */}
@@ -77,7 +89,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           title="Включить / Выключить режим разметки координат при клике на Canvas"
         >
           <Wrench className="w-3.5 h-3.5 text-purple-400" />
-          <span>🛠️ Разметка (Dev)</span>
+          <span>🛠️ Разметка</span>
         </button>
 
         {/* Pause / Resume Button */}

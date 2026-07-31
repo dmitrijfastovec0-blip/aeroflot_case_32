@@ -7,6 +7,8 @@ export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE';
 
 export type ThemeMode = 'dark' | 'light';
 
+export type TaskPriority = 'AOG' | 'URGENT' | 'ROUTINE';
+
 export interface Facility {
   id: string;
   name: string;
@@ -72,15 +74,17 @@ export interface OtoTask {
   aircraftType: string;
   categoryCode: CategoryCode;
   categoryLabel: string;
-  status: 'DISPATCHED' | 'WORKING' | 'COMPLETED';
+  priority: TaskPriority; // AOG (1), URGENT (2), ROUTINE (3)
+  status: 'QUEUED' | 'DISPATCHED' | 'WORKING' | 'COMPLETED';
   crew: TaskCrewMember[];
   arrivedCount: number;
   maxEtaMinutes: number;
   slaLimitMinutes: number;
   withinSla: boolean;
   createdAt: string;
-  elapsedWorkSec: number; // Current work time in seconds (0 to 120s)
-  targetWorkSec: number;  // 120.0 seconds (2 real minutes)
+  queueStartTimeMs?: number; // Timestamp when added to queue
+  elapsedWorkSec: number;    // Elapsed work time in seconds (0 to 120s)
+  targetWorkSec: number;     // Target 120s (2 real minutes)
 }
 
 export interface HoverTooltipData {

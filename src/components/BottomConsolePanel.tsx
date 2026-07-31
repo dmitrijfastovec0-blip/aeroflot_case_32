@@ -1,54 +1,60 @@
 import React, { useState } from 'react';
 import { OtoTask, Worker, ThemeMode } from '../types';
-import { Terminal, Layers, Database, Download, FileText, Trash2 } from 'lucide-react';
+import { Terminal, Layers, Database, Download, FileText, Trash2, Clock, Flame, Zap } from 'lucide-react';
 
 interface BottomConsolePanelProps {
   tasks: OtoTask[];
+  queuedTasks: OtoTask[];
   workers: Worker[];
   onCancelTask: (taskId: string) => void;
+  onPromoteToAog: (taskId: string) => void;
   onSelectTask: (task: OtoTask) => void;
   theme: ThemeMode;
 }
 
 export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
   tasks,
+  queuedTasks,
   workers,
   onCancelTask,
+  onPromoteToAog,
   onSelectTask,
   theme
 }) => {
-  const [activeTab, setActiveTab] = useState<'TASKS' | 'REGISTRY' | 'EXPORT'>('TASKS');
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'REGISTRY' | 'EXPORT'>('ACTIVE');
+
+  const activeTasks = tasks.filter(t => t.status === 'DISPATCHED' || t.status === 'WORKING');
 
   const handleExportCSV = () => {
     if (tasks.length === 0) {
-      alert('Нет активных задач для экспорта');
+      alert('Нет задач для экспорта');
       return;
     }
-    const headers = ['ID_Задачи', 'Стоянка', 'Борт', 'Бригада_Чел', 'Прибыло_Спецов', 'Макс_ETA_Мин', 'Лимит_SLA_Мин', 'SLA_Статус', 'Время_Создания'];
+    const headers = ['ID_Задачи', 'Стоянка', 'Борт', 'Приоритет', 'Статус', 'Бригада_Чел', 'Прибыло_Спецов', 'Макс_ETA_Мин', 'SLA_Статус'];
     const rows = tasks.map(t => [
       t.id,
       `"${t.standLabel}"`,
       `"${t.aircraftType}"`,
+      t.priority,
+      t.status,
       t.crew.length,
       `${t.arrivedCount}/${t.crew.length}`,
       t.maxEtaMinutes,
-      t.slaLimitMinutes,
-      t.withinSla ? 'В рамках SLA' : 'Превышение SLA',
-      t.createdAt
+      t.withinSla ? 'В рамках SLA' : 'Превышение SLA'
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `SVO_OTO_Active_Tasks_${Date.now()}.csv`);
+    link.setAttribute('download', `SVO_OTO_Tasks_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   const handleExportJSON = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify({ activeTasks: tasks, shiftWorkers: workers }, null, 2));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify({ tasks, workers }, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
     downloadAnchor.setAttribute('download', `SVO_OTO_Dispatch_${Date.now()}.json`);
@@ -66,35 +72,53 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
         theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-100 border-slate-300'
       }`}>
         <div className="flex space-x-2">
+          {/* Active Tasks Tab */}
           <button
-            onClick={() => setActiveTab('TASKS')}
-            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors ${
-              activeTab === 'TASKS'
+            onClick={() => setActiveTab('ACTIVE')}
+            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+              activeTab === 'ACTIVE'
                 ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-sky-400' : 'bg-white border-slate-300 text-sky-600'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
             <Terminal className="w-4 h-4" />
-            <span>📋 АКТИВНЫЕ ЗАДАЧИ ПЕРРОНА ({tasks.length})</span>
+            <span>📜 Активные задачи ({activeTasks.length})</span>
           </button>
 
+          {/* QUEUED TASKS TAB (Highlighted amber if M > 0) */}
+          <button
+            onClick={() => setActiveTab('QUEUED')}
+            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+              queuedTasks.length > 0 ? 'bg-amber-500/20 text-amber-400 border-amber-500 animate-pulse' : ''
+            } ${
+              activeTab === 'QUEUED'
+                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-white border-slate-300 text-amber-600'
+                : 'border-transparent text-gray-500 hover:text-gray-300'
+            }`}
+          >
+            <Clock className="w-4 h-4 text-amber-400" />
+            <span>⏳ Очередь ожидания ({queuedTasks.length})</span>
+          </button>
+
+          {/* Registry Tab */}
           <button
             onClick={() => setActiveTab('REGISTRY')}
-            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors ${
+            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
               activeTab === 'REGISTRY'
                 ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-emerald-400' : 'bg-white border-slate-300 text-emerald-600'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>📊 ДИСЛОКАЦИЯ СМЕНЫ ({workers.length})</span>
+            <span>📊 Реестр смены ({workers.length})</span>
           </button>
 
+          {/* Export Tab */}
           <button
             onClick={() => setActiveTab('EXPORT')}
-            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors ${
+            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
               activeTab === 'EXPORT'
-                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-white border-slate-300 text-amber-600'
+                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-purple-400' : 'bg-white border-slate-300 text-purple-600'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
@@ -110,9 +134,9 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
 
       {/* Tab Content */}
       <div className={`flex-1 overflow-y-auto p-2.5 ${theme === 'dark' ? 'bg-[#070a0e]' : 'bg-white'}`}>
-        {/* Tab 1: Active Tasks Table */}
-        {activeTab === 'TASKS' && (
-          tasks.length > 0 ? (
+        {/* Tab 1: Active Dispatched Tasks */}
+        {activeTab === 'ACTIVE' && (
+          activeTasks.length > 0 ? (
             <table className="w-full text-left border-collapse text-xs md:text-sm">
               <thead className={`sticky top-0 border-b ${
                 theme === 'dark' ? 'bg-[#121820] text-gray-400 border-[#263345]' : 'bg-slate-100 text-slate-600 border-slate-300'
@@ -120,15 +144,15 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
                 <tr>
                   <th className="py-1.5 px-3">№ Задачи</th>
                   <th className="py-1.5 px-3">Стоянка / Борт</th>
+                  <th className="py-1.5 px-3">Приоритет</th>
                   <th className="py-1.5 px-3">Состав бригады</th>
                   <th className="py-1.5 px-3">Прибытие спецов</th>
                   <th className="py-1.5 px-3">Время сбора (ETA)</th>
-                  <th className="py-1.5 px-3">Статус SLA</th>
                   <th className="py-1.5 px-3 text-right">Действие</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/60">
-                {tasks.map((t) => (
+                {activeTasks.map((t) => (
                   <tr
                     key={t.id}
                     onClick={() => onSelectTask(t)}
@@ -138,22 +162,24 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
                     <td className="py-2 px-3 font-bold">
                       {t.standLabel} <span className="text-gray-400 text-xs font-normal">({t.aircraftType})</span>
                     </td>
+                    <td className="py-2 px-3">
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        t.priority === 'AOG' ? 'bg-red-500/20 text-red-400 border border-red-500' :
+                        t.priority === 'URGENT' ? 'bg-amber-500/20 text-amber-400 border border-amber-500' :
+                        'bg-sky-500/20 text-sky-400 border border-sky-500'
+                      }`}>
+                        {t.priority}
+                      </span>
+                    </td>
                     <td className="py-2 px-3 text-purple-400 dark:text-purple-300 font-bold">
                       {t.crew.length} чел. <span className="text-gray-400 text-xs font-normal">({t.crew.map(c => c.categoryCode).join(', ')})</span>
                     </td>
-                    <td className="py-2 px-3">
-                      <span className={`font-bold ${t.arrivedCount === t.crew.length ? 'text-red-400' : 'text-emerald-500'}`}>
+                    <td className="py-2 px-3 font-bold">
+                      <span className={t.arrivedCount === t.crew.length ? 'text-red-400' : 'text-emerald-500'}>
                         {t.arrivedCount} / {t.crew.length} {t.arrivedCount === t.crew.length ? '🔴 На ТО' : '🔵 В пути'}
                       </span>
                     </td>
                     <td className="py-2 px-3 font-bold">{t.maxEtaMinutes} мин</td>
-                    <td className="py-2 px-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                        t.withinSla ? 'bg-[#238636]/20 text-emerald-400 border border-[#238636]/60' : 'bg-[#da3633]/20 text-red-400 border border-[#da3633]/60'
-                      }`}>
-                        {t.withinSla ? `🟢 ДО ${t.slaLimitMinutes.toFixed(0)} МИН` : '🔴 ПРЕВЫШЕНИЕ SLA'}
-                      </span>
-                    </td>
                     <td className="py-2 px-3 text-right">
                       <button
                         onClick={(e) => {
@@ -161,10 +187,9 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
                           onCancelTask(t.id);
                         }}
                         className="px-3 py-1 bg-red-500/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg border border-red-500 transition-colors text-xs font-bold flex items-center space-x-1.5 ml-auto cursor-pointer"
-                        title="Отменить задачу и вернуть инженеров на базы"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>🗑️ Отменить задачу</span>
+                        <span>🗑️ Отменить</span>
                       </button>
                     </td>
                   </tr>
@@ -173,12 +198,95 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
             </table>
           ) : (
             <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-              Активных задач нет. Выберите стоянку на карте и воспользуйтесь быстрой комплектацией бригады.
+              Активных вызовных задач нет.
             </div>
           )
         )}
 
-        {/* Tab 2: Registry */}
+        {/* Tab 2: QUEUED TASKS TAB WITH AOG PROMOTIONAL BUTTON */}
+        {activeTab === 'QUEUED' && (
+          queuedTasks.length > 0 ? (
+            <table className="w-full text-left border-collapse text-xs md:text-sm">
+              <thead className={`sticky top-0 border-b ${
+                theme === 'dark' ? 'bg-[#121820] text-gray-400 border-[#263345]' : 'bg-slate-100 text-slate-600 border-slate-300'
+              }`}>
+                <tr>
+                  <th className="py-1.5 px-3">№ Задачи</th>
+                  <th className="py-1.5 px-3">Стоянка / Борт</th>
+                  <th className="py-1.5 px-3">Приоритет</th>
+                  <th className="py-1.5 px-3">Необходимая квалификация</th>
+                  <th className="py-1.5 px-3">Время в очереди</th>
+                  <th className="py-1.5 px-3 text-right">Диспетчерское управление</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/60">
+                {queuedTasks.map((t) => {
+                  const waitSec = Math.floor((Date.now() - (t.queueStartTimeMs || Date.now())) / 1000);
+                  const waitMinStr = `${Math.floor(waitSec / 60)} мин ${waitSec % 60} сек`;
+
+                  return (
+                    <tr
+                      key={t.id}
+                      onClick={() => onSelectTask(t)}
+                      className="hover:bg-amber-500/10 cursor-pointer transition-colors"
+                    >
+                      <td className="py-2 px-3 text-amber-400 font-bold">{t.id}</td>
+                      <td className="py-2 px-3 font-bold">
+                        {t.standLabel} <span className="text-gray-400 text-xs font-normal">({t.aircraftType})</span>
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                          t.priority === 'AOG' ? 'bg-red-500/25 text-red-400 border border-red-500' :
+                          t.priority === 'URGENT' ? 'bg-amber-500/25 text-amber-400 border border-amber-500' :
+                          'bg-sky-500/25 text-sky-400 border border-sky-500'
+                        }`}>
+                          {t.priority}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-purple-300 font-bold">
+                        Требуется Cat {t.categoryCode}
+                      </td>
+                      <td className="py-2 px-3 text-amber-400 font-bold">
+                        ⏳ {waitMinStr}
+                      </td>
+                      <td className="py-2 px-3 text-right flex items-center justify-end space-x-2">
+                        {t.priority !== 'AOG' && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPromoteToAog(t.id);
+                            }}
+                            className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs flex items-center space-x-1 transition-colors cursor-pointer"
+                            title="Поднять задачу в самое начало очереди (Приоритет AOG)"
+                          >
+                            <Flame className="w-3.5 h-3.5" />
+                            <span>⚡ Повысить до AOG</span>
+                          </button>
+                        )}
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCancelTask(t.id);
+                          }}
+                          className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg font-bold text-xs transition-colors cursor-pointer"
+                        >
+                          Отмена
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+              🟢 Очередь ожидания пуста. Все вызовы успешно укомплектованы инженерами.
+            </div>
+          )
+        )}
+
+        {/* Tab 3: Registry */}
         {activeTab === 'REGISTRY' && (
           <table className="w-full text-left border-collapse text-xs md:text-sm">
             <thead className={`sticky top-0 border-b ${
@@ -220,12 +328,12 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
           </table>
         )}
 
-        {/* Tab 3: Export */}
+        {/* Tab 4: Export */}
         {activeTab === 'EXPORT' && (
           <div className="h-full flex items-center justify-center space-x-6 p-4">
             <button
               onClick={handleExportCSV}
-              className={`flex items-center space-x-2 font-bold px-6 py-3 rounded-xl border transition-colors ${
+              className={`flex items-center space-x-2 font-bold px-6 py-3 rounded-xl border transition-colors cursor-pointer ${
                 theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-emerald-400 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-emerald-700 border-slate-300'
               }`}
             >
@@ -235,7 +343,7 @@ export const BottomConsolePanel: React.FC<BottomConsolePanelProps> = ({
 
             <button
               onClick={handleExportJSON}
-              className={`flex items-center space-x-2 font-bold px-6 py-3 rounded-xl border transition-colors ${
+              className={`flex items-center space-x-2 font-bold px-6 py-3 rounded-xl border transition-colors cursor-pointer ${
                 theme === 'dark' ? 'bg-[#121820] hover:bg-[#1e293b] text-sky-400 border-[#263345]' : 'bg-slate-100 hover:bg-slate-200 text-sky-700 border-slate-300'
               }`}
             >

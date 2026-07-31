@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Stand, CategoryCode, OtoTask, TaskCrewMember, Worker, ThemeMode } from '../types';
+import { Stand, CategoryCode, OtoTask, TaskCrewMember, Worker, ThemeMode, TaskPriority } from '../types';
 import { SVO_STANDS } from '../constants';
 import { findNearestFreeWorkerOfCategory, calculateCrewMaxEta } from '../utils/dispatchLogic';
-import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck, Timer } from 'lucide-react';
+import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck, Timer, Flame, AlertCircle } from 'lucide-react';
 
 interface RightDispatcherPanelProps {
   selectedStandId: string | null;
@@ -26,6 +26,9 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
   const [standId, setStandId] = useState<string>(selectedStandId || SVO_STANDS[0].id);
   const [crew, setCrew] = useState<TaskCrewMember[]>([]);
 
+  // Task Priority Selector (AOG, URGENT, ROUTINE)
+  const [priority, setPriority] = useState<TaskPriority>('ROUTINE');
+
   // INTERACTIVE SLA LIMIT INPUT (Default 15.0 min, editable by user!)
   const [slaLimitMinutes, setSlaLimitMinutes] = useState<number>(15.0);
 
@@ -44,11 +47,10 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
     const nearestMember = findNearestFreeWorkerOfCategory(catCode, currentStand, workers, alreadySelectedIds);
 
     if (!nearestMember) {
-      alert(`⚠️ Нет свободных доступных специалистов категории ${catCode}!`);
-      return;
+      alert(`⚠️ Нет свободных доступных специалистов категории ${catCode}! Задача будет помещена в ОЧЕРЕДЬ ОЖИДАНИЯ.`);
+    } else {
+      setCrew(prev => [...prev, nearestMember]);
     }
-
-    setCrew(prev => [...prev, nearestMember]);
   };
 
   const handleRemoveWorker = (workerId: string) => {
@@ -61,10 +63,6 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
   // Submit & Launch Task Handler
   const handleLaunchTaskSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (crew.length === 0) {
-      alert('⚠️ Добавьте хотя бы одного специалиста в бригаду!');
-      return;
-    }
 
     const newTask: OtoTask = {
       id: `TASK-${Date.now().toString().slice(-5)}`,
@@ -73,10 +71,11 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
       aircraftType: `${currentStand.aircraftType} (${currentStand.airline || 'ПАО «Аэрофлот»'})`,
       categoryCode: crew[0]?.categoryCode || 'B1',
       categoryLabel: `Бригада ОТО (${crew.length} чел.)`,
+      priority,
       status: 'DISPATCHED',
       crew,
       arrivedCount: 0,
-      maxEtaMinutes,
+      maxEtaMinutes: maxEtaMinutes || 10.0,
       slaLimitMinutes,
       withinSla,
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
@@ -84,7 +83,7 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
       targetWorkSec: 120
     };
 
-    if (!withinSla) {
+    if (crew.length > 0 && !withinSla) {
       onTriggerSlaAlert(newTask);
     } else {
       onLaunchTask(newTask);
@@ -92,7 +91,6 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
     }
   };
 
-  // Helper for formatting seconds to MM:SS
   const formatSec = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
@@ -144,6 +142,51 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
           ))}
         </select>
 
+        {/* Priority Selector (AOG, URGENT, ROUTINE) */}
+        <div className="space-y-1.5 font-mono text-xs pt-1">
+          <label className="text-gray-400 font-bold block">Приоритет вызова:</label>
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPriority('AOG')}
+              className={`py-2 px-2 rounded-lg border text-center font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1 ${
+                priority === 'AOG'
+                  ? 'bg-red-500/25 border-red-500 text-red-400 font-bold shadow-md'
+                  : theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-400' : 'bg-white border-slate-300 text-slate-700'
+              }`}
+            >
+              <Flame className="w-3.5 h-3.5 text-red-500" />
+              <span>AOG (Срыв)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPriority('URGENT')}
+              className={`py-2 px-2 rounded-lg border text-center font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1 ${
+                priority === 'URGENT'
+                  ? 'bg-amber-500/25 border-amber-500 text-amber-400 font-bold shadow-md'
+                  : theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-400' : 'bg-white border-slate-300 text-slate-700'
+              }`}
+            >
+              <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+              <span>URGENT</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPriority('ROUTINE')}
+              className={`py-2 px-2 rounded-lg border text-center font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1 ${
+                priority === 'ROUTINE'
+                  ? 'bg-sky-500/25 border-sky-500 text-sky-400 font-bold shadow-md'
+                  : theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-400' : 'bg-white border-slate-300 text-slate-700'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-sky-400" />
+              <span>ROUTINE</span>
+            </button>
+          </div>
+        </div>
+
         <div className={`font-mono text-xs p-3 rounded-lg border space-y-1.5 ${
           theme === 'dark' ? 'bg-[#070a0e] border-[#1e293b] text-gray-300' : 'bg-white border-slate-200 text-slate-700'
         }`}>
@@ -158,61 +201,68 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
         </div>
       </div>
 
-      {/* Active Task Arrival & Work Duration Monitoring */}
+      {/* Active Task Arrival & Work Duration Monitoring / QUEUED STATE */}
       {activeTaskForStand ? (
         <div className={`border rounded-xl p-4 space-y-3 font-mono ${
           theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-50 border-slate-200'
         }`}>
           <div className="flex items-center justify-between border-b border-slate-300 dark:border-[#263345] pb-2">
             <span className="font-bold text-sky-400 text-sm flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-sky-400" /> Мониторинг выполнения задачи
+              <Clock className="w-4 h-4 text-sky-400" /> Мониторинг задачи
             </span>
             <span className="text-xs text-gray-400">{activeTaskForStand.id}</span>
           </div>
 
-          <div className={`p-3 rounded-lg border space-y-2.5 ${
-            theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200'
-          }`}>
-            {/* Step 1: Crew Arrival */}
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Сбор и прибытие спецов:</span>
-              <span className="font-bold text-emerald-500 text-sm">
-                {activeTaskForStand.arrivedCount} / {activeTaskForStand.crew.length} спецов
-              </span>
-            </div>
-
-            <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-emerald-500 h-full transition-all duration-300"
-                style={{ width: `${(activeTaskForStand.arrivedCount / activeTaskForStand.crew.length) * 100}%` }}
-              />
-            </div>
-
-            {/* Step 2: 2 Real Minutes Maintenance Work Progress Timer */}
-            {activeTaskForStand.arrivedCount === activeTaskForStand.crew.length && (
-              <div className="space-y-1.5 border-t border-slate-200 dark:border-[#263345] pt-2">
-                <div className="flex justify-between text-xs items-center">
-                  <span className="text-amber-400 font-bold flex items-center gap-1">
-                    <Timer className="w-3.5 h-3.5 animate-spin" /> Таймер ТО (2 мин):
-                  </span>
-                  <span className="font-bold text-amber-400 text-sm">
-                    {formatSec(activeTaskForStand.elapsedWorkSec || 0)} / 02:00 ({Math.round(((activeTaskForStand.elapsedWorkSec || 0) / 120) * 100)}%)
-                  </span>
-                </div>
-
-                <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2.5 overflow-hidden p-0.5">
-                  <div
-                    className="bg-amber-400 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${Math.min(100, ((activeTaskForStand.elapsedWorkSec || 0) / 120) * 100)}%` }}
-                  />
-                </div>
-
-                <div className="text-[11px] text-gray-400 text-center pt-0.5">
-                  По истечении 2 минут ТО плашка автоматически исчезнет, а инженеры вернутся на базу.
-                </div>
+          {activeTaskForStand.status === 'QUEUED' ? (
+            /* QUEUED BADGE UPON STAFF DEFICIT */
+            <div className="bg-amber-500/15 border border-amber-500/60 rounded-xl p-3.5 space-y-2 text-amber-300">
+              <div className="flex items-center space-x-2 font-bold text-sm">
+                <Clock className="w-4 h-4 text-amber-400 animate-spin" />
+                <span>⏳ В ОЧЕРЕДИ ОЖИДАНИЯ (Дефицит персонала)</span>
               </div>
-            )}
-          </div>
+              <div className="text-xs text-amber-200">
+                Ожидание освобождения специалистов. Задача поставлена в приоритетную очередь ({activeTaskForStand.priority}).
+              </div>
+            </div>
+          ) : (
+            <div className={`p-3 rounded-lg border space-y-2.5 ${
+              theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200'
+            }`}>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-400">Сбор и прибытие спецов:</span>
+                <span className="font-bold text-emerald-500 text-sm">
+                  {activeTaskForStand.arrivedCount} / {activeTaskForStand.crew.length} спецов
+                </span>
+              </div>
+
+              <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-emerald-500 h-full transition-all duration-300"
+                  style={{ width: `${(activeTaskForStand.arrivedCount / activeTaskForStand.crew.length) * 100}%` }}
+                />
+              </div>
+
+              {activeTaskForStand.arrivedCount === activeTaskForStand.crew.length && (
+                <div className="space-y-1.5 border-t border-slate-200 dark:border-[#263345] pt-2">
+                  <div className="flex justify-between text-xs items-center">
+                    <span className="text-amber-400 font-bold flex items-center gap-1">
+                      <Timer className="w-3.5 h-3.5 animate-spin" /> Таймер ТО (2 мин):
+                    </span>
+                    <span className="font-bold text-amber-400 text-sm">
+                      {formatSec(activeTaskForStand.elapsedWorkSec || 0)} / 02:00 ({Math.round(((activeTaskForStand.elapsedWorkSec || 0) / 120) * 100)}%)
+                    </span>
+                  </div>
+
+                  <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2.5 overflow-hidden p-0.5">
+                    <div
+                      className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${Math.min(100, ((activeTaskForStand.elapsedWorkSec || 0) / 120) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-1.5">
             {activeTaskForStand.crew.map(member => {
@@ -380,8 +430,7 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
 
             <button
               onClick={handleLaunchTaskSubmit}
-              disabled={crew.length === 0}
-              className="w-full flex items-center justify-center space-x-2 bg-[#da3633] hover:bg-[#b91c1c] disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl border border-red-600 shadow-lg transition-colors uppercase tracking-wider font-mono text-sm mt-auto cursor-pointer"
+              className="w-full flex items-center justify-center space-x-2 bg-[#da3633] hover:bg-[#b91c1c] text-white font-bold py-3 px-4 rounded-xl border border-red-600 shadow-lg transition-colors uppercase tracking-wider font-mono text-sm mt-auto cursor-pointer"
             >
               <Rocket className="w-5 h-5" />
               <span>🚀 Отправить людей на задание</span>
