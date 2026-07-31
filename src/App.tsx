@@ -65,12 +65,9 @@ export function App() {
 
   // Task Completion Callback
   const handleTaskCompleted = useCallback((completedTask: OtoTask) => {
-    setNotificationBanner(`✅ 2 мин ТО завершено на стоянке ${completedTask.standLabel}! Карточка задачи закрыта.`);
+    setNotificationBanner(`✅ 2 мин ТО завершено на стоянке ${completedTask.standLabel}! Инженеры освобождены.`);
     setTimeout(() => setNotificationBanner(null), 5000);
-
-    // Remove completed task
-    setTasks(prev => prev.filter(t => t.id !== completedTask.id));
-  }, [setTasks]);
+  }, []);
 
   // Worker Simulation Hook
   const {
@@ -85,13 +82,14 @@ export function App() {
     tasks,
     onTasksUpdated: setTasks,
     onTaskCompleted: handleTaskCompleted,
-    onWorkerReleased: (releasedWorker: Worker) => {
-      const { assignedTask, assignedWorkerId, waypoints } = tryAutoAssignQueuedTasks(releasedWorker, []);
-      if (assignedTask && assignedWorkerId && waypoints) {
-        dispatchWorkerToTask(assignedWorkerId, assignedTask, waypoints);
-        setNotificationBanner(`⚡ Спец ${releasedWorker.name} авто-перенаправлен на очередную задачу ${assignedTask.id} (${assignedTask.standLabel})!`);
+    onAutoAssignQueue: (releasedWorker: Worker) => {
+      const { assignedTask, waypoints } = tryAutoAssignQueuedTasks(releasedWorker, workersRef.current);
+      if (assignedTask && waypoints && waypoints.length > 0) {
+        setNotificationBanner(`⚡ Спец ${releasedWorker.name} перенаправлен на очередную задачу ${assignedTask.id} (${assignedTask.standLabel})!`);
         setTimeout(() => setNotificationBanner(null), 5000);
+        return { assignedTask, waypoints };
       }
+      return {};
     }
   });
 

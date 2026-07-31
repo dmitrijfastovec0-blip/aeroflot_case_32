@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Worker, OtoTask, WorkerStatus } from '../types/index';
-import { SVO_NODES } from '../constants/index';
+import { SVO_NODES, SVO_FACILITIES } from '../constants/index';
 import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath } from '../services/dijkstra';
 
 interface UseWorkerSimulationProps {
@@ -9,8 +9,8 @@ interface UseWorkerSimulationProps {
   isPaused: boolean;
   tasks: OtoTask[];
   onTasksUpdated: (updater: (prev: OtoTask[]) => OtoTask[]) => void;
-  onTaskCompleted: (task: OtoTask) => void;
-  onWorkerReleased: (worker: Worker) => void;
+  onTaskCompleted: (completedTask: OtoTask) => void;
+  onAutoAssignQueue: (releasedWorker: Worker) => { assignedTask?: OtoTask; waypoints?: { x: number; y: number }[] };
 }
 
 export function useWorkerSimulation({
@@ -20,12 +20,12 @@ export function useWorkerSimulation({
   tasks,
   onTasksUpdated,
   onTaskCompleted,
-  onWorkerReleased
+  onAutoAssignQueue
 }: UseWorkerSimulationProps) {
   const workersRef = useRef<Worker[]>(initialWorkers);
   const [workersState, setWorkersState] = useState<Worker[]>(initialWorkers);
 
-  // Sync initial workers when shift changes
+  // Sync initial workers when shift is reconfigured
   useEffect(() => {
     workersRef.current = initialWorkers;
     setWorkersState([...initialWorkers]);
@@ -42,22 +42,40 @@ export function useWorkerSimulation({
       lastTimeRef.current = now;
 
       if (!isPaused) {
-        let workersUpdated = false;
+        let workersMoved = false;
 
-        // 1. UPDATE WORKER POSITIONS VIA LERP
+        // -------------------------------------------------------------
+        // STEP 1: LERP PHYSICS ENGINE FOR ALL WORKERS
+        // -------------------------------------------------------------
         workersRef.current = workersRef.current.map((worker): Worker => {
-          // A. IN_TRANSIT or RETURNING_TO_BASE
           if ((worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') && worker.pathWaypoints && worker.pathWaypoints.length > 1) {
-            workersUpdated = true;
+            workersMoved = true;
             const currIdx = worker.currentSegmentIndex || 0;
 
+            // Reached destination waypoint list
             if (currIdx >= worker.pathWaypoints.length - 1) {
-              const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
-              const updated = { ...worker, status: finalStatus, pathWaypoints: undefined };
-              if (finalStatus === 'FREE_STATIONARY') {
-                onWorkerReleased(updated);
+              if (worker.status === 'IN_TRANSIT') {
+                return {
+                  ...worker,
+                  status: 'WORKING_ON_SITE',
+                  pathWaypoints: undefined,
+                  currentSegmentIndex: undefined
+                };
+              } else {
+                // Reached home base
+                const baseObj = SVO_FACILITIES.find(f => f.id === worker.baseId);
+                const baseX = baseObj ? baseObj.x : worker.x;
+                const baseY = baseObj ? baseObj.y : worker.y;
+
+                return {
+                  ...worker,
+                  x: baseX,
+                  y: baseY,
+                  status: 'FREE_STATIONARY',
+                  pathWaypoints: undefined,
+                  currentSegmentIndex: undefined
+                };
               }
-              return updated;
             }
 
             const targetPt = worker.pathWaypoints[currIdx + 1];
@@ -65,22 +83,40 @@ export function useWorkerSimulation({
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            if (distPct < 0.3) {
+            // Reached individual waypoint
+            if (distPct < 0.4) {
               const nextIdx = currIdx + 1;
               if (nextIdx >= worker.pathWaypoints.length - 1) {
-                const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
-                const updated = { ...worker, x: targetPt.x, y: targetPt.y, status: finalStatus, pathWaypoints: undefined };
-                if (finalStatus === 'FREE_STATIONARY') {
-                  onWorkerReleased(updated);
+                if (worker.status === 'IN_TRANSIT') {
+                  return {
+                    ...worker,
+                    x: targetPt.x,
+                    y: targetPt.y,
+                    status: 'WORKING_ON_SITE',
+                    pathWaypoints: undefined,
+                    currentSegmentIndex: undefined
+                  };
+                } else {
+                  const baseObj = SVO_FACILITIES.find(f => f.id === worker.baseId);
+                  const baseX = baseObj ? baseObj.x : targetPt.x;
+                  const baseY = baseObj ? baseObj.y : targetPt.y;
+
+                  return {
+                    ...worker,
+                    x: baseX,
+                    y: baseY,
+                    status: 'FREE_STATIONARY',
+                    pathWaypoints: undefined,
+                    currentSegmentIndex: undefined
+                  };
                 }
-                return updated;
               }
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // LERP Position Interpolation based on speed & simSpeed
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 5.55 : 1.25;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3;
+            // Calculate movement step
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 6.5 : 1.5;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3.5;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -91,9 +127,9 @@ export function useWorkerSimulation({
             };
           }
 
-          // B. FREE_PATROLLING
+          // Patrolling workers logic
           if (worker.status === 'FREE_PATROLLING') {
-            workersUpdated = true;
+            workersMoved = true;
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
               const currentNodeId = getClosestNodeId(worker.x, worker.y);
               const roadWaypoints = SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id);
@@ -114,7 +150,7 @@ export function useWorkerSimulation({
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            if (distPct < 0.3) {
+            if (distPct < 0.4) {
               return {
                 ...worker,
                 x: targetPt.x,
@@ -138,7 +174,9 @@ export function useWorkerSimulation({
           return worker;
         });
 
-        // 2. UPDATE TASK ARRIVAL & 2-MINUTE MAINTENANCE WORK TIMER
+        // -------------------------------------------------------------
+        // STEP 2: TASK ARRIVAL & 2-MINUTE MAINTENANCE WORK ENGINE
+        // -------------------------------------------------------------
         if (tasks.length > 0) {
           onTasksUpdated(prevTasks => {
             const finishedTaskIds: string[] = [];
@@ -146,7 +184,7 @@ export function useWorkerSimulation({
             const updatedTasks = prevTasks.map(task => {
               if (task.status === 'QUEUED') return task;
 
-              // Count how many workers of this task's crew have arrived on site (WORKING_ON_SITE)
+              // Count how many workers assigned to this task are at WORKING_ON_SITE
               const arrivedCount = task.crew.filter(member => {
                 const w = workersRef.current.find(wrk => wrk.id === member.workerId);
                 return w?.status === 'WORKING_ON_SITE';
@@ -175,32 +213,47 @@ export function useWorkerSimulation({
               };
             });
 
-            // Handle Completed Tasks: Release workers to return to base or queued tasks!
+            // -------------------------------------------------------------
+            // STEP 3: WORKER RELEASE & AUTO-ASSIGNMENT / RETURN TO BASE
+            // -------------------------------------------------------------
             if (finishedTaskIds.length > 0) {
               finishedTaskIds.forEach(tId => {
                 const finishedTask = prevTasks.find(t => t.id === tId);
                 if (finishedTask) {
                   onTaskCompleted(finishedTask);
 
-                  // Send assigned crew back to base
+                  // Process each worker in completed task crew
                   const crewIds = new Set(finishedTask.crew.map(c => c.workerId));
+
                   workersRef.current = workersRef.current.map(w => {
                     if (crewIds.has(w.id)) {
-                      const closestNodeId = getClosestNodeId(w.x, w.y);
-                      const homeBaseId = w.baseId;
-                      const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
-                      const returnWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
+                      // Check if worker can immediately pick up a QUEUED task!
+                      const { assignedTask, waypoints } = onAutoAssignQueue(w);
 
-                      const returningWorker: Worker = {
-                        ...w,
-                        status: 'RETURNING_TO_BASE',
-                        currentTaskId: undefined,
-                        pathWaypoints: returnWaypoints,
-                        currentSegmentIndex: 0
-                      };
+                      if (assignedTask && waypoints && waypoints.length > 0) {
+                        // Immediately dispatch to queued task!
+                        return {
+                          ...w,
+                          status: 'IN_TRANSIT' as WorkerStatus,
+                          currentTaskId: assignedTask.id,
+                          pathWaypoints: waypoints,
+                          currentSegmentIndex: 0
+                        };
+                      } else {
+                        // No queued task: Return to home base!
+                        const closestNodeId = getClosestNodeId(w.x, w.y);
+                        const homeBaseId = w.baseId;
+                        const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
+                        const returnWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
 
-                      onWorkerReleased(returningWorker);
-                      return returningWorker;
+                        return {
+                          ...w,
+                          status: 'RETURNING_TO_BASE' as WorkerStatus,
+                          currentTaskId: undefined,
+                          pathWaypoints: returnWaypoints,
+                          currentSegmentIndex: 0
+                        };
+                      }
                     }
                     return w;
                   });
@@ -220,9 +273,9 @@ export function useWorkerSimulation({
 
     animFrameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameId);
-  }, [simSpeed, isPaused, tasks.length, onTasksUpdated, onTaskCompleted, onWorkerReleased]);
+  }, [simSpeed, isPaused, tasks.length, onTasksUpdated, onTaskCompleted, onAutoAssignQueue]);
 
-  // Throttled sync of workersRef to React state (every 250ms)
+  // Throttled sync of workersRef to React state (every 250ms for performance)
   useEffect(() => {
     const syncInterval = setInterval(() => {
       setWorkersState([...workersRef.current]);
@@ -230,7 +283,7 @@ export function useWorkerSimulation({
     return () => clearInterval(syncInterval);
   }, []);
 
-  // Dispatch worker directly for a task
+  // Dispatch worker directly to a task
   const dispatchWorkerToTask = useCallback((workerId: string, task: OtoTask, waypoints: { x: number; y: number }[]) => {
     workersRef.current = workersRef.current.map(w => {
       if (w.id === workerId) {
@@ -247,7 +300,7 @@ export function useWorkerSimulation({
     setWorkersState([...workersRef.current]);
   }, []);
 
-  // Return workers to base
+  // Send workers back to base upon manual task cancellation
   const returnWorkersToBase = useCallback((workerIds: Set<string>) => {
     workersRef.current = workersRef.current.map(w => {
       if (workerIds.has(w.id)) {

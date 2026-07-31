@@ -59,7 +59,7 @@ export function useTaskQueueEngine() {
   }, []);
 
   // Auto-Assign Queued Tasks upon Worker Release
-  const tryAutoAssignQueuedTasks = useCallback((releasedWorker: Worker, allWorkers: Worker[]): { assignedTask?: OtoTask; assignedWorkerId?: string; waypoints?: { x: number; y: number }[] } => {
+  const tryAutoAssignQueuedTasks = useCallback((releasedWorker: Worker, _allWorkers: Worker[]): { assignedTask?: OtoTask; waypoints?: { x: number; y: number }[] } => {
     let resultAssignedTask: OtoTask | undefined = undefined;
     let resultWaypoints: { x: number; y: number }[] | undefined = undefined;
 
@@ -106,7 +106,7 @@ export function useTaskQueueEngine() {
       return prevTasks;
     });
 
-    return { assignedTask: resultAssignedTask, assignedWorkerId: releasedWorker.id, waypoints: resultWaypoints };
+    return { assignedTask: resultAssignedTask, waypoints: resultWaypoints };
   }, []);
 
   // STRESS TEST: Generate Peak Load Deficit (10 Simultaneous Aircraft Calls)
