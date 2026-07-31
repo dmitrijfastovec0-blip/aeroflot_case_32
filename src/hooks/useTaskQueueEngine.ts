@@ -39,7 +39,7 @@ export function useTaskQueueEngine() {
       const queuedTask: OtoTask = {
         ...newTask,
         status: 'QUEUED',
-        queueStartTimeMs: Date.now()
+        elapsedQueueSec: 0
       };
       setTasks(prev => [queuedTask, ...prev]);
       return { isQueued: true, task: queuedTask };
@@ -67,12 +67,12 @@ export function useTaskQueueEngine() {
       const queuedList = prevTasks.filter(t => t.status === 'QUEUED');
       if (queuedList.length === 0) return prevTasks;
 
-      // Sort queued tasks by Priority (AOG > URGENT > ROUTINE), then by wait time (queueStartTimeMs ascending)
+      // Sort queued tasks by Priority (AOG > URGENT > ROUTINE), then by wait time (elapsedQueueSec descending)
       const sortedQueue = [...queuedList].sort((a, b) => {
         const rankA = getPriorityRank(a.priority);
         const rankB = getPriorityRank(b.priority);
         if (rankA !== rankB) return rankA - rankB;
-        return (a.queueStartTimeMs || 0) - (b.queueStartTimeMs || 0);
+        return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
       });
 
       // Find highest priority queued task matching released worker's qualification
@@ -148,7 +148,7 @@ export function useTaskQueueEngine() {
         slaLimitMinutes: 15.0,
         withinSla: true,
         createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
-        queueStartTimeMs: isDispatched ? undefined : Date.now(),
+        elapsedQueueSec: 0,
         elapsedWorkSec: 0,
         targetWorkSec: 120
       };

@@ -80,9 +80,9 @@ export interface OtoTask {
   slaLimitMinutes: number;
   withinSla: boolean;
   createdAt: string;
-  queueStartTimeMs?: number; // Timestamp when added to queue
-  elapsedWorkSec: number;    // Elapsed work time in seconds (0 to 120s)
-  targetWorkSec: number;     // Target 120s (2 real minutes)
+  elapsedQueueSec?: number; // Queued time accumulated in simulation seconds
+  elapsedWorkSec: number;   // Elapsed work time in seconds (0 to 120s)
+  targetWorkSec: number;    // Target 120s (2 real minutes)
 }
 
 export interface HoverTooltipData {

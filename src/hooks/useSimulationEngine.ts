@@ -15,7 +15,7 @@ export function useSimulationEngine() {
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
 
-  // Refs for continuous 60FPS loop without closure stale state!
+  // Refs for continuous 60FPS loop without stale closures
   const workersRef = useRef<Worker[]>(workers);
   const tasksRef = useRef<OtoTask[]>(tasks);
 
@@ -52,7 +52,8 @@ export function useSimulationEngine() {
 
     const tick = () => {
       const now = Date.now();
-      const dtSec = Math.min(0.2, (now - lastTimeRef.current) / 1000);
+      // Cap delta time to prevent stuttering/intermittent jumps on tab unfocus
+      const dtSec = Math.min(0.1, (now - lastTimeRef.current) / 1000);
       lastTimeRef.current = now;
 
       if (!isPaused) {
@@ -97,9 +98,9 @@ export function useSimulationEngine() {
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // Movement step
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 6.5 : 1.5;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 4.0;
+            // Smooth movement speed calculation
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 8.0 : 2.5;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 4.5;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -142,8 +143,8 @@ export function useSimulationEngine() {
               };
             }
 
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 3.0 : 1.0;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 2.5;
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 4.0 : 1.5;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3.0;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -162,14 +163,21 @@ export function useSimulationEngine() {
           setWorkers(nextWorkers);
         }
 
-        // 2. UPDATE TASKS ARRIVAL AND MAINTENANCE TIMERS
+        // 2. UPDATE TASKS ARRIVAL, QUEUE WAIT TIME & MAINTENANCE TIMERS
         if (tasksRef.current.length > 0) {
           const completedTaskIds: string[] = [];
 
           const nextTasks = tasksRef.current.map(task => {
-            if (task.status === 'QUEUED') return task;
+            // A. QUEUED TASKS: Accumulate simulation queue wait time smoothly!
+            if (task.status === 'QUEUED') {
+              tasksChanged = true;
+              return {
+                ...task,
+                elapsedQueueSec: (task.elapsedQueueSec || 0) + dtSec * simSpeed
+              };
+            }
 
-            // Count how many workers of this task's crew are WORKING_ON_SITE
+            // B. DISPATCHED & WORKING TASKS
             const arrivedCount = task.crew.filter(member => {
               const w = workersRef.current.find(wrk => wrk.id === member.workerId);
               return w?.status === 'WORKING_ON_SITE';
@@ -201,7 +209,7 @@ export function useSimulationEngine() {
             };
           });
 
-          // 3. PROCESS COMPLETED TASKS & AUTO-ASSIGN QUEUE
+          // 3. PROCESS COMPLETED TASKS & AUTO-ASSIGN QUEUED TASKS
           if (completedTaskIds.length > 0) {
             tasksChanged = true;
             const remainingTasks = nextTasks.filter(t => !completedTaskIds.includes(t.id));
@@ -225,7 +233,7 @@ export function useSimulationEngine() {
                     const rankA = getPriorityRank(a.priority);
                     const rankB = getPriorityRank(b.priority);
                     if (rankA !== rankB) return rankA - rankB;
-                    return (a.queueStartTimeMs || 0) - (b.queueStartTimeMs || 0);
+                    return (a.elapsedQueueSec || 0) - (b.elapsedQueueSec || 0);
                   });
 
                   const matchingTaskIndex = sortedQueued.findIndex(q =>
@@ -246,6 +254,7 @@ export function useSimulationEngine() {
                           return {
                             ...w,
                             status: 'IN_TRANSIT' as WorkerStatus,
+                            vehicle: 'APRON_VEHICLE', // Express shuttle for fast airport transit!
                             currentTaskId: matchedTask.id,
                             pathWaypoints: etaMember.waypoints,
                             currentSegmentIndex: 0
@@ -341,7 +350,7 @@ export function useSimulationEngine() {
       const queuedTask: OtoTask = {
         ...newTask,
         status: 'QUEUED',
-        queueStartTimeMs: Date.now()
+        elapsedQueueSec: 0
       };
 
       setTasks(prev => [queuedTask, ...prev]);
@@ -450,7 +459,7 @@ export function useSimulationEngine() {
         slaLimitMinutes: 15.0,
         withinSla: true,
         createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
-        queueStartTimeMs: isDispatched ? undefined : Date.now(),
+        elapsedQueueSec: 0,
         elapsedWorkSec: 0,
         targetWorkSec: 120
       };

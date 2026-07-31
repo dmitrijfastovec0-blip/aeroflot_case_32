@@ -221,8 +221,8 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/60">
                 {queuedTasks.map((t) => {
-                  const waitSec = Math.floor((Date.now() - (t.queueStartTimeMs || Date.now())) / 1000);
-                  const waitMinStr = `${Math.floor(waitSec / 60)} мин ${waitSec % 60} сек`;
+                  const waitSec = Math.floor(t.elapsedQueueSec || 0);
+                  const waitMinStr = `${String(Math.floor(waitSec / 60)).padStart(2, '0')}:${String(waitSec % 60).padStart(2, '0')}`;
 
                   return (
                     <tr

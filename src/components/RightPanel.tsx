@@ -79,6 +79,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
       slaLimitMinutes,
       withinSla,
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
+      elapsedQueueSec: 0,
       elapsedWorkSec: 0,
       targetWorkSec: 120
     };
@@ -214,11 +215,16 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           </div>
 
           {activeTaskForStand.status === 'QUEUED' ? (
-            /* QUEUED BADGE UPON STAFF DEFICIT */
+            /* QUEUED BADGE UPON STAFF DEFICIT WITH SIMULATION TIMER */
             <div className="bg-amber-500/15 border border-amber-500/60 rounded-xl p-3.5 space-y-2 text-amber-300">
-              <div className="flex items-center space-x-2 font-bold text-sm">
-                <Clock className="w-4 h-4 text-amber-400 animate-spin" />
-                <span>⏳ В ОЧЕРЕДИ ОЖИДАНИЯ (Дефицит персонала)</span>
+              <div className="flex items-center justify-between font-bold text-sm">
+                <span className="flex items-center space-x-1.5">
+                  <Clock className="w-4 h-4 text-amber-400 animate-spin" />
+                  <span>⏳ В ОЧЕРЕДИ ОЖИДАНИЯ</span>
+                </span>
+                <span className="font-mono text-amber-400 text-sm">
+                  {formatSec(activeTaskForStand.elapsedQueueSec || 0)}
+                </span>
               </div>
               <div className="text-xs text-amber-200">
                 Ожидание освобождения специалистов. Задача поставлена в приоритетную очередь ({activeTaskForStand.priority}).
