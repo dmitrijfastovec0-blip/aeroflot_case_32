@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember } from '../types/index';
+import { Worker, OtoTask, WorkerStatus, TaskPriority } from '../types/index';
 import { SVO_STANDS, SVO_FACILITIES, SVO_NODES } from '../constants/index';
-import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath, calculateWorkerToStandEta, calculateCrewMaxEta, findNearestFreeWorkerOfCategory, generateShiftWorkersWithCustomCounts } from '../services/dijkstra';
+import { getClosestNodeId, findDijkstraShortestPath, getWaypointsForNodePath, calculateWorkerToStandEta, findNearestFreeWorkerOfCategory, generateShiftWorkersWithCustomCounts } from '../services/dijkstra';
 
 export function useSimulationEngine() {
   // State for Workers and Tasks
@@ -135,8 +135,24 @@ export function useSimulationEngine() {
 
         // 1. UPDATE WORKER POSITIONS (LERP)
         const nextWorkers = workersRef.current.map((worker): Worker => {
-          if ((worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') && worker.pathWaypoints && worker.pathWaypoints.length > 1) {
+          if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') {
             workersChanged = true;
+
+            // AUTO-ARRIVAL SAFETY GUARANTEE: If waypoints missing or <= 1, instantly arrived!
+            if (!worker.pathWaypoints || worker.pathWaypoints.length <= 1) {
+              const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
+              const lastPt = worker.pathWaypoints && worker.pathWaypoints.length > 0 ? worker.pathWaypoints[0] : { x: worker.x, y: worker.y };
+
+              return {
+                ...worker,
+                x: lastPt.x,
+                y: lastPt.y,
+                status: finalStatus,
+                pathWaypoints: undefined,
+                currentSegmentIndex: undefined
+              };
+            }
+
             const currIdx = worker.currentSegmentIndex || 0;
 
             // Reached destination waypoint index
@@ -159,8 +175,8 @@ export function useSimulationEngine() {
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            // Distance snap threshold (0.6% distance threshold for robust arrival)
-            if (distPct < 0.6) {
+            // Distance snap threshold (1.2% distance threshold for robust arrival)
+            if (distPct < 1.2) {
               const nextIdx = currIdx + 1;
               if (nextIdx >= worker.pathWaypoints.length - 1) {
                 const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
@@ -177,8 +193,8 @@ export function useSimulationEngine() {
             }
 
             // Movement step
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 9.0 : 3.0;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 5.0;
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 12.0 : 4.0;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 6.0;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -212,7 +228,7 @@ export function useSimulationEngine() {
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            if (distPct < 0.6) {
+            if (distPct < 1.2) {
               return {
                 ...worker,
                 x: targetPt.x,
@@ -221,8 +237,8 @@ export function useSimulationEngine() {
               };
             }
 
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 4.0 : 1.5;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3.0;
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 5.0 : 2.0;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed * 3.5;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
@@ -273,6 +289,27 @@ export function useSimulationEngine() {
               }
             } else {
               status = 'DISPATCHED';
+
+              // FAILSAFE DISPATCH TIMEOUT: If worker in transit for > 15 simulation seconds, force arrive!
+              const dispatchedTime = (task.elapsedQueueSec || 0) + dtSec * simSpeed;
+              if (dispatchedTime > 15.0) {
+                task.crew.forEach(member => {
+                  workersRef.current = workersRef.current.map(w => {
+                    if (w.id === member.workerId && w.status === 'IN_TRANSIT') {
+                      const standObj = SVO_STANDS.find(s => s.id === task.standId);
+                      return {
+                        ...w,
+                        x: standObj ? standObj.x : w.x,
+                        y: standObj ? standObj.y : w.y,
+                        status: 'WORKING_ON_SITE',
+                        pathWaypoints: undefined
+                      };
+                    }
+                    return w;
+                  });
+                });
+                status = 'WORKING';
+              }
             }
 
             if (task.arrivedCount !== arrivedCount || task.status !== status || Math.floor(task.elapsedWorkSec) !== Math.floor(elapsedWorkSec)) {
@@ -281,7 +318,7 @@ export function useSimulationEngine() {
 
             return {
               ...task,
-              arrivedCount,
+              arrivedCount: isAllArrived ? task.crew.length : arrivedCount,
               elapsedWorkSec,
               status
             };
@@ -353,12 +390,11 @@ export function useSimulationEngine() {
   // -----------------------------------------------------------------
 
   const submitTask = useCallback((newTask: OtoTask) => {
-    // 1. Add new task to tasks list in QUEUED status
     const queuedTask: OtoTask = {
       ...newTask,
       status: 'QUEUED',
       elapsedQueueSec: 0,
-      crew: [], // Crew will be assigned strictly by priority queue drainage!
+      crew: [],
       arrivedCount: 0
     };
 
@@ -366,10 +402,8 @@ export function useSimulationEngine() {
     tasksRef.current = nextTasks;
     setTasks(nextTasks);
 
-    // 2. Immediately run priority queue drain!
     drainQueueWithFreeWorkers();
 
-    // Check if task was dispatched immediately
     const checkTask = tasksRef.current.find(t => t.id === newTask.id);
     if (checkTask && checkTask.status === 'DISPATCHED') {
       showNotification(`🚀 Задача ${checkTask.id} (${checkTask.priority}) запущена! Инженеры выехали на стоянку ${checkTask.standLabel}.`);
@@ -468,7 +502,6 @@ export function useSimulationEngine() {
     tasksRef.current = combinedTasks;
     setTasks(combinedTasks);
 
-    // Run strict priority queue drainage!
     drainQueueWithFreeWorkers();
     showNotification(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал выехал по приоритету AOG > URGENT > ROUTINE.`);
   }, [drainQueueWithFreeWorkers, showNotification]);

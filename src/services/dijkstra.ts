@@ -94,6 +94,12 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
       points.push({ x: node.x, y: node.y });
     }
   }
+
+  // GUARANTEE AT LEAST 2 POINTS SO ANIMATION LOOP NEVER SKIPS!
+  if (points.length === 1) {
+    points.push({ x: startPoint.x + 0.01, y: startPoint.y + 0.01 });
+  }
+
   return points;
 }
 
@@ -206,7 +212,7 @@ export function generateShiftWorkersWithCustomCounts(
       const hasVehicle = vehicleAllocated < vehiclesCount;
       if (hasVehicle) vehicleAllocated++;
 
-      const isPatrolling = i % 2 === 1; // 50% patrolling for vivid apron movement!
+      const isPatrolling = i % 2 === 1;
       let waypoints: { x: number; y: number }[] | undefined = undefined;
 
       if (isPatrolling && roadWaypoints.length > 0) {
