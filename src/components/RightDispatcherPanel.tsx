@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Stand, CategoryCode, OtoTask, TaskCrewMember, Worker, ThemeMode } from '../types';
 import { SVO_STANDS } from '../constants';
 import { findNearestFreeWorkerOfCategory, calculateCrewMaxEta } from '../utils/dispatchLogic';
-import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck } from 'lucide-react';
+import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck, Timer } from 'lucide-react';
 
 interface RightDispatcherPanelProps {
   selectedStandId: string | null;
@@ -58,7 +58,7 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
   const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(crew, slaLimitMinutes);
   const slaDiff = Math.abs(Math.round((slaLimitMinutes - maxEtaMinutes) * 10) / 10);
 
-  // Submit & Launch Task Handler with Modal Interception if SLA Exceeded
+  // Submit & Launch Task Handler
   const handleLaunchTaskSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (crew.length === 0) {
@@ -79,7 +79,9 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
       maxEtaMinutes,
       slaLimitMinutes,
       withinSla,
-      createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
+      createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
+      elapsedWorkSec: 0,
+      targetWorkSec: 120
     };
 
     if (!withinSla) {
@@ -88,6 +90,13 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
       onLaunchTask(newTask);
       setCrew([]);
     }
+  };
+
+  // Helper for formatting seconds to MM:SS
+  const formatSec = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
   return (
@@ -149,41 +158,60 @@ export const RightDispatcherPanel: React.FC<RightDispatcherPanelProps> = ({
         </div>
       </div>
 
-      {/* Active Task Arrival Monitor if task already running */}
+      {/* Active Task Arrival & Work Duration Monitoring */}
       {activeTaskForStand ? (
         <div className={`border rounded-xl p-4 space-y-3 font-mono ${
           theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-50 border-slate-200'
         }`}>
           <div className="flex items-center justify-between border-b border-slate-300 dark:border-[#263345] pb-2">
             <span className="font-bold text-sky-400 text-sm flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-sky-400" /> Мониторинг прибытия бригады
+              <Clock className="w-4 h-4 text-sky-400" /> Мониторинг выполнения задачи
             </span>
             <span className="text-xs text-gray-400">{activeTaskForStand.id}</span>
           </div>
 
-          <div className={`p-3 rounded-lg border space-y-2 ${
+          <div className={`p-3 rounded-lg border space-y-2.5 ${
             theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200'
           }`}>
+            {/* Step 1: Crew Arrival */}
             <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Прибытие бригады:</span>
+              <span className="text-gray-400">Сбор и прибытие спецов:</span>
               <span className="font-bold text-emerald-500 text-sm">
                 {activeTaskForStand.arrivedCount} / {activeTaskForStand.crew.length} спецов
               </span>
             </div>
 
-            <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2.5 overflow-hidden">
+            <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2 overflow-hidden">
               <div
                 className="bg-emerald-500 h-full transition-all duration-300"
                 style={{ width: `${(activeTaskForStand.arrivedCount / activeTaskForStand.crew.length) * 100}%` }}
               />
             </div>
 
-            <div className="text-xs text-gray-400 flex justify-between pt-1">
-              <span>Статус ТО:</span>
-              <span className={activeTaskForStand.arrivedCount === activeTaskForStand.crew.length ? 'text-red-500 font-bold' : 'text-amber-500 font-bold'}>
-                {activeTaskForStand.arrivedCount === activeTaskForStand.crew.length ? '🔴 Работы ведутся (IN_PROGRESS)' : '⚡ В пути к стоянке'}
-              </span>
-            </div>
+            {/* Step 2: 2 Real Minutes Maintenance Work Progress Timer */}
+            {activeTaskForStand.arrivedCount === activeTaskForStand.crew.length && (
+              <div className="space-y-1.5 border-t border-slate-200 dark:border-[#263345] pt-2">
+                <div className="flex justify-between text-xs items-center">
+                  <span className="text-amber-400 font-bold flex items-center gap-1">
+                    <Timer className="w-3.5 h-3.5 animate-spin" /> Таймер ТО (2 мин):
+                  </span>
+                  <span className="font-bold text-amber-400 text-sm">
+                    {formatSec(activeTaskForStand.elapsedWorkSec || 0)} / 02:00 ({Math.round(((activeTaskForStand.elapsedWorkSec || 0) / 120) * 100)}%)
+                  </span>
+                </div>
+
+                <div className="w-full bg-slate-300 dark:bg-[#1e293b] rounded-full h-2.5 overflow-hidden p-0.5">
+                  <div
+                    className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(100, ((activeTaskForStand.elapsedWorkSec || 0) / 120) * 100)}%` }}
+                  />
+                </div>
+
+                <div className="text-[11px] text-gray-400 text-center pt-0.5">
+                  По истечении 2 минут ТО плашка автоматически исчезнет, а инженеры вернутся на базу.
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">

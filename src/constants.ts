@@ -1,4 +1,4 @@
-import { Facility, Stand, ThemeMode } from './types';
+import { Facility, Stand } from './types';
 
 export const SVO_MAP_METERS = {
   width: 4000,
@@ -10,13 +10,13 @@ export const CANVAS_THEMES = {
   dark: {
     bg: '#090d11',
     grid: '#121820',
-    terminalFill: '#1c2533',
+    terminalFill: '#1c2533cc',
     terminalStroke: '#30363d',
     runwayFill: '#1f2937',
     runwayLine: '#374151',
     roadLine: '#1c2533',
     tunnelLine: '#388bfd',
-    standBg: '#1e293b',
+    standBg: '#1e293b border border-slate-700',
     standBorder: '#30363d',
     standText: '#ffffff',
     facilityBorder: '#d29922',
@@ -26,7 +26,7 @@ export const CANVAS_THEMES = {
   light: {
     bg: '#f1f5f9',
     grid: '#cbd5e1',
-    terminalFill: '#cbd5e1',
+    terminalFill: '#cbd5e1cc',
     terminalStroke: '#64748b',
     runwayFill: '#94a3b8',
     runwayLine: '#64748b',
@@ -64,25 +64,25 @@ export const SVO_FACILITIES = [
   { id: 'AK_1', name: 'АК-1/2 Главный Техцентр', code: 'АК-1', x: 82, y: 88, type: 'HANGAR' }
 ];
 
-// 20 Ключевых Стоянок ВС Шереметьево
+// Probable SVO Nodes Calibration List
 export const SVO_NODES = [
-  // 1. Север B/C (6 стоянок)
+  // 1. Север B/C (Стоянки B10, B14, C21, C25 и др.)
   { id: 'STAND_B10', label: 'B10', x: 26, y: 28, type: 'STAND', aircraftType: 'Airbus A320-200' },
   { id: 'STAND_B12', label: 'B12', x: 31, y: 28, type: 'STAND', aircraftType: 'Airbus A320neo' },
   { id: 'STAND_B14', label: 'B14', x: 36, y: 28, type: 'STAND', aircraftType: 'Superjet 100' },
   { id: 'STAND_C21', label: 'C21', x: 44, y: 18, type: 'STAND', aircraftType: 'Airbus A321neo' },
-  { id: 'STAND_C23', label: 'C23', x: 50, y: 18, type: 'STAND', aircraftType: 'Boeing 737-800' },
+  { id: 'STAND_C25', label: 'C25', x: 50, y: 18, type: 'STAND', aircraftType: 'Boeing 737-800' },
   { id: 'STAND_C27', label: 'C27', x: 56, y: 18, type: 'STAND', aircraftType: 'Boeing 737-800' },
 
-  // 2. Юг D/E/F (6 стоянок)
+  // 2. Юг D/E/F (Стоянки D12, D18, D24, E38, F45)
   { id: 'STAND_D12', label: 'D12', x: 38, y: 60, type: 'STAND', aircraftType: 'Airbus A320-200' },
   { id: 'STAND_D14', label: 'D14', x: 44, y: 55, type: 'STAND', aircraftType: 'Airbus A321-200' },
   { id: 'STAND_D18', label: 'D18', x: 50, y: 50, type: 'STAND', aircraftType: 'Boeing 777-300ER' },
-  { id: 'STAND_D22', label: 'D22', x: 56, y: 55, type: 'STAND', aircraftType: 'Airbus A350-900' },
+  { id: 'STAND_D24', label: 'D24', x: 56, y: 55, type: 'STAND', aircraftType: 'Airbus A350-900' },
   { id: 'STAND_E38', label: 'E38', x: 68, y: 70, type: 'STAND', aircraftType: 'Airbus A330-300' },
   { id: 'STAND_F45', label: 'F45', x: 78, y: 78, type: 'STAND', aircraftType: 'Boeing 737-800' },
 
-  // 3. Дальний перрон ОТО / Ангарный сектор (5 стоянок)
+  // 3. Дальний перрон ОТО / Ангарный сектор
   { id: 'STAND_101', label: 'St-101', x: 14, y: 18, type: 'STAND', aircraftType: 'Boeing 777-300ER' },
   { id: 'STAND_102', label: 'St-102', x: 20, y: 18, type: 'STAND', aircraftType: 'Airbus A330-300' },
   { id: 'STAND_105', label: 'St-105', x: 15, y: 35, type: 'STAND', aircraftType: 'Superjet 100' },
@@ -112,7 +112,7 @@ export const SVO_EDGES = [
   { from: 'PTO_1', to: 'STAND_B14', type: 'ROAD', distance: 120 },
   { from: 'WAY_N2', to: 'WAY_N3', type: 'ROAD', distance: 300 },
   { from: 'WAY_N2', to: 'STAND_C21', type: 'ROAD', distance: 180 },
-  { from: 'WAY_N3', to: 'STAND_C23', type: 'ROAD', distance: 150 },
+  { from: 'WAY_N3', to: 'STAND_C25', type: 'ROAD', distance: 150 },
   { from: 'WAY_N3', to: 'STAND_C27', type: 'ROAD', distance: 200 },
 
   { from: 'WAY_S1', to: 'PTO_2', type: 'ROAD', distance: 250 },
@@ -124,7 +124,7 @@ export const SVO_EDGES = [
   { from: 'WAY_S1', to: 'STAND_D12', type: 'ROAD', distance: 100 },
   { from: 'WAY_S1', to: 'STAND_D14', type: 'ROAD', distance: 120 },
   { from: 'PTO_2', to: 'STAND_D18', type: 'ROAD', distance: 150 },
-  { from: 'PTO_2', to: 'STAND_D22', type: 'ROAD', distance: 170 },
+  { from: 'PTO_2', to: 'STAND_D24', type: 'ROAD', distance: 170 },
   { from: 'WAY_S2', to: 'STAND_E38', type: 'ROAD', distance: 140 },
   { from: 'WAY_S2', to: 'STAND_F45', type: 'ROAD', distance: 160 },
 

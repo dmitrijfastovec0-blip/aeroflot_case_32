@@ -1,6 +1,6 @@
 import React from 'react';
 import { Worker, ThemeMode } from '../types';
-import { Users, FastForward, Sun, Moon, Pause, Play, Settings2 } from 'lucide-react';
+import { Users, FastForward, Sun, Moon, Pause, Play, Settings2, Wrench, Map } from 'lucide-react';
 
 interface HeaderBarProps {
   workers: Worker[];
@@ -11,6 +11,10 @@ interface HeaderBarProps {
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenShiftConfig: () => void;
+  isDevMode: boolean;
+  onToggleDevMode: () => void;
+  showMapSublayer: boolean;
+  onToggleMapSublayer: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -21,7 +25,11 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onTogglePause,
   theme,
   onToggleTheme,
-  onOpenShiftConfig
+  onOpenShiftConfig,
+  isDevMode,
+  onToggleDevMode,
+  showMapSublayer,
+  onToggleMapSublayer
 }) => {
   const totalWorkers = workers.length;
   const freeCount = workers.filter(w => w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING').length;
@@ -42,8 +50,36 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         </div>
       </div>
 
-      {/* 2. Controls & Clickable Shift Status */}
-      <div className="flex items-center space-x-3">
+      {/* 2. Controls & Calibration Buttons */}
+      <div className="flex items-center space-x-2.5">
+        {/* Toggle SVO Map Background Sublayer */}
+        <button
+          onClick={onToggleMapSublayer}
+          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border font-mono font-bold text-xs transition-colors cursor-pointer ${
+            showMapSublayer
+              ? 'bg-sky-500/20 border-sky-500 text-sky-400'
+              : 'bg-[#121820] dark:bg-[#121820] bg-slate-100 border-[#263345] dark:border-[#263345] text-gray-400'
+          }`}
+          title="Показать / Скрыть растровую подложку схемы Шереметьево (svo.png)"
+        >
+          <Map className="w-3.5 h-3.5" />
+          <span>🗺️ Подложка SVO</span>
+        </button>
+
+        {/* Toggle Dev Calibration Mode */}
+        <button
+          onClick={onToggleDevMode}
+          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border font-mono font-bold text-xs transition-colors cursor-pointer ${
+            isDevMode
+              ? 'bg-purple-500/20 border-purple-500 text-purple-300 animate-pulse'
+              : 'bg-[#121820] dark:bg-[#121820] bg-slate-100 border-[#263345] dark:border-[#263345] text-gray-400'
+          }`}
+          title="Включить / Выключить режим разметки координат при клике на Canvas"
+        >
+          <Wrench className="w-3.5 h-3.5 text-purple-400" />
+          <span>🛠️ Разметка (Dev)</span>
+        </button>
+
         {/* Pause / Resume Button */}
         <button
           onClick={onTogglePause}
@@ -99,7 +135,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             Смена: <span className="font-mono font-bold text-emerald-400 text-sm">{totalWorkers} чел.</span>
             <Settings2 className="w-3.5 h-3.5 text-gray-400 ml-1 group-hover:text-emerald-400" />
           </span>
-          <span className="font-mono text-xs text-gray-400 dark:text-gray-400 text-slate-500 hidden lg:inline border-l border-slate-300 dark:border-[#263345] pl-2">
+          <span className="font-mono text-xs text-gray-400 dark:text-gray-400 text-slate-500 hidden xl:inline border-l border-slate-300 dark:border-[#263345] pl-2">
             (🟢 <span className="text-emerald-400 font-bold">{freeCount}</span> | 🔵 <span className="text-sky-400 font-bold">{inTransitCount}</span> | 🔴 <span className="text-red-400 font-bold">{workingCount}</span>)
           </span>
         </button>

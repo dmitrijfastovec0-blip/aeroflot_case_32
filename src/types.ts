@@ -76,10 +76,11 @@ export interface OtoTask {
   crew: TaskCrewMember[];
   arrivedCount: number;
   maxEtaMinutes: number;
-  slaLimitMinutes: number; // Selected SLA Limit (10.0, 15.0, 30.0 min)
+  slaLimitMinutes: number;
   withinSla: boolean;
   createdAt: string;
-  workProgress?: number; // 0 to 100% for maintenance timer cycle
+  elapsedWorkSec: number; // Current work time in seconds (0 to 120s)
+  targetWorkSec: number;  // 120.0 seconds (2 real minutes)
 }
 
 export interface HoverTooltipData {

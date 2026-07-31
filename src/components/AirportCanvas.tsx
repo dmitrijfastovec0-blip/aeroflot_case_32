@@ -8,6 +8,9 @@ interface AirportCanvasProps {
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   theme: ThemeMode;
+  isDevMode: boolean;
+  onDevPointClick?: (pctX: number, pctY: number) => void;
+  showMapSublayer: boolean;
 }
 
 export const AirportCanvas: React.FC<AirportCanvasProps> = ({
@@ -15,10 +18,26 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
   tasks,
   selectedStandId,
   onSelectStand,
-  theme
+  theme,
+  isDevMode,
+  onDevPointClick,
+  showMapSublayer
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Raster Image Sublayer Ref (svo.png)
+  const mapImageRef = useRef<HTMLImageElement | null>(null);
+  const [isMapImageLoaded, setIsMapImageLoaded] = useState<boolean>(false);
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = '/svo.png';
+    img.onload = () => {
+      mapImageRef.current = img;
+      setIsMapImageLoaded(true);
+    };
+  }, []);
 
   // Pan & Zoom Matrix
   const [zoomScale, setZoomScale] = useState<number>(1.0);
@@ -85,7 +104,7 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
     return { x: 0, y: 0 };
   }, [pctToLogical]);
 
-  // Main Render Loop with Light/Dark Theme palette
+  // Main Render Loop
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -116,6 +135,14 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
     ctx.translate(panOffset.x, panOffset.y);
     ctx.scale(zoomScale, zoomScale);
 
+    // RASTER BACKGROUND SUBLAYER (svo.png)
+    if (showMapSublayer && mapImageRef.current && isMapImageLoaded) {
+      ctx.save();
+      ctx.globalAlpha = theme === 'dark' ? 0.45 : 0.65;
+      ctx.drawImage(mapImageRef.current, 0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+      ctx.restore();
+    }
+
     // CAD Grid
     ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 0.5;
@@ -136,7 +163,6 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
     SVO_BUILDINGS.forEach(bld => {
       ctx.save();
       if (bld.type === 'ARC' && bld.center && bld.radius) {
-        // Terminal D Arc Dome
         const centerPos = pctToLogical(bld.center.x, bld.center.y);
         const radLogical = (bld.radius / 100) * LOGICAL_WIDTH;
 
@@ -158,7 +184,6 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
         const isRunway = bld.id.startsWith('RWY');
 
         if (isRunway) {
-          // Runway (RWY)
           const p1 = pctToLogical(bld.points[0].x, bld.points[0].y);
           const p2 = pctToLogical(bld.points[1].x, bld.points[1].y);
 
@@ -188,7 +213,6 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
           ctx.font = '600 10px "JetBrains Mono", monospace';
           ctx.fillText(bld.name, p1.x + 15, p1.y + 4);
         } else {
-          // Terminal building polygon
           ctx.fillStyle = palette.terminalFill;
           ctx.strokeStyle = palette.terminalStroke;
           ctx.lineWidth = 1.5;
@@ -278,7 +302,7 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
       ctx.restore();
     });
 
-    // Aircraft Stands Markers (14px BOLD)
+    // Aircraft Stands Markers
     SVO_NODES.filter(n => n.type === 'STAND').forEach(stand => {
       const pos = pctToLogical(stand.x, stand.y);
       const isSelected = selectedStandId === stand.id;
@@ -321,13 +345,11 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
         ctx.shadowBlur = 0;
       }
 
-      // Stand Label Text (14px BOLD)
       ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : isTaskActive ? '#fbbf24' : palette.standText;
       ctx.font = '700 14px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(stand.label, pos.x, pos.y - 2);
 
-      // Airplane vector silhouette
       ctx.fillStyle = isSelected ? '#38bdf8' : isTaskActive ? '#fbbf24' : '#94a3b8';
       ctx.beginPath();
       ctx.arc(pos.x, pos.y + 8, 2, 0, Math.PI * 2);
@@ -364,7 +386,7 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
       });
     });
 
-    // WORKER RENDERING (NO PERMANENT TEXT ON MAP!)
+    // WORKER RENDERING
     const groupedTransitWorkers = new Map<string, Worker[]>();
     const individualWorkers: Worker[] = [];
 
@@ -380,7 +402,6 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
       }
     });
 
-    // Render Individual Worker Markers
     individualWorkers.forEach(worker => {
       const pos = pctToLogical(worker.x, worker.y);
 
@@ -417,7 +438,6 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
       ctx.restore();
     });
 
-    // Render Grouped Crew Vehicle Markers (CLEAN CIRCULAR MARKER - NO PERMANENT TEXT ON MAP!)
     groupedTransitWorkers.forEach((group) => {
       if (group.length === 0) return;
       const avgX = group.reduce((acc, w) => acc + w.x, 0) / group.length;
@@ -425,7 +445,6 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
       const pos = pctToLogical(avgX, avgY);
 
       ctx.save();
-      // Clean vehicle dot marker without permanent text overlay
       ctx.fillStyle = '#0284c7';
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
@@ -446,7 +465,7 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workers, tasks, selectedStandId, dashOffset, hoveredNodeId, getNodePos, pctToLogical, theme]);
+  }, [panOffset, zoomScale, workers, tasks, selectedStandId, dashOffset, hoveredNodeId, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
 
   useEffect(() => {
     renderCanvas();
@@ -501,11 +520,10 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
     const lx = (rawX - panOffset.x) / zoomScale;
     const ly = (rawY - panOffset.y) / zoomScale;
 
-    // Hit Testing for Hover (Stands, Facilities, AND Grouped Crew Vehicles)
+    // Hit Testing for Hover
     let foundNodeId: string | null = null;
     let foundHit: HoverTooltipData | null = null;
 
-    // Check Grouped Crew Vehicles Hover Tooltip!
     const groupedMap = new Map<string, Worker[]>();
     workers.forEach(w => {
       if (w.status === 'IN_TRANSIT' && w.vehicle === 'APRON_VEHICLE' && w.currentTaskId) {
@@ -588,6 +606,7 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // Click Handler (Stand Selection OR Dev Mode Coordinate Calibration)
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -596,6 +615,16 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
 
     const lx = (rawX - panOffset.x) / zoomScale;
     const ly = (rawY - panOffset.y) / zoomScale;
+
+    const pctX = Math.round((lx / LOGICAL_WIDTH) * 1000) / 10;
+    const pctY = Math.round((ly / LOGICAL_HEIGHT) * 1000) / 10;
+
+    // DEV MODE COORDINATE CLICK CALIBRATION!
+    if (isDevMode && onDevPointClick) {
+      console.log(`📍 SVO Calibration Node: { x: ${pctX}, y: ${pctY} }`);
+      onDevPointClick(pctX, pctY);
+      return;
+    }
 
     for (const stand of SVO_NODES.filter(n => n.type === 'STAND')) {
       const pos = pctToLogical(stand.x, stand.y);
@@ -683,7 +712,7 @@ export const AirportCanvas: React.FC<AirportCanvasProps> = ({
         </div>
       </div>
 
-      {/* Hover Tooltip Popover (Including Grouped Crew Tooltip!) */}
+      {/* Hover Tooltip Popover */}
       {hoverTooltip && (
         <div
           className={`fixed z-50 pointer-events-none border rounded-lg p-3 shadow-2xl min-w-[240px] max-w-[320px] font-mono text-xs ${

@@ -23,7 +23,11 @@ export function App() {
   // Light / Dark Theme Mode Engine
   const [theme, setTheme] = useState<ThemeMode>('dark');
 
-  // Work completion & shift notification banner
+  // Dev Mode Coordinate Calibration Toggle
+  const [isDevMode, setIsDevMode] = useState<boolean>(false);
+  const [showMapSublayer, setShowMapSublayer] = useState<boolean>(true);
+
+  // Notification Toast Banner
   const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
 
   // Custom SLA Exceeded Warning Modal State
@@ -63,8 +67,11 @@ export function App() {
     setTimeout(() => setNotificationBanner(null), 5000);
   };
 
-  // Task Work Execution Cycle Timers Map (taskId -> elapsed ms)
-  const taskWorkTimersRef = useRef<Map<string, number>>(new Map());
+  // Dev Mode Coordinate Click Handler
+  const handleDevPointClick = (pctX: number, pctY: number) => {
+    setNotificationBanner(`📍 Координаты разметки: { x: ${pctX}%, y: ${pctY}% } (Выведено в консоль F12)`);
+    setTimeout(() => setNotificationBanner(null), 4000);
+  };
 
   // Continuous Physics Delta-Time Animation Loop
   const lastTimeRef = useRef<number>(Date.now());
@@ -163,7 +170,8 @@ export function App() {
           return worker;
         });
 
-        if (workersUpdated) {
+        // 2 REAL MINUTES MAINTENANCE WORK TIMER (120 seconds target)
+        if (workersUpdated || tasks.length > 0) {
           setTasks(prevTasks => {
             const finishedTaskIds: string[] = [];
 
@@ -174,12 +182,12 @@ export function App() {
               }).length;
 
               const isCompletedArrived = arrivedCount === task.crew.length;
+              let elapsedWorkSec = task.elapsedWorkSec || 0;
 
               if (isCompletedArrived) {
-                const currentMs = (taskWorkTimersRef.current.get(task.id) || 0) + (dtSec * 1000 * simSpeed);
-                taskWorkTimersRef.current.set(task.id, currentMs);
-
-                if (currentMs >= 20000) {
+                // Accumulate work duration seconds (target 120.0s = 2 real minutes)
+                elapsedWorkSec += dtSec * simSpeed;
+                if (elapsedWorkSec >= 120.0) {
                   finishedTaskIds.push(task.id);
                 }
               }
@@ -188,16 +196,18 @@ export function App() {
               return {
                 ...task,
                 arrivedCount,
+                elapsedWorkSec,
                 status
               };
             });
 
+            // WHEN 2 MINUTES MAINTENANCE IS COMPLETE: CLEAR TASK (CARD DISAPPEARS & WORKERS RETURN TO BASE!)
             if (finishedTaskIds.length > 0) {
               finishedTaskIds.forEach(tId => {
                 const finishedTask = prevTasks.find(t => t.id === tId);
                 if (finishedTask) {
-                  setNotificationBanner(`✅ Обслуживание завершено на стоянке ${finishedTask.standLabel}! Инженеры возвращаются на базу.`);
-                  setTimeout(() => setNotificationBanner(null), 5000);
+                  setNotificationBanner(`✅ 2 мин ТО завершено на стоянке ${finishedTask.standLabel}! Карточка задачи закрыта, инженеры возвращаются на базу.`);
+                  setTimeout(() => setNotificationBanner(null), 6000);
 
                   const crewIds = new Set(finishedTask.crew.map(c => c.workerId));
                   workersRef.current = workersRef.current.map(w => {
@@ -233,7 +243,7 @@ export function App() {
 
     animFrameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameId);
-  }, [simSpeed, isPaused]);
+  }, [simSpeed, isPaused, tasks.length]);
 
   // Throttled sync of workersRef to React state `workers` for bottom table display
   useEffect(() => {
@@ -278,8 +288,6 @@ export function App() {
     if (!targetTask) return;
 
     const crewIds = new Set(targetTask.crew.map(c => c.workerId));
-    taskWorkTimersRef.current.delete(taskId);
-
     setTasks(prev => prev.filter(t => t.id !== taskId));
 
     workersRef.current = workersRef.current.map(w => {
@@ -329,14 +337,14 @@ export function App() {
         theme={theme}
       />
 
-      {/* Notification Banner */}
+      {/* Notification Toast Banner */}
       {notificationBanner && (
         <div className="bg-emerald-600 text-white font-mono text-sm font-bold py-2 px-4 text-center border-b border-emerald-500 animate-pulse shadow-lg z-50 flex items-center justify-center space-x-2">
           <span>{notificationBanner}</span>
         </div>
       )}
 
-      {/* A. Top Header Bar with Clickable Shift Config & Theme Toggle */}
+      {/* A. Top Header Bar */}
       <HeaderBar
         workers={workers}
         simSpeed={simSpeed}
@@ -346,6 +354,10 @@ export function App() {
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
+        isDevMode={isDevMode}
+        onToggleDevMode={() => setIsDevMode(prev => !prev)}
+        showMapSublayer={showMapSublayer}
+        onToggleMapSublayer={() => setShowMapSublayer(prev => !prev)}
       />
 
       {/* B & C. Central CAD Canvas & Right Task Panel */}
@@ -357,6 +369,9 @@ export function App() {
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
           theme={theme}
+          isDevMode={isDevMode}
+          onDevPointClick={handleDevPointClick}
+          showMapSublayer={showMapSublayer}
         />
 
         {/* C. Right Task Constructor Sidebar */}
