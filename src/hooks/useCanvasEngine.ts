@@ -25,11 +25,92 @@ if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D
     this.lineTo(x + w, y + h - br);
     this.arcTo(x + w, y + h, x + w - br, y + h, br);
     this.lineTo(x + bl, y + h);
-    this.arcTo(x, y + h, x, y + h - bl, bl);
+    this.arcTo(x, y + h, x + bl, y + h, bl);
     this.lineTo(x, y + tl);
     this.arcTo(x, y, x + tl, y, tl);
     this.closePath();
   };
+}
+
+// ============================================================================
+// SMOOTH VECTOR HELPERS
+// ----------------------------------------------------------------------------
+// The map no longer draws raw polylines: building footprints use rounded
+// corners (arcTo) and the road graph gets rounded junctions, so the whole
+// vector layer looks like a clean CAD drawing instead of a jagged sketch.
+// ============================================================================
+
+interface Pos { x: number; y: number }
+
+// Rounded polygon path: walks the outline but rounds every corner with arcTo.
+function roundedPolygonPath(ctx: CanvasRenderingContext2D, pts: Pos[], radius: number) {
+  const n = pts.length;
+  if (n < 3) return;
+  const prev = pts[n - 1];
+  ctx.moveTo((prev.x + pts[0].x) / 2, (prev.y + pts[0].y) / 2);
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
+    const next = pts[(i + 1) % n];
+    ctx.arcTo(p.x, p.y, next.x, next.y, radius);
+  }
+  ctx.closePath();
+}
+
+// Strokes a full road network as ONE path with rounded junctions: straight
+// segments are trimmed at radius from each junction node, and an arc reconnects
+// every pair of outgoing roads — so crossings get clean fillets, not spikes.
+function buildRoadNetworkPath(
+  ctx: CanvasRenderingContext2D,
+  edges: { from: string; to: string }[],
+  getPos: (id: string) => Pos,
+  radius: number
+) {
+  const adj = new Map<string, Set<string>>();
+  for (const e of edges) {
+    if (!adj.has(e.from)) adj.set(e.from, new Set());
+    if (!adj.has(e.to)) adj.set(e.to, new Set());
+    adj.get(e.from)!.add(e.to);
+    adj.get(e.to)!.add(e.from);
+  }
+
+  const drawn = new Set<string>();
+  for (const e of edges) {
+    const key = e.from < e.to ? e.from + '|' + e.to : e.to + '|' + e.from;
+    if (drawn.has(key)) continue;
+    drawn.add(key);
+    const p1 = getPos(e.from);
+    const p2 = getPos(e.to);
+    const trim1 = (adj.get(e.from)?.size ?? 1) > 1 ? radius : 0;
+    const trim2 = (adj.get(e.to)?.size ?? 1) > 1 ? radius : 0;
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len <= trim1 + trim2) continue;
+    const ux = dx / len;
+    const uy = dy / len;
+    ctx.moveTo(p1.x + ux * trim1, p1.y + uy * trim1);
+    ctx.lineTo(p2.x - ux * trim2, p2.y - uy * trim2);
+  }
+
+  for (const [nodeId, neighbors] of adj) {
+    const n = neighbors.size;
+    if (n < 2) continue;
+    const pos = getPos(nodeId);
+    const items = [...neighbors].map(id => {
+      const p = getPos(id);
+      return { a: Math.atan2(p.y - pos.y, p.x - pos.x) };
+    });
+    items.sort((a, b) => a.a - b.a);
+    for (let i = 0; i < n; i++) {
+      const a = items[i];
+      const b = items[(i + 1) % n];
+      let delta = b.a - a.a;
+      if (delta < 0) delta += Math.PI * 2;
+      if (delta < 0.08 || delta > Math.PI * 1.5) continue;
+      ctx.moveTo(pos.x + Math.cos(a.a) * radius, pos.y + Math.sin(a.a) * radius);
+      ctx.arc(pos.x, pos.y, radius, a.a, b.a, false);
+    }
+  }
 }
 
 // ============================================================================
@@ -291,14 +372,22 @@ export function useCanvasEngine({
         if (isRunway) {
           const p1 = pctToLogical(bld.points[0].x, bld.points[0].y);
           const p2 = pctToLogical(bld.points[1].x, bld.points[1].y);
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const ux = dx / len;
+          const uy = dy / len;
 
+          // Runway pavement (rounded ends) + shoulder
           ctx.strokeStyle = palette.runwayFill;
-          ctx.lineWidth = 14;
+          ctx.lineCap = 'round';
+          ctx.lineWidth = 15;
           ctx.beginPath();
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
 
+          // Centerline dashes
           ctx.strokeStyle = palette.runwayLine;
           ctx.lineWidth = 1.5;
           ctx.setLineDash([8, 8]);
@@ -308,29 +397,42 @@ export function useCanvasEngine({
           ctx.stroke();
           ctx.setLineDash([]);
 
-          ctx.fillStyle = '#38bdf8';
-          ctx.beginPath();
-          ctx.arc(p1.x, p1.y, 3, 0, Math.PI * 2);
-          ctx.arc(p2.x, p2.y, 3, 0, Math.PI * 2);
-          ctx.fill();
+          // Threshold bars at both ends (perpendicular stripes)
+          ctx.strokeStyle = palette.runwayLine;
+          ctx.lineWidth = 1.2;
+          for (const end of [p1, p2]) {
+            for (let i = 1; i <= 3; i++) {
+              const t = i * 3.5;
+              const bx = end.x + ux * t;
+              const by = end.y + uy * t;
+              ctx.beginPath();
+              ctx.moveTo(bx - uy * 5.5, by + ux * 5.5);
+              ctx.lineTo(bx + uy * 5.5, by - ux * 5.5);
+              ctx.stroke();
+            }
+          }
 
+          // Runway designator label near each threshold
           ctx.fillStyle = palette.textSubtle;
-          ctx.font = '600 10px "JetBrains Mono", monospace';
-          ctx.fillText(bld.name, p1.x + 15, p1.y + 4);
+          ctx.font = '600 9px "JetBrains Mono", monospace';
+          ctx.save();
+          ctx.translate(p1.x - ux * 16 - uy * 8, p1.y - uy * 16 + ux * 8);
+          ctx.rotate(Math.atan2(dy, dx));
+          ctx.fillText(bld.name, 0, 0);
+          ctx.restore();
+          ctx.save();
+          ctx.translate(p2.x + ux * 16 - uy * 8, p2.y + uy * 16 + ux * 8);
+          ctx.rotate(Math.atan2(dy, dx));
+          ctx.fillText(bld.name.split('/')[1] || bld.name, 0, 0);
+          ctx.restore();
         } else {
           ctx.fillStyle = palette.terminalFill;
           ctx.strokeStyle = palette.terminalStroke;
           ctx.lineWidth = 1.5;
 
           ctx.beginPath();
-          const firstPt = pctToLogical(bld.points[0].x, bld.points[0].y);
-          ctx.moveTo(firstPt.x, firstPt.y);
-
-          for (let i = 1; i < bld.points.length; i++) {
-            const pt = pctToLogical(bld.points[i].x, bld.points[i].y);
-            ctx.lineTo(pt.x, pt.y);
-          }
-          ctx.closePath();
+          const logicalPts = bld.points.map(p => pctToLogical(p.x, p.y));
+          roundedPolygonPath(ctx, logicalPts, 3.2);
           ctx.fill();
           ctx.stroke();
 
@@ -347,63 +449,70 @@ export function useCanvasEngine({
       ctx.restore();
     });
 
-    // ROAD TOPOLOGY GRAPH — dual-layer lanes + slow flowing traffic dashes
-    SVO_EDGES.forEach(edge => {
+    // ROAD TOPOLOGY GRAPH — dual-layer lanes + slow flowing traffic dashes.
+    // Drawn as a single smoothed network: junctions get filleted corners.
+    const roadEdges = SVO_EDGES.filter(e => e.type !== 'TUNNEL');
+    const cornerRadius = 7;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // Wide soft underlay (the "street")
+    ctx.strokeStyle = palette.roadLine;
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 3.6;
+    ctx.beginPath();
+    buildRoadNetworkPath(ctx, roadEdges, getNodePos, cornerRadius);
+    ctx.stroke();
+
+    // Bright centerline
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = palette.grid;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    buildRoadNetworkPath(ctx, roadEdges, getNodePos, cornerRadius);
+    ctx.stroke();
+
+    // Slow moving dashes to convey traffic flow
+    ctx.strokeStyle = palette.textSubtle;
+    ctx.globalAlpha = theme === 'dark' ? 0.28 : 0.5;
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([3, 22]);
+    ctx.lineDashOffset = dashOffset * 0.5;
+    ctx.beginPath();
+    buildRoadNetworkPath(ctx, roadEdges, getNodePos, cornerRadius);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // Glowing animated tunnel (underground conveyor) — separate layer
+    SVO_EDGES.filter(e => e.type === 'TUNNEL').forEach(edge => {
       const p1 = getNodePos(edge.from);
       const p2 = getNodePos(edge.to);
 
       ctx.save();
       ctx.lineCap = 'round';
 
-      if (edge.type === 'TUNNEL') {
-        // Glowing animated tunnel (underground conveyor)
-        ctx.strokeStyle = palette.tunnelLine;
-        ctx.globalAlpha = 0.22;
-        ctx.lineWidth = 7;
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+      ctx.strokeStyle = palette.tunnelLine;
+      ctx.globalAlpha = 0.22;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
 
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = palette.tunnelLine;
-        ctx.lineWidth = 2.2;
-        ctx.setLineDash([10, 8]);
-        ctx.lineDashOffset = dashOffset;
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
-      } else {
-        // Wide soft underlay (the "street")
-        ctx.strokeStyle = palette.roadLine;
-        ctx.globalAlpha = 0.9;
-        ctx.lineWidth = 3.6;
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = palette.tunnelLine;
+      ctx.lineWidth = 2.2;
+      ctx.setLineDash([10, 8]);
+      ctx.lineDashOffset = dashOffset;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-        // Bright centerline
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = palette.grid;
-        ctx.lineWidth = 1.1;
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
-
-        // Slow moving dashes to convey traffic flow
-        ctx.strokeStyle = palette.textSubtle;
-        ctx.globalAlpha = theme === 'dark' ? 0.28 : 0.5;
-        ctx.lineWidth = 1.3;
-        ctx.setLineDash([3, 22]);
-        ctx.lineDashOffset = dashOffset * 0.5;
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
-      }
       ctx.restore();
     });
 

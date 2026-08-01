@@ -43,18 +43,19 @@ export const CANVAS_THEMES = {
 
 export const SVO_BUILDINGS = [
   // Северный комплекс (СТК)
-  { id: 'TERM_B', name: 'Терминал B', points: [{x:25, y:20}, {x:38, y:20}, {x:38, y:26}, {x:35, y:26}, {x:35, y:22}, {x:28, y:22}, {x:28, y:26}, {x:25, y:26}] },
-  { id: 'TERM_C', name: 'Терминал C', points: [{x:38, y:20}, {x:58, y:20}, {x:58, y:24}, {x:38, y:24}] },
+  { id: 'TERM_B', name: 'Терминал B', points: [{x:24, y:19}, {x:31, y:19}, {x:31, y:22}, {x:34, y:22}, {x:34, y:26}, {x:29, y:26}, {x:29, y:23}, {x:24, y:23}] },
+  { id: 'TERM_C', name: 'Терминал C', points: [{x:35, y:19}, {x:58, y:19}, {x:58, y:24}, {x:52, y:24}, {x:52, y:28}, {x:47, y:28}, {x:47, y:24}, {x:35, y:24}] },
+  { id: 'TERM_C_PIER', name: 'Пирс терминала C', points: [{x:52, y:28}, {x:66, y:28}, {x:66, y:31}, {x:52, y:31}] },
 
   // Южный комплекс (ЮТК) - Полусфера D и крылья E, F
-  { id: 'TERM_D_DOME', name: 'Терминал D (Полусфера)', type: 'ARC', center: {x:50, y:65}, radius: 10, startAngle: 0.8 * Math.PI, endAngle: 2.2 * Math.PI },
-  { id: 'TERM_D_PIER', name: 'Пирс Терминала D', points: [{x:48, y:55}, {x:52, y:55}, {x:52, y:65}, {x:48, y:65}] },
+  { id: 'TERM_D_DOME', name: 'Терминал D (Полусфера)', type: 'ARC', center: {x:50, y:67}, radius: 10, startAngle: 0.9 * Math.PI, endAngle: 2.1 * Math.PI },
+  { id: 'TERM_D_PIER', name: 'Пирс Терминала D', points: [{x:47, y:55}, {x:53, y:55}, {x:53, y:59}, {x:47, y:59}] },
   { id: 'TERM_E', name: 'Терминал E', points: [{x:58, y:68}, {x:68, y:72}, {x:67, y:75}, {x:57, y:71}] },
   { id: 'TERM_F', name: 'Терминал F', points: [{x:68, y:72}, {x:80, y:82}, {x:77, y:85}, {x:65, y:75}] },
 
-  // Взлетно-посадочные полосы (ВПП)
-  { id: 'RWY_1', name: 'ВПП-1 (06L/24R)', points: [{x:10, y:10}, {x:50, y:5}] },
-  { id: 'RWY_2', name: 'ВПП-2 (06R/24L)', points: [{x:15, y:15}, {x:55, y:10}] }
+  // Взлётно-посадочные полосы (ВПП) - фактическая геометрия 06L/24R и 06R/24L
+  { id: 'RWY_1', name: '06L/24R', points: [{x:4, y:8}, {x:62, y:4}] },
+  { id: 'RWY_2', name: '06R/24L', points: [{x:10, y:13}, {x:66, y:9}] }
 ];
 
 export const SVO_FACILITIES = [
