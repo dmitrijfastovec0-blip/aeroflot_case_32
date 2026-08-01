@@ -380,6 +380,25 @@ export const PATROL_TARGET_IDS = [
   ...SVO_STANDS.map(s => s.id)
 ];
 
+// Local patrol zones: every base patrols only its own geographic sector, so
+// crews never cross the apron (north <-> south tunnel) just for a stroll —
+// PTO-1 guards B/C, AK-4 guards the hangar sector, PTO-2 guards D/E/F,
+// AK-1 guards the remote southeast corner.
+const PATROL_ZONES: Record<string, string[]> = {
+  'PTO_1': ['WAY_N1', 'WAY_N2', 'WAY_N3', 'STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27'],
+  'AK_4': ['WAY_N1', 'STAND_B10', 'STAND_101', 'STAND_102', 'STAND_105'],
+  'PTO_2': ['WAY_S1', 'WAY_S2', 'STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45'],
+  'AK_1': ['WAY_S3', 'STAND_201', 'STAND_204', 'STAND_F45']
+};
+
+// Random patrol target inside the base's local zone (falls back to the whole
+// apron for unknown bases).
+export function pickPatrolTargetId(baseId: string): string {
+  const zone = PATROL_ZONES[baseId];
+  const pool = zone && zone.length > 0 ? zone : PATROL_TARGET_IDS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 // 7. Generate Shift Personnel with Custom Counts & Vivid Apron Patrol
 export function generateShiftWorkersWithCustomCounts(
   b1Count: number = 22,
@@ -417,14 +436,17 @@ export function generateShiftWorkersWithCustomCounts(
       : vehicleAllocated < stationVehicles;
     if (hasVehicle) vehicleAllocated++;
 
-    // Stationary worker of this base mans the zone duty post (a nearby stand),
-    // so remote stands always have technicians present.
+    // Stationary workers crowd around their tech center (that's the natural
+    // "hive" of the apron), and only every 3rd of them mans a duty post on a
+    // zone stand — so the bases look busy, yet remote stands stay covered.
     const posts = BASE_POSTS[baseObj.id] || [];
-    const dutyStandId = isPatrolling
-      ? undefined
-      : (posts.length > 0
-        ? posts[(stationPerBase[baseObj.id] = (stationPerBase[baseObj.id] || 0) + 1) % posts.length]
-        : undefined);
+    let dutyStandId: string | undefined = undefined;
+    if (!isPatrolling) {
+      const atBase = (stationPerBase[baseObj.id] = (stationPerBase[baseObj.id] || 0) + 1);
+      if (atBase % 3 === 0 && posts.length > 0) {
+        dutyStandId = posts[Math.floor(atBase / 3) % posts.length];
+      }
+    }
     const dutyStand = dutyStandId ? SVO_STANDS.find(s => s.id === dutyStandId) : undefined;
     const startX = dutyStand ? dutyStand.x : baseObj.x;
     const startY = dutyStand ? dutyStand.y : baseObj.y;
@@ -433,7 +455,7 @@ export function generateShiftWorkersWithCustomCounts(
 
     if (isPatrolling) {
       const startNodeId = getClosestNodeId(startX, startY);
-      const randomTargetId = PATROL_TARGET_IDS[Math.floor(Math.random() * PATROL_TARGET_IDS.length)];
+      const randomTargetId = pickPatrolTargetId(baseObj.id);
       const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
       waypoints = getWaypointsForNodePath({ x: startX, y: startY }, nodePath);
     }

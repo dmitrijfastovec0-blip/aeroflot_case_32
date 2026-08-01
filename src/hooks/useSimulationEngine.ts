@@ -10,7 +10,7 @@ import {
   generateShiftWorkersWithCustomCounts,
   getCategoryCandidates,
   findNaiveNearestWorkerOfCategory,
-  PATROL_TARGET_IDS
+  pickPatrolTargetId
 } from '../services/dijkstra';
 
 // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
@@ -35,10 +35,6 @@ export interface ControlTestResult {
 
 // Static O(1) stand index for the drain loop
 const STAND_BY_ID = new Map(SVO_STANDS.map(s => [s.id, s]));
-
-// Static list of road waypoints for patrol route generation (no re-filtering per worker)
-// Patrol targets: roads AND stands, so the far corners stay manned
-const PATROL_TARGETS = PATROL_TARGET_IDS;
 
 export function useSimulationEngine() {
   // State for Workers and Tasks
@@ -461,7 +457,7 @@ export function useSimulationEngine() {
           if (worker.status === 'FREE_PATROLLING') {
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
               const currentNodeId = getClosestNodeId(worker.x, worker.y);
-              const randomTargetId = PATROL_TARGETS[Math.floor(Math.random() * PATROL_TARGETS.length)];
+              const randomTargetId = pickPatrolTargetId(worker.baseId);
               const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
               const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
 
@@ -695,10 +691,10 @@ export function useSimulationEngine() {
                 }
               }
 
-              // No queued work → patrol crews keep patrolling the apron
+              // No queued work → patrol crews keep patrolling their local zone
               if (w.isPatrolPreference) {
                 const currentNodeId = getClosestNodeId(w.x, w.y);
-                const randomTargetId = PATROL_TARGETS[Math.floor(Math.random() * PATROL_TARGETS.length)];
+                const randomTargetId = pickPatrolTargetId(w.baseId);
                 const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
                 freedFinal.set(w.id, {
                   ...w,
