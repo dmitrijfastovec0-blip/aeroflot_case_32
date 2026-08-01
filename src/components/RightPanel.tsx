@@ -91,8 +91,28 @@ export const RightPanel: React.FC<RightPanelProps> = ({
     setCrew(prev => prev.filter(c => c.workerId !== workerId));
   };
 
+  // Replace a crew member (e.g. the SLA bottleneck) with the closest available
+  // free engineer of the same category.
+  const handleReplaceWorker = (workerId: string) => {
+    const current = crew.find(c => c.workerId === workerId);
+    if (!current) return;
+    const alreadySelectedIds = new Set(crew.map(c => c.workerId));
+    const replacement = findNearestFreeWorkerOfCategory(current.categoryCode, currentStand, workers, alreadySelectedIds);
+    if (!replacement || replacement.workerId === current.workerId || replacement.etaMinutes >= current.etaMinutes) {
+      alert(`⚠️ Нет более близких свободных ${current.categoryCode} — текущий инженер остаётся в бригаде.`);
+      return;
+    }
+    setCrew(prev => prev.map(c => c.workerId === workerId ? replacement : c));
+  };
+
   const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(crew, slaLimitMinutes);
   const slaDiff = Math.abs(Math.round((slaLimitMinutes - maxEtaMinutes) * 10) / 10);
+
+  // SLA bottleneck: the crew member with the LARGEST arrival ETA. If the crew
+  // exceeds the SLA limit, this worker is highlighted and can be swapped out.
+  const bottleneckMember = crew.length > 0
+    ? crew.reduce((a, b) => (b.etaMinutes > a.etaMinutes ? b : a))
+    : null;
 
   // Submit & Launch Task Handler
   const handleLaunchTaskSubmit = (e: React.FormEvent) => {
@@ -471,38 +491,59 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
             {crew.length > 0 ? (
               <div className="space-y-2 overflow-y-auto max-h-[180px] pr-1">
-                {crew.map((member) => (
-                  <div
-                    key={member.workerId}
-                    className={`border rounded-lg p-2.5 font-mono text-xs flex items-center justify-between ${
-                      theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200 shadow-sm'
-                    }`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-sm">{member.workerName}</span>
-                        <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700">
-                          Cat {member.categoryCode}
-                        </span>
+                {crew.map((member) => {
+                  const isBottleneck = !withinSla && bottleneckMember?.workerId === member.workerId;
+                  return (
+                    <div
+                      key={member.workerId}
+                      className={`border rounded-lg p-2.5 font-mono text-xs flex items-center justify-between ${
+                        isBottleneck
+                          ? theme === 'dark' ? 'bg-red-950/40 border-red-600/70' : 'bg-red-50 border-red-400'
+                          : theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200 shadow-sm'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                          <span className="font-bold text-sm">{member.workerName}</span>
+                          <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700">
+                            Cat {member.categoryCode}
+                          </span>
+                          {isBottleneck && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-600/20 text-red-400 border border-red-600 animate-pulse">
+                              БУТЫЛОЧНОЕ ГОРЛЫШКО: ETA {member.etaMinutes} мин
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center space-x-2">
+                          <span className="text-amber-400">{member.startLocationText}</span>
+                          <span>•</span>
+                          <span>{member.vehicleLabel}</span>
+                          <span>•</span>
+                          <span className={isBottleneck ? 'text-red-400 font-bold' : 'text-sky-400 font-bold'}>{member.etaMinutes} мин ETA</span>
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center space-x-2">
-                        <span className="text-amber-400">{member.startLocationText}</span>
-                        <span>•</span>
-                        <span>{member.vehicleLabel}</span>
-                        <span>•</span>
-                        <span className="text-sky-400 font-bold">{member.etaMinutes} мин ETA</span>
+
+                      <div className="flex items-center space-x-1">
+                        {isBottleneck && (
+                          <button
+                            onClick={() => handleReplaceWorker(member.workerId)}
+                            className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-300 border border-amber-500/70 hover:bg-amber-500/30 transition-colors cursor-pointer"
+                            title="Заменить бутылочное горлышко более близким инженером"
+                          >
+                            Заменить
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleRemoveWorker(member.workerId)}
+                          className="p-1.5 text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
+                          title="Удалить из бригады"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
-
-                    <button
-                      onClick={() => handleRemoveWorker(member.workerId)}
-                      className="p-1.5 text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
-                      title="Удалить из бригады"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="py-4 text-center text-gray-400 font-mono text-xs border border-dashed border-slate-300 dark:border-[#263345] rounded-lg">
@@ -538,7 +579,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               <div className={`p-2.5 rounded-lg border font-mono text-xs flex items-center space-x-2 ${
                 withinSla
                   ? 'bg-emerald-500/15 border-emerald-500 text-emerald-400'
-                  : 'bg-red-500/15 border-red-500 text-red-400'
+                  : 'bg-red-600/20 border-red-600 text-red-300 animate-pulse'
               }`}>
                 {withinSla ? (
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
@@ -548,7 +589,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <span>
                   {withinSla
                     ? `🟢 В рамках SLA (ETA ${maxEtaMinutes} мин <= ${slaLimitMinutes} мин)`
-                    : `🔴 ПРЕВЫШЕНИЕ SLA (ETA ${maxEtaMinutes} мин > ${slaLimitMinutes} мин, Задержка: +${slaDiff} мин!)`}
+                    : `🚨 ПРЕВЫШЕНИЕ SLA ${slaLimitMinutes} МИН (+${slaDiff} мин)`}
                 </span>
               </div>
             )}

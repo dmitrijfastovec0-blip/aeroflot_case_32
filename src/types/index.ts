@@ -101,3 +101,16 @@ export interface HoverTooltipData {
   x: number;
   y: number;
 }
+
+// Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
+export interface DispatchStat {
+  taskId: string;
+  standLabel: string;
+  categoryCode: CategoryCode;
+  defectLabel?: string;
+  intuitiveEtaMinutes: number;
+  systemEtaMinutes: number;
+  savedMinutes: number;
+  within15: boolean;
+  createdAt: string;
+}

@@ -219,7 +219,7 @@ export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCre
   const { nodePath, distanceMeters, hasTunnel } = routeBetween(startNodeId, stand.id);
 
   const isVehicle = worker.vehicle === 'APRON_VEHICLE';
-  const speedKmH = isVehicle ? (hasTunnel ? 35 : 20) : 4.5;
+  const speedKmH = isVehicle ? (hasTunnel ? 40 : 20) : 4.5;
   const speedMetersPerMin = (speedKmH * 1000) / 60;
 
   const penaltyMinutes = isVehicle ? (hasTunnel ? 2.0 : 1.0) : 0;
