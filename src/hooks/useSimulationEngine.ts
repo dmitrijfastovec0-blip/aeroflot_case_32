@@ -147,15 +147,6 @@ export function useSimulationEngine() {
 
     // Item 1: SLA-aware ordering (AOG first, then by slack-to-deadline)
     const ordered = sortQueuedBySla(queuedAll, workerById, busy);
-    // Only reservations that still hold block the task: the reserved engineer
-    // must be mid-maintenance. A stale reservation (cancelled/restaffed) unblocks.
-    const reservedTaskIds = new Set(
-      ordered.filter(t => {
-        if (!t.reservedWorkerId) return false;
-        const rw = workerById.get(t.reservedWorkerId);
-        return !!rw && rw.status === 'WORKING_ON_SITE';
-      }).map(t => t.id)
-    );
 
     // Batched mutations applied once after the loops
     const dispatchedTasks: Record<string, OtoTask> = {};
@@ -196,7 +187,6 @@ export function useSimulationEngine() {
 
     // ---- Step 1: manual (user-assembled) crews, in SLA order ----
     for (const qTask of ordered) {
-      if (reservedTaskIds.has(qTask.id)) continue;
       if (qTask.crew.length === 0) continue;
       const targetStand = STAND_BY_ID.get(qTask.standId);
       if (!targetStand) continue;
@@ -241,7 +231,7 @@ export function useSimulationEngine() {
     }
 
     // ---- Step 2: auto tasks → global greedy with weighted cost + lookahead ----
-    const autoTasks = ordered.filter(t => t.crew.length === 0 && !reservedTaskIds.has(t.id));
+    const autoTasks = ordered.filter(t => t.crew.length === 0);
     if (autoTasks.length > 0) {
       // Item 2: zone guard — don't strip a base below 2 idle technicians
       const freeByBase = new Map<string, number>();
@@ -264,24 +254,49 @@ export function useSimulationEngine() {
         member?: TaskCrewMember;
       }
 
+      // Valid reservations: a reserved engineer is still mid-maintenance and
+      // will finish + travel in `eta`. A reservation only HARD-BLOCKS its task
+      // against engineers that are genuinely farther away — a closer free
+      // engineer takes over immediately instead of waiting for the south guy.
+      const reservation = new Map<string, { w: Worker; eta: number }>();
+      for (const q of autoTasks) {
+        if (!q.reservedWorkerId) continue;
+        const rw = workerById.get(q.reservedWorkerId);
+        if (!rw || rw.status !== 'WORKING_ON_SITE') continue;
+        const active = tasksRef.current.find(t => t.id === rw.currentTaskId && t.status === 'WORKING');
+        if (!active) continue;
+        const stand = STAND_BY_ID.get(q.standId);
+        if (!stand) continue;
+        const remainingSimMin = Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60);
+        const travel = calculateWorkerToStandEta(rw, stand).etaMinutes;
+        reservation.set(q.id, { w: rw, eta: remainingSimMin + travel });
+      }
+
       const pairs: DispatchPair[] = [];
 
       for (const q of autoTasks) {
         const stand = STAND_BY_ID.get(q.standId);
         if (!stand) continue;
+        const res = reservation.get(q.id);
         for (const w of workerById.values()) {
           if (!(w.categoryCode === q.categoryCode || q.categoryCode === 'A')) continue;
 
           if (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') {
             if (busy.has(w.id)) continue;
             const member = calculateWorkerToStandEta(w, stand);
+            const eta = member.etaMinutes;
+            // Reservation yields only to a free engineer who is STRICTLY closer
+            // than the reserved one (who is already on his way after finishing).
+            if (res && eta >= res.eta) continue;
             const zoneFree = freeByBase.get(w.baseId) || 0;
             const zonePenalty = zoneFree - 1 < 2 ? 3 : 0;
-            const eta = member.etaMinutes;
             const cost = eta + eta * 0.1 * Math.min(w.dispatchedCount || 0, 4) + zonePenalty;
             pairs.push({ q, w, eta, cost, delay: 0, member });
           } else if (w.status === 'WORKING_ON_SITE') {
-            // Item 4: lookahead — engineer mid-maintenance, frees up shortly
+            // Item 4: lookahead — engineer mid-maintenance, frees up shortly.
+            // Only the reserved engineer is a lookahead candidate for this task,
+            // so reservations don't churn between multiple busy engineers.
+            if (res && res.w.id !== w.id) continue;
             const active = tasksRef.current.find(t => t.id === w.currentTaskId && t.status === 'WORKING');
             if (!active) continue;
             const remainingSimMin = Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60);
@@ -305,9 +320,12 @@ export function useSimulationEngine() {
         if (p.delay > 0) {
           // Lookahead wins → reserve the call for the engineer who is about to finish
           if (assignedWorker.has(p.w.id)) continue;
+          assignedWorker.add(p.w.id);
           assignedTask.add(p.q.id);
           dispatchedTasks[p.q.id] = { ...p.q, reservedWorkerId: p.w.id };
-          showNotification(`⏳ Задача ${p.q.id} (${p.q.priority}) зарезервирована за ${p.w.name} — закончит ТО и выедет сразу, не возвращаясь в базу.`);
+          if (!reservation.has(p.q.id)) {
+            showNotification(`⏳ Задача ${p.q.id} (${p.q.priority}) зарезервирована за ${p.w.name} — закончит ТО и выедет сразу, не возвращаясь в базу.`);
+          }
           continue;
         }
 
@@ -593,148 +611,78 @@ export function useSimulationEngine() {
                 if (w && !freedWorkers.some(f => f.id === w.id)) freedWorkers.push(w);
               });
             });
-            const freedIds = new Set(freedWorkers.map(f => f.id));
 
-            // CHAIN: send freed workers straight to the next queued job instead of
-            // dragging them back to base first. Order = SLA-aware (item 1).
-            const busySet = new Set<string>();
-            for (const t of tasksRef.current) {
-              if (t.status === 'DISPATCHED' || t.status === 'WORKING') t.crew.forEach(m => busySet.add(m.workerId));
-            }
-            const queuedPool = sortQueuedBySla(remainingTasks.filter(t => t.status === 'QUEUED'), workerIdx, busySet);
-            const takenTaskIds = new Set<string>();
-            const chainAssign = new Map<string, OtoTask>(); // workerId -> next task
-
-            for (const w of freedWorkers) {
-              if (chainAssign.has(w.id)) continue;
-
-              // Lookahead (item 4): honor a reservation made by the dispatcher
-              const reserved = queuedPool.find(q => q.reservedWorkerId === w.id && !takenTaskIds.has(q.id));
-              if (reserved) {
-                takenTaskIds.add(reserved.id);
-                chainAssign.set(w.id, reserved);
-                continue;
-              }
-
-              for (const q of queuedPool) {
-                if (takenTaskIds.has(q.id)) continue;
-                if (q.crew.length > 0) {
-                  // Manual crew: this worker must be part of it AND the whole crew must
-                  // have been freed by the same completions (no partial dispatch).
-                  if (!q.crew.some(m => m.workerId === w.id)) continue;
-                  if (!q.crew.every(m => freedIds.has(m.workerId))) continue;
-                  q.crew.forEach(m => chainAssign.set(m.workerId, q));
-                  takenTaskIds.add(q.id);
-                  break;
-                }
-                if (q.categoryCode === 'A' || w.categoryCode === q.categoryCode) {
-                  takenTaskIds.add(q.id);
-                  chainAssign.set(w.id, q);
-                  break;
-                }
-              }
-            }
-
-            // Build updated task objects for chained tasks (fresh ETA from current positions)
-            const chainedTaskById = new Map<string, OtoTask>();
-            chainAssign.forEach((q, workerId) => {
-              if (chainedTaskById.has(q.id)) return;
-              const targetStand = STAND_BY_ID.get(q.standId);
-              if (!targetStand) return;
-              const members = q.crew.length > 0
-                ? q.crew.map(m => workerIdx.get(m.workerId)).filter((x): x is Worker => !!x)
-                : (() => {
-                    const w = workerIdx.get(workerId);
-                    return w ? [w] : [];
-                  })();
-              if (members.length === 0) return;
-              const freshMembers = members.map(w => calculateWorkerToStandEta(w, targetStand));
-              chainedTaskById.set(q.id, {
-                ...q,
-                status: 'DISPATCHED' as const,
-                crew: freshMembers,
-                arrivedCount: 0,
-                elapsedTransitSec: 0,
-                elapsedWorkSec: 0,
-                maxEtaMinutes: Math.max(...freshMembers.map(m => m.etaMinutes)),
-                reservedWorkerId: undefined
+            // Freed workers stay FREE at their CURRENT position (the moment they
+            // finish maintenance), so the global greedy drain below picks the
+            // NEAREST engineer for each queued call — not an arbitrary SLA pick.
+            // No forced chaining here: distance decides, queue order keeps SLA.
+            const freedFree: Map<string, Worker> = new Map();
+            freedWorkers.forEach(w => {
+              freedFree.set(w.id, {
+                ...w,
+                status: w.isPatrolPreference ? 'FREE_PATROLLING' as WorkerStatus : 'FREE_STATIONARY' as WorkerStatus,
+                currentTaskId: undefined,
+                pathWaypoints: undefined,
+                pathSpeedPctPerSimSec: undefined,
+                currentSegmentIndex: 0
               });
             });
 
-            // Re-route freed workers: chained → next task, patrol crews → patrol,
-            // stationary workers → back to their duty post so remote stands stay manned.
-            const freedFinal = new Map<string, Worker>();
-            freedWorkers.forEach(w => {
-              const chained = chainAssign.get(w.id);
-              if (chained) {
-                const targetStand = STAND_BY_ID.get(chained.standId);
-                if (targetStand) {
-                  const member = calculateWorkerToStandEta(w, targetStand);
-                  let totalPct = 0;
-                  for (let i = 0; i < member.waypoints.length - 1; i++) {
-                    totalPct += Math.hypot(
-                      member.waypoints[i + 1].x - member.waypoints[i].x,
-                      member.waypoints[i + 1].y - member.waypoints[i].y
-                    );
-                  }
-                  const etaSimSec = Math.max(1, member.etaMinutes * 60);
-                  freedFinal.set(w.id, {
-                    ...w,
-                    status: 'IN_TRANSIT' as WorkerStatus,
-                    currentTaskId: chained.id,
-                    pathWaypoints: member.waypoints,
-                    pathSpeedPctPerSimSec: Math.max(0.01, totalPct / etaSimSec),
-                    currentSegmentIndex: 0,
-                    dispatchedCount: (w.dispatchedCount || 0) + 1
-                  });
-                  return;
-                }
-              }
-
-              // No queued work → patrol crews keep patrolling their local zone
-              if (w.isPatrolPreference) {
-                const currentNodeId = getClosestNodeId(w.x, w.y);
-                const randomTargetId = pickPatrolTargetId(w.baseId);
-                const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
-                freedFinal.set(w.id, {
-                  ...w,
-                  status: 'FREE_PATROLLING' as WorkerStatus,
-                  currentTaskId: undefined,
-                  pathWaypoints: getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath),
-                  pathSpeedPctPerSimSec: undefined,
-                  currentSegmentIndex: 0
-                });
-                return;
-              }
-
-              // Stationary worker → back to its duty post (or base)
-              const dutyStand = w.dutyStandId ? SVO_STANDS.find(s => s.id === w.dutyStandId) : undefined;
-              const targetNode = dutyStand || SVO_FACILITIES.find(f => f.id === w.baseId);
-              if (targetNode) {
-                const nodePath = findDijkstraShortestPath(getClosestNodeId(w.x, w.y), targetNode.id);
-                freedFinal.set(w.id, {
-                  ...w,
-                  status: 'RETURNING_TO_BASE' as WorkerStatus,
-                  currentTaskId: undefined,
-                  pathWaypoints: getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath),
-                  pathSpeedPctPerSimSec: undefined,
-                  currentSegmentIndex: 0
-                });
-                return;
-              }
-              freedFinal.set(w.id, { ...w, status: 'FREE_STATIONARY' as WorkerStatus, currentTaskId: undefined });
-            });
-
-            workersRef.current = workersRef.current.map(w => freedFinal.get(w.id) || w);
-            tasksRef.current = remainingTasks.map(t => chainedTaskById.get(t.id) || t);
+            workersRef.current = workersRef.current.map(w => freedFree.get(w.id) || w);
+            tasksRef.current = remainingTasks;
 
             // Force UI update on completion
             setWorkers([...workersRef.current]);
             setTasks([...tasksRef.current]);
             lastRenderTimeRef.current = now;
 
-            // Instantly drain queue with freshly freed / patrolling workers!
+            // Global greedy re-drain: nearest freed engineer wins each queued call.
+            // Reservations are respected, but only while nobody closer is free.
             drainQueueWithFreeWorkers();
+
+            // Freed workers the dispatcher did NOT use: patrollers resume their
+            // local patrol loop, stationary crews head back to their duty post
+            // (or base) so remote stands stay manned.
+            const idleFinal = new Map<string, Worker>();
+            freedWorkers.forEach(w => {
+              const cur = workersRef.current.find(x => x.id === w.id);
+              if (!cur) return;
+              if (cur.status === 'IN_TRANSIT' || cur.status === 'WORKING_ON_SITE') return; // re-dispatched
+              if (cur.isPatrolPreference) {
+                const currentNodeId = getClosestNodeId(cur.x, cur.y);
+                const randomTargetId = pickPatrolTargetId(cur.baseId);
+                const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
+                idleFinal.set(cur.id, {
+                  ...cur,
+                  status: 'FREE_PATROLLING' as WorkerStatus,
+                  currentTaskId: undefined,
+                  pathWaypoints: getWaypointsForNodePath({ x: cur.x, y: cur.y }, nodePath),
+                  pathSpeedPctPerSimSec: undefined,
+                  currentSegmentIndex: 0
+                });
+                return;
+              }
+              const dutyStand = cur.dutyStandId ? SVO_STANDS.find(s => s.id === cur.dutyStandId) : undefined;
+              const targetNode = dutyStand || SVO_FACILITIES.find(f => f.id === cur.baseId);
+              if (targetNode) {
+                const nodePath = findDijkstraShortestPath(getClosestNodeId(cur.x, cur.y), targetNode.id);
+                idleFinal.set(cur.id, {
+                  ...cur,
+                  status: 'RETURNING_TO_BASE' as WorkerStatus,
+                  currentTaskId: undefined,
+                  pathWaypoints: getWaypointsForNodePath({ x: cur.x, y: cur.y }, nodePath),
+                  pathSpeedPctPerSimSec: undefined,
+                  currentSegmentIndex: 0
+                });
+                return;
+              }
+              idleFinal.set(cur.id, { ...cur, status: 'FREE_STATIONARY' as WorkerStatus, currentTaskId: undefined });
+            });
+            if (idleFinal.size > 0) {
+              workersRef.current = workersRef.current.map(w => idleFinal.get(w.id) || w);
+              setWorkers([...workersRef.current]);
+              lastRenderTimeRef.current = now;
+            }
           } else {
             // UNCONDITIONAL update to preserve fractional timer progress
             tasksRef.current = nextTasks;
