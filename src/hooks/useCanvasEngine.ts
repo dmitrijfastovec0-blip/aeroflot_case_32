@@ -60,11 +60,11 @@ function roundedPolygonPath(ctx: CanvasRenderingContext2D, pts: Pos[], radius: n
 // segments are trimmed at radius from each junction node, and an arc reconnects
 // every pair of outgoing roads — so crossings get clean fillets, not spikes.
 function buildRoadNetworkPath(
-  ctx: CanvasRenderingContext2D,
   edges: { from: string; to: string }[],
   getPos: (id: string) => Pos,
   radius: number
-) {
+): Path2D {
+  const path = new Path2D();
   const adj = new Map<string, Set<string>>();
   for (const e of edges) {
     if (!adj.has(e.from)) adj.set(e.from, new Set());
@@ -88,8 +88,8 @@ function buildRoadNetworkPath(
     if (len <= trim1 + trim2) continue;
     const ux = dx / len;
     const uy = dy / len;
-    ctx.moveTo(p1.x + ux * trim1, p1.y + uy * trim1);
-    ctx.lineTo(p2.x - ux * trim2, p2.y - uy * trim2);
+    path.moveTo(p1.x + ux * trim1, p1.y + uy * trim1);
+    path.lineTo(p2.x - ux * trim2, p2.y - uy * trim2);
   }
 
   for (const [nodeId, neighbors] of adj) {
@@ -107,10 +107,12 @@ function buildRoadNetworkPath(
       let delta = b.a - a.a;
       if (delta < 0) delta += Math.PI * 2;
       if (delta < 0.08 || delta > Math.PI * 1.5) continue;
-      ctx.moveTo(pos.x + Math.cos(a.a) * radius, pos.y + Math.sin(a.a) * radius);
-      ctx.arc(pos.x, pos.y, radius, a.a, b.a, false);
+      path.moveTo(pos.x + Math.cos(a.a) * radius, pos.y + Math.sin(a.a) * radius);
+      path.arc(pos.x, pos.y, radius, a.a, b.a, false);
     }
   }
+
+  return path;
 }
 
 // ============================================================================
@@ -218,6 +220,11 @@ export function useCanvasEngine({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Cached static road-network geometry: built ONCE (positions are fixed logical
+  // coords), stroked 3×/frame with different styles + dash offsets. Avoids
+  // rebuilding Map/Set/sort topology on every animation frame (GC churn).
+  const roadPathRef = useRef<Path2D | null>(null);
+
   // Raster Image Sublayer Ref (svo.png)
   const mapImageRef = useRef<HTMLImageElement | null>(null);
   const [isMapImageLoaded, setIsMapImageLoaded] = useState<boolean>(false);
@@ -284,8 +291,15 @@ export function useCanvasEngine({
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    // Resize the backing store ONLY when it actually changed — assigning
+    // canvas.width/height every frame resets the context state and forces a
+    // full clear + re-layout, a hidden stutter source at high DPR.
+    const targetW = Math.max(1, Math.round(width * dpr));
+    const targetH = Math.max(1, Math.round(height * dpr));
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
 
@@ -454,6 +468,12 @@ export function useCanvasEngine({
     const roadEdges = SVO_EDGES.filter(e => e.type !== 'TUNNEL');
     const cornerRadius = 7;
 
+    // Build the static path geometry once, reuse it for all three strokes
+    if (!roadPathRef.current) {
+      roadPathRef.current = buildRoadNetworkPath(roadEdges, getNodePos, cornerRadius);
+    }
+    const roadPath = roadPathRef.current;
+
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -462,17 +482,13 @@ export function useCanvasEngine({
     ctx.strokeStyle = palette.roadLine;
     ctx.globalAlpha = 0.9;
     ctx.lineWidth = 3.6;
-    ctx.beginPath();
-    buildRoadNetworkPath(ctx, roadEdges, getNodePos, cornerRadius);
-    ctx.stroke();
+    ctx.stroke(roadPath);
 
     // Bright centerline
     ctx.globalAlpha = 1;
     ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    buildRoadNetworkPath(ctx, roadEdges, getNodePos, cornerRadius);
-    ctx.stroke();
+    ctx.stroke(roadPath);
 
     // Slow moving dashes to convey traffic flow
     ctx.strokeStyle = palette.textSubtle;
@@ -480,9 +496,7 @@ export function useCanvasEngine({
     ctx.lineWidth = 1.3;
     ctx.setLineDash([3, 22]);
     ctx.lineDashOffset = dashOffset * 0.5;
-    ctx.beginPath();
-    buildRoadNetworkPath(ctx, roadEdges, getNodePos, cornerRadius);
-    ctx.stroke();
+    ctx.stroke(roadPath);
     ctx.setLineDash([]);
     ctx.restore();
 
