@@ -638,6 +638,25 @@ export function useSimulationEngine() {
     drainQueueWithFreeWorkers();
   }, [drainQueueWithFreeWorkers]);
 
+  // Reset the shift to its optimal base deployment (FREE at home bases),
+  // clear all active/queued calls, analytics and ROI history.
+  const resetShiftToOptimal = useCallback((showToast: boolean) => {
+    const { b1, b2, catA, vehicles } = shiftCountsRef.current;
+    const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
+    workersRef.current = updatedWorkers;
+    setWorkers(updatedWorkers);
+
+    tasksRef.current = [];
+    setTasks([]);
+    statsRef.current = [];
+    setDispatchStats([]);
+    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0 };
+    lastRoiCountRef.current = 0;
+    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0 });
+    resetWeatherOverrides();
+    if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
+  }, [showNotification]);
+
   const runScenario = useCallback((scenarioId: string) => {
     switch (scenarioId) {
       case 'peak':
@@ -683,29 +702,26 @@ export function useSimulationEngine() {
         showNotification(`🩸 Сценарий «AOG-дефект»: утечка гидравлики → квалификация B1.`);
         break;
       }
+      case 'snow': {
+        applyWeatherOverrides(3.5, 12.0);
+        enqueueAutoTask('STAND_C21', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_E38', 'B1', 'URGENT', 'ATA32');
+        showNotification(`❄️ Сценарий «Снегопад»: скорость пешком 3.5 км/ч, авто 12 км/ч. ETA вызовов выросли.`);
+        break;
+      }
+      case 'slaBreach': {
+        enqueueAutoTask('STAND_D24', 'B2', 'AOG', 'ATA24');
+        showNotification(`🚨 CRITICAL_SLA_ALERT: B2-вызов на стоянку D24, ближайший B2 — на Севере (АК-4), превышение SLA +8.5 мин!`);
+        break;
+      }
+      case 'reset': {
+        resetShiftToOptimal(true);
+        break;
+      }
       default:
         break;
     }
-  }, [triggerStressTest, applyShiftConfig, enqueueAutoTask, showNotification]);
-
-  // Reset the shift to its optimal base deployment (FREE at home bases),
-  // clear all active/queued calls, analytics and ROI history.
-  const resetShiftToOptimal = useCallback((showToast: boolean) => {
-    const { b1, b2, catA, vehicles } = shiftCountsRef.current;
-    const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
-    workersRef.current = updatedWorkers;
-    setWorkers(updatedWorkers);
-
-    tasksRef.current = [];
-    setTasks([]);
-    statsRef.current = [];
-    setDispatchStats([]);
-    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0 };
-    lastRoiCountRef.current = 0;
-    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0 });
-    resetWeatherOverrides();
-    if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
-  }, [showNotification]);
+  }, [triggerStressTest, applyShiftConfig, enqueueAutoTask, resetShiftToOptimal, applyWeatherOverrides, showNotification]);
 
   // Hackathon PRESET SCENARIOS (quick-action bar, one click each)
   const runPreset = useCallback((presetId: string) => {
@@ -848,6 +864,7 @@ export function useSimulationEngine() {
     isPaused,
     setIsPaused,
     notificationBanner,
+    showNotification,
     submitTask,
     cancelTask,
     promoteTaskToAog,

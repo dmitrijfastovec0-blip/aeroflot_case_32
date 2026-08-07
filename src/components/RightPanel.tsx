@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CategoryCode, OtoTask, TaskCrewMember, Worker, ThemeMode, TaskPriority } from '../types/index';
+import { CategoryCode, OtoTask, TaskCrewMember, Worker, ThemeMode } from '../types/index';
 import { SVO_STANDS, DEFECT_TYPES } from '../constants/index';
 import { CrewRequirement } from '../constants/index';
-import { findNearestFreeWorkerOfCategory, calculateCrewMaxEta, getCategoryCandidates, findNaiveNearestWorkerOfCategory, findNearestFreeWorkerOfExactCategory } from '../services/dijkstra';
-import { Wrench, Trash2, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, ShieldCheck, Timer, Flame, AlertCircle, Crosshair, BrainCircuit, Sparkles } from 'lucide-react';
+import { findNearestFreeWorkerOfExactCategory, getCategoryCandidates, findNaiveNearestWorkerOfCategory } from '../services/dijkstra';
+import { Wrench, Rocket, CheckCircle2, AlertTriangle, MapPin, Users, Clock, Timer, BrainCircuit, Crosshair, Sparkles } from 'lucide-react';
 
 interface RightPanelProps {
   selectedStandId: string | null;
@@ -11,11 +11,13 @@ interface RightPanelProps {
   workers: Worker[];
   onLaunchTask: (task: OtoTask) => void;
   onTriggerSlaAlert: (task: OtoTask) => void;
+  onNotify: (msg: string) => void;
   activeTaskForStand?: OtoTask | null;
   theme: ThemeMode;
 }
 
-// Small numbered step badge for a clear, guided workflow
+const SLA_LIMIT = 15.0;
+
 const StepBadge = ({ n, color }: { n: number; color: string }) => (
   <span className={`w-6 h-6 rounded-full ${color} text-white font-mono text-[11px] font-black flex items-center justify-center shrink-0 shadow-sm`}>
     {n}
@@ -36,128 +38,76 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   workers,
   onLaunchTask,
   onTriggerSlaAlert,
+  onNotify,
   activeTaskForStand,
   theme
 }) => {
   const [standId, setStandId] = useState<string>(selectedStandId || SVO_STANDS[0].id);
-  const [crew, setCrew] = useState<TaskCrewMember[]>([]);
-
-  // Defect-type selector → auto-maps required qualification (catalog: defect → Cat B1/B2/A)
   const [defectId, setDefectId] = useState<string>('');
+
   const selectedDefect = DEFECT_TYPES.find(d => d.id === defectId);
-
-  // Task Priority Selector (AOG, URGENT, ROUTINE)
-  const [priority, setPriority] = useState<TaskPriority>('ROUTINE');
-
-  // INTERACTIVE SLA LIMIT INPUT (Default 15.0 min, editable by user!)
-  const [slaLimitMinutes, setSlaLimitMinutes] = useState<number>(15.0);
-
   const currentStand = SVO_STANDS.find(s => s.id === standId) || SVO_STANDS[0];
 
-  // Candidate comparison: system (road graph, min ETA) vs intuitive dispatcher (straight line)
+  useEffect(() => {
+    if (selectedStandId) setStandId(selectedStandId);
+  }, [selectedStandId]);
+
+  // Auto crew: assemble the exact crew required by the ATA chapter, picking the
+  // nearest available engineer of each qualification. Best-effort — if someone is
+  // missing the task simply goes to the queue.
+  const autoCrew: TaskCrewMember[] = useMemo(() => {
+    if (!selectedDefect) return [];
+    const used = new Set<string>();
+    const members: TaskCrewMember[] = [];
+    for (const req of selectedDefect.requiredCrew as CrewRequirement[]) {
+      for (let i = 0; i < req.count; i++) {
+        const m = findNearestFreeWorkerOfExactCategory(req.categoryCode, currentStand, workers, used);
+        if (!m) break;
+        used.add(m.workerId);
+        members.push(m);
+      }
+    }
+    return members;
+  }, [selectedDefect, currentStand, workers]);
+
+  const crew: TaskCrewMember[] = autoCrew;
+  const maxEtaMinutes = crew.length ? Math.max(...crew.map(m => m.etaMinutes)) : 0;
+  const withinSla = crew.length > 0 && maxEtaMinutes <= SLA_LIMIT;
+
+  const reqCat: CategoryCode = selectedDefect?.categoryCode || 'B1';
+
+  // Recommendation: closest candidate for the lead category
   const { systemCandidates, naivePick } = useMemo(() => {
-    const reqCat = selectedDefect?.categoryCode || (crew.length ? crew[crew.length - 1].categoryCode : 'B1');
     const busy = new Set(
       workers.filter(w => w.status === 'IN_TRANSIT' || w.status === 'WORKING_ON_SITE').map(w => w.id)
     );
-    const load: Record<string, number> = {};
-    const systemCandidates = getCategoryCandidates(reqCat, currentStand, workers, busy, load)
+    const candidates = getCategoryCandidates(reqCat, currentStand, workers, busy, {})
       .filter(c => c.isAvailable)
       .sort((a, b) => a.etaMinutes - b.etaMinutes)
       .slice(0, 3);
-    const naivePick = findNaiveNearestWorkerOfCategory(reqCat, currentStand, workers, busy);
-    return { systemCandidates, naivePick };
-  }, [selectedDefect, crew, currentStand, workers]);
+    const naive = findNaiveNearestWorkerOfCategory(reqCat, currentStand, workers, busy);
+    return { systemCandidates: candidates, naivePick: naive };
+  }, [reqCat, currentStand, workers]);
 
-  useEffect(() => {
-    if (selectedStandId) {
-      setStandId(selectedStandId);
-      setCrew([]);
-    }
-  }, [selectedStandId]);
-
-  // Quick Crew Assembly Handlers
-  const handleAddNearestWorker = (catCode: CategoryCode) => {
-    const alreadySelectedIds = new Set(crew.map(c => c.workerId));
-    const nearestMember = findNearestFreeWorkerOfCategory(catCode, currentStand, workers, alreadySelectedIds);
-
-    if (!nearestMember) {
-      alert(`⚠️ Нет свободных доступных специалистов категории ${catCode}! При отправке задача встанет в ОЧЕРЕДЬ ОЖИДАНИЯ (QUEUED).`);
-    } else {
-      setCrew(prev => [...prev, nearestMember]);
-    }
-  };
-
-  const handleRemoveWorker = (workerId: string) => {
-    setCrew(prev => prev.filter(c => c.workerId !== workerId));
-  };
-
-  // Auto-assemble the crew required by the selected ATA chapter (requiredCrew),
-  // picking the nearest available engineer of each qualification.
-  const handleAutoAssembleCrew = () => {
-    if (!selectedDefect) return;
-    const required: CrewRequirement[] = selectedDefect.requiredCrew;
-    const alreadySelectedIds = new Set(crew.map(c => c.workerId));
-    const newMembers: TaskCrewMember[] = [];
-
-    for (const req of required) {
-      for (let i = 0; i < req.count; i++) {
-        const member = findNearestFreeWorkerOfExactCategory(req.categoryCode, currentStand, workers, alreadySelectedIds);
-        if (!member) {
-          alert(`⚠️ Недостаточно свободных специалистов Cat ${req.categoryCode} для ${selectedDefect.ataLabel}!`);
-          return;
-        }
-        alreadySelectedIds.add(member.workerId);
-        newMembers.push(member);
-      }
-    }
-    setCrew(prev => {
-      const ids = new Set(prev.map(c => c.workerId));
-      return [...prev, ...newMembers.filter(m => !ids.has(m.workerId))];
-    });
-  };
-
-  // Replace a crew member (e.g. the SLA bottleneck) with the closest available
-  // free engineer of the same category.
-  const handleReplaceWorker = (workerId: string) => {
-    const current = crew.find(c => c.workerId === workerId);
-    if (!current) return;
-    const alreadySelectedIds = new Set(crew.map(c => c.workerId));
-    const replacement = findNearestFreeWorkerOfCategory(current.categoryCode, currentStand, workers, alreadySelectedIds);
-    if (!replacement || replacement.workerId === current.workerId || replacement.etaMinutes >= current.etaMinutes) {
-      alert(`⚠️ Нет более близких свободных ${current.categoryCode} — текущий инженер остаётся в бригаде.`);
+  const handleLaunch = () => {
+    if (!selectedDefect) {
+      onNotify('⚠️ Выберите тип неисправности (шаг 2) — бригада подберётся автоматически.');
       return;
     }
-    setCrew(prev => prev.map(c => c.workerId === workerId ? replacement : c));
-  };
-
-  const { maxEtaMinutes, withinSla } = calculateCrewMaxEta(crew, slaLimitMinutes);
-  const slaDiff = Math.abs(Math.round((slaLimitMinutes - maxEtaMinutes) * 10) / 10);
-
-  // SLA bottleneck: the crew member with the LARGEST arrival ETA. If the crew
-  // exceeds the SLA limit, this worker is highlighted and can be swapped out.
-  const bottleneckMember = crew.length > 0
-    ? crew.reduce((a, b) => (b.etaMinutes > a.etaMinutes ? b : a))
-    : null;
-
-  // Submit & Launch Task Handler
-  const handleLaunchTaskSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
     const newTask: OtoTask = {
       id: `TASK-${Date.now().toString().slice(-5)}`,
       standId: currentStand.id,
       standLabel: `Стоянка ${currentStand.label}`,
       aircraftType: `${currentStand.aircraftType} (${currentStand.airline || 'ПАО «Аэрофлот»'})`,
-      categoryCode: crew[0]?.categoryCode || selectedDefect?.categoryCode || 'B1',
-      categoryLabel: selectedDefect ? `ОТО · ${selectedDefect.ataLabel} ${selectedDefect.name}` : `Бригада ОТО (${crew.length} чел.)`,
-      defectLabel: selectedDefect?.name,
-      priority,
+      categoryCode: reqCat,
+      categoryLabel: `ОТО · ${selectedDefect.ataLabel} ${selectedDefect.name}`,
+      defectLabel: selectedDefect.name,
+      priority: 'ROUTINE',
       status: 'DISPATCHED',
       crew,
       arrivedCount: 0,
       maxEtaMinutes: maxEtaMinutes || 10.0,
-      slaLimitMinutes,
+      slaLimitMinutes: SLA_LIMIT,
       withinSla,
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
       elapsedQueueSec: 0,
@@ -167,10 +117,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
     if (crew.length > 0 && !withinSla) {
       onTriggerSlaAlert(newTask);
-      setCrew([]);
     } else {
       onLaunchTask(newTask);
-      setCrew([]);
     }
   };
 
@@ -181,17 +129,15 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   };
 
   const cardClass = theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-50 border-slate-200';
-  const reqCat = selectedDefect?.categoryCode || (crew.length ? crew[crew.length - 1].categoryCode : 'B1');
 
   return (
     <aside className={`w-[440px] min-w-[440px] h-full border-l overflow-y-auto flex flex-col p-5 space-y-4 select-none font-sans text-sm transition-colors ${
       theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-100' : 'bg-white border-slate-300 text-slate-900 shadow-xl'
     }`}>
-      {/* Panel Header */}
       <div className="flex items-center justify-between border-b border-slate-300 dark:border-[#263345] pb-3">
         <h2 className="font-bold text-base md:text-lg uppercase tracking-wider flex items-center gap-2 text-gray-100 dark:text-gray-100 text-slate-900">
           <Wrench className="w-5 h-5 text-sky-400" />
-          📋 СОЗДАНИЕ ЗАДАНИЯ
+          📋 СОЗДАНИЕ ВЫЗОВА
         </h2>
         <span className="bg-[#121820] dark:bg-[#121820] bg-slate-100 text-sky-400 font-mono px-2.5 py-1 rounded-lg text-xs font-bold border border-[#263345] dark:border-[#263345] border-slate-300">
           Стоянка {currentStand.label}
@@ -209,7 +155,6 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           </div>
 
           {activeTaskForStand.status === 'QUEUED' ? (
-            /* QUEUED BADGE UPON STAFF DEFICIT WITH SIMULATION TIMER */
             <div className="bg-amber-500/15 border border-amber-500/60 rounded-xl p-3.5 space-y-2 text-amber-300">
               <div className="flex items-center justify-between font-bold text-sm">
                 <span className="flex items-center space-x-1.5">
@@ -331,27 +276,25 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
           {/* ======================= STEP 2: DEFECT ======================= */}
           <div className={`border rounded-xl p-4 space-y-2.5 ${cardClass}`}>
-            <StepTitle n={2} color="bg-orange-600" title="Тип неисправности" hint="→ квалификация" />
+            <StepTitle n={2} color="bg-orange-600" title="Тип неисправности" hint="→ бригада подберётся сама" />
             <select
               value={defectId}
-              onChange={e => {
-                setDefectId(e.target.value);
-                setCrew([]);
-              }}
+              onChange={e => setDefectId(e.target.value)}
               className={`w-full border text-xs rounded-lg p-2 font-mono focus:border-orange-500 focus:outline-none ${
                 theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-100' : 'bg-white border-slate-300 text-slate-900'
               }`}
             >
-              <option value="">— Не указан (ручной выбор) —</option>
+              <option value="">— Выберите неисправность —</option>
               {DEFECT_TYPES.map(d => (
                 <option key={d.id} value={d.id}>
                   {d.ataLabel} — {d.name} → {d.requiredCrew.map(r => `${r.count}× Cat ${r.categoryCode}`).join(' + ')}
                 </option>
               ))}
             </select>
+
             {selectedDefect && (
               <div className="flex items-center justify-between gap-2 text-[11px] flex-wrap">
-                <span className="text-gray-400">Регламент ATA ({selectedDefect.ataLabel}):</span>
+                <span className="text-gray-400">Нужная бригада ({selectedDefect.ataLabel}):</span>
                 <div className="flex items-center gap-1 flex-wrap">
                   {selectedDefect.requiredCrew.map((r: CrewRequirement, i: number) => (
                     <span key={i} className={`px-2 py-0.5 rounded font-bold border ${
@@ -367,54 +310,9 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             )}
           </div>
 
-          {/* ======================= STEP 3: PRIORITY ======================= */}
+          {/* ======================= SYSTEM RECOMMENDATION ======================= */}
           <div className={`border rounded-xl p-4 space-y-2.5 ${cardClass}`}>
-            <StepTitle n={3} color="bg-red-600" title="Приоритет вызова" />
-            <div className="grid grid-cols-3 gap-1.5 font-mono text-xs">
-              <button
-                type="button"
-                onClick={() => setPriority('AOG')}
-                className={`py-2 px-2 rounded-lg border text-center font-bold transition-all cursor-pointer flex items-center justify-center space-x-1 ${
-                  priority === 'AOG'
-                    ? 'bg-red-500/25 border-red-500 text-red-400 font-bold shadow-md'
-                    : theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-400' : 'bg-white border-slate-300 text-slate-700'
-                }`}
-              >
-                <Flame className="w-3.5 h-3.5 text-red-500" />
-                <span>AOG (Срыв)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPriority('URGENT')}
-                className={`py-2 px-2 rounded-lg border text-center font-bold transition-all cursor-pointer flex items-center justify-center space-x-1 ${
-                  priority === 'URGENT'
-                    ? 'bg-amber-500/25 border-amber-500 text-amber-400 font-bold shadow-md'
-                    : theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-400' : 'bg-white border-slate-300 text-slate-700'
-                }`}
-              >
-                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                <span>URGENT</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPriority('ROUTINE')}
-                className={`py-2 px-2 rounded-lg border text-center font-bold transition-all cursor-pointer flex items-center justify-center space-x-1 ${
-                  priority === 'ROUTINE'
-                    ? 'bg-sky-500/25 border-sky-500 text-sky-400 font-bold shadow-md'
-                    : theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-400' : 'bg-white border-slate-300 text-slate-700'
-                }`}
-              >
-                <CheckCircle2 className="w-3.5 h-3.5 text-sky-400" />
-                <span>ROUTINE</span>
-              </button>
-            </div>
-          </div>
-
-          {/* ======================= STEP 4: SYSTEM RECOMMENDATION ======================= */}
-          <div className={`border rounded-xl p-4 space-y-2.5 ${cardClass}`}>
-            <StepTitle n={4} color="bg-emerald-600" title="Рекомендация системы" hint={`Cat ${reqCat}`} />
+            <StepTitle n={3} color="bg-emerald-600" title="Рекомендация системы" hint={`Cat ${reqCat}`} />
 
             {systemCandidates.length > 0 ? (
               <>
@@ -451,21 +349,6 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                     </span>
                   </div>
                 )}
-
-                <div className={`border-t pt-2 space-y-1 ${theme === 'dark' ? 'border-[#263345]' : 'border-slate-200'}`}>
-                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Свободные кандидаты</div>
-                  {systemCandidates.map((c, i) => (
-                    <div key={c.workerId} className={`flex items-center justify-between text-[11px] rounded px-2 py-1 border ${
-                      i === 0 ? 'border-transparent' : theme === 'dark' ? 'bg-[#070a0e] border-[#1e293b] text-gray-300' : 'bg-white border-slate-200 text-slate-600'
-                    }`}>
-                      <span className="font-bold truncate max-w-[170px]">{c.workerName} <span className="text-gray-400 font-normal">({c.categoryCode})</span></span>
-                      <span className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-gray-400">{c.vehicleLabel.split(' ')[0]}</span>
-                        <span className="font-bold">{c.etaMinutes} мин</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
               </>
             ) : (
               <div className="text-[11px] text-gray-500 text-center py-2 border border-dashed rounded-lg">
@@ -474,55 +357,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             )}
           </div>
 
-          {/* ======================= STEP 5: CREW + LAUNCH ======================= */}
+          {/* ======================= CREW + LAUNCH ======================= */}
           <div className={`border rounded-xl p-4 space-y-3 ${cardClass}`}>
-            <StepTitle n={5} color="bg-purple-600" title="Бригада и запуск" />
-
-              {/* Quick crew assembly buttons */}
-              <div className="grid grid-cols-3 gap-2 font-mono text-xs">
-                <button
-                  type="button"
-                  onClick={() => handleAddNearestWorker('B1')}
-                  className={`py-2 px-2 rounded-lg border text-center font-bold transition-all cursor-pointer ${
-                    theme === 'dark' ? 'bg-[#070a0e] hover:bg-[#1e293b] text-purple-300 border-purple-800/60' : 'bg-white hover:bg-slate-100 text-purple-700 border-purple-300 shadow-sm'
-                  }`}
-                >
-                  ➕ B1 Механика
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddNearestWorker('B2')}
-                  className={`py-2 px-2 rounded-lg border text-center font-bold transition-all cursor-pointer ${
-                    theme === 'dark' ? 'bg-[#070a0e] hover:bg-[#1e293b] text-sky-300 border-sky-800/60' : 'bg-white hover:bg-slate-100 text-sky-700 border-sky-300 shadow-sm'
-                  }`}
-                >
-                  ➕ B2 Авионика
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddNearestWorker('A')}
-                  className={`py-2 px-2 rounded-lg border text-center font-bold transition-all cursor-pointer ${
-                    theme === 'dark' ? 'bg-[#070a0e] hover:bg-[#1e293b] text-emerald-300 border-emerald-800/60' : 'bg-white hover:bg-slate-100 text-emerald-700 border-emerald-300 shadow-sm'
-                  }`}
-                >
-                  ➕ Cat A Линейщик
-                </button>
-              </div>
-
-              {/* ATA AUTO-ASSEMBLY: fill the whole crew required by the selected chapter */}
-              {selectedDefect && selectedDefect.requiredCrew.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleAutoAssembleCrew}
-                  className="w-full flex items-center justify-center space-x-1.5 py-2 rounded-lg border border-amber-500/60 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-mono text-xs font-bold transition-all cursor-pointer"
-                  title={`Собрать бригаду по регламенту ${selectedDefect.ataLabel}: ${selectedDefect.requiredCrew.map(r => `${r.count}× Cat ${r.categoryCode}`).join(' + ')}`}
-                >
-                  <Users className="w-3.5 h-3.5 text-amber-400" />
-                  <span>⚙️ Собрать бригаду по ATA {selectedDefect.ataLabel}</span>
-                </button>
-              )}
-
-            {/* Crew list */}
             <div className="flex justify-between items-center">
               <span className="text-xs text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-emerald-400" /> Состав бригады
@@ -534,89 +370,33 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
             {crew.length > 0 ? (
               <div className="space-y-2 overflow-y-auto max-h-[180px] pr-1">
-                {crew.map((member) => {
-                  const isBottleneck = !withinSla && bottleneckMember?.workerId === member.workerId;
-                  return (
-                    <div
-                      key={member.workerId}
-                      className={`border rounded-lg p-2.5 font-mono text-xs flex items-center justify-between ${
-                        isBottleneck
-                          ? theme === 'dark' ? 'bg-red-950/40 border-red-600/70' : 'bg-red-50 border-red-400'
-                          : theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200 shadow-sm'
-                      }`}
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                          <span className="font-bold text-sm">{member.workerName}</span>
-                          <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700">
-                            Cat {member.categoryCode}
-                          </span>
-                          {isBottleneck && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-600/20 text-red-400 border border-red-600 animate-pulse">
-                              БУТЫЛОЧНОЕ ГОРЛЫШКО: ETA {member.etaMinutes} мин
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center space-x-2">
-                          <span className="text-amber-400">{member.startLocationText}</span>
-                          <span>•</span>
-                          <span>{member.vehicleLabel}</span>
-                          <span>•</span>
-                          <span className={isBottleneck ? 'text-red-400 font-bold' : 'text-sky-400 font-bold'}>{member.etaMinutes} мин ETA</span>
-                        </div>
+                {crew.map(member => (
+                  <div key={member.workerId} className={`border rounded-lg p-2.5 font-mono text-xs flex items-center justify-between ${
+                    theme === 'dark' ? 'bg-[#070a0e] border-[#263345]' : 'bg-white border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                        <span className="font-bold text-sm">{member.workerName}</span>
+                        <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700">
+                          Cat {member.categoryCode}
+                        </span>
                       </div>
-
-                      <div className="flex items-center space-x-1">
-                        {isBottleneck && (
-                          <button
-                            onClick={() => handleReplaceWorker(member.workerId)}
-                            className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-300 border border-amber-500/70 hover:bg-amber-500/30 transition-colors cursor-pointer"
-                            title="Заменить бутылочное горлышко более близким инженером"
-                          >
-                            Заменить
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleRemoveWorker(member.workerId)}
-                          className="p-1.5 text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
-                          title="Удалить из бригады"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center space-x-2">
+                        <span className="text-amber-400">{member.startLocationText}</span>
+                        <span>•</span>
+                        <span>{member.vehicleLabel}</span>
+                        <span>•</span>
+                        <span className="text-sky-400 font-bold">{member.etaMinutes} мин ETA</span>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="py-4 text-center text-gray-400 font-mono text-xs border border-dashed border-slate-300 dark:border-[#263345] rounded-lg">
-                Нажмите кнопки выше, чтобы добавить инженеров.
+                {selectedDefect ? 'Не хватает свободных специалистов — задача уйдёт в очередь.' : 'Выберите неисправность — система соберёт бригаду автоматически.'}
               </div>
             )}
-
-            {/* SLA limit + indicator */}
-            <div className={`border rounded-lg p-3 flex items-center justify-between font-mono text-xs font-bold ${
-              theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-amber-50 border-amber-300 text-amber-900'
-            }`}>
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>⏱️ Лимит SLA:</span>
-              </div>
-              <div className="flex items-center space-x-1.5">
-                <input
-                  type="number"
-                  step="0.5"
-                  min="1.0"
-                  max="120.0"
-                  value={slaLimitMinutes}
-                  onChange={e => setSlaLimitMinutes(Math.max(1.0, parseFloat(e.target.value) || 1.0))}
-                  className={`w-20 p-1.5 rounded-lg border text-center font-bold text-sm focus:border-amber-500 focus:outline-none ${
-                    theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-white border-amber-300 text-amber-900'
-                  }`}
-                />
-                <span>мин</span>
-              </div>
-            </div>
 
             {crew.length > 0 && (
               <div className={`p-2.5 rounded-lg border font-mono text-xs flex items-center space-x-2 ${
@@ -631,18 +411,19 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 )}
                 <span>
                   {withinSla
-                    ? `🟢 В рамках SLA (ETA ${maxEtaMinutes} мин <= ${slaLimitMinutes} мин)`
-                    : `🚨 ПРЕВЫШЕНИЕ SLA ${slaLimitMinutes} МИН (+${slaDiff} мин)`}
+                    ? `🟢 В рамках SLA (ETA ${maxEtaMinutes} мин <= ${SLA_LIMIT} мин)`
+                    : `🚨 ПРЕВЫШЕНИЕ SLA (+${Math.round((maxEtaMinutes - SLA_LIMIT) * 10) / 10} мин)`}
                 </span>
               </div>
             )}
 
             <button
-              onClick={handleLaunchTaskSubmit}
-              className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold py-3 px-4 rounded-xl border border-red-400 shadow-lg transition-all duration-200 hover:shadow-red-900/40 hover:-translate-y-0.5 active:scale-[0.98] uppercase tracking-wider font-mono text-sm cursor-pointer"
+              onClick={handleLaunch}
+              disabled={!selectedDefect}
+              className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold py-3 px-4 rounded-xl border border-red-400 shadow-lg transition-all duration-200 hover:shadow-red-900/40 hover:-translate-y-0.5 active:scale-[0.98] uppercase tracking-wider font-mono text-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
             >
               <Sparkles className="w-4 h-4" />
-              <span>🚀 Отправить людей на задание</span>
+              <span>🚀 Отправить бригаду на задание</span>
             </button>
           </div>
         </>

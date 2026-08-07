@@ -229,4 +229,4 @@ export const DEFECT_TYPES: DefectType[] = [
 
 // Справочная стоимость простоя ВС (₽/мин) для экономического обоснования
 // Значение настраиваемое — команда подставляет обоснованную оценку для ПАО «Аэрофлот».
-export const AIRCRAFT_DOWNTIME_COST_PER_MIN = 8000;
+export const AIRCRAFT_DOWNTIME_COST_PER_MIN = 13500;

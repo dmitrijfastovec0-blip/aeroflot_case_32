@@ -44,16 +44,12 @@ export function App() {
     isPaused,
     setIsPaused,
     notificationBanner,
+    showNotification,
     submitTask,
     cancelTask,
-    promoteTaskToAog,
-    triggerStressTest,
     applyShiftConfig,
-    dispatchStats,
     roiMetrics,
-    runScenario,
-    runPreset,
-    runControlTests
+    runScenario
   } = useSimulationEngine();
 
   // Apply Custom Shift Configuration
@@ -132,15 +128,13 @@ export function App() {
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
-        onTriggerStressTest={triggerStressTest}
-        onRunScenario={runScenario}
       />
 
       {/* REAL-TIME SHIFT ECONOMICS (ROI WIDGET) */}
       <EconomicWidget roiMetrics={roiMetrics} theme={theme} />
 
       {/* QUICK-ACTION PRESET SCENARIO BAR */}
-      <ScenarioBar onRunPreset={runPreset} theme={theme} />
+      <ScenarioBar onRunScenario={runScenario} theme={theme} />
 
       {/* B & C. Central CAD Canvas & Right Task Panel */}
       <div className="flex-1 flex overflow-hidden relative">
@@ -162,6 +156,7 @@ export function App() {
           workers={workers}
           onLaunchTask={handleLaunchTaskSubmit}
           onTriggerSlaAlert={handleTriggerSlaAlert}
+          onNotify={showNotification}
           activeTaskForStand={activeTaskForSelectedStand}
           theme={theme}
         />
@@ -173,10 +168,7 @@ export function App() {
         queuedTasks={queuedTasks}
         workers={workers}
         onCancelTask={cancelTask}
-        onPromoteToAog={promoteTaskToAog}
         onSelectTask={(task) => setSelectedStandId(task.standId)}
-        dispatchStats={dispatchStats}
-        onRunControlTests={runControlTests}
         theme={theme}
       />
     </div>

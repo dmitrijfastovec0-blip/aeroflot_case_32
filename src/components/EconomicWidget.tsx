@@ -1,5 +1,6 @@
 import React from 'react';
 import { ThemeMode } from '../types/index';
+import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import { Wallet, TrendingDown, Timer, ShieldCheck } from 'lucide-react';
 
 interface EconomicWidgetProps {
@@ -10,7 +11,8 @@ interface EconomicWidgetProps {
 // Economic constants used by the ROI model
 export const SLA_BASELINE_MINUTES = 15.0;
 export const MANUAL_DISPATCH_AVG_MINUTES = 13.5;
-export const PREVENTED_LOSS_RUB_PER_MIN = 13500;
+// Единая ставка простоя ВС — единственный источник в constants/index.ts
+export const PREVENTED_LOSS_RUB_PER_MIN = AIRCRAFT_DOWNTIME_COST_PER_MIN;
 
 export const EconomicWidget: React.FC<EconomicWidgetProps> = ({ roiMetrics, theme }) => {
   const { completedCount, systemEtaSumMinutes } = roiMetrics;
