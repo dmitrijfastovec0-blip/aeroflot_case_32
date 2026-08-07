@@ -1,4 +1,4 @@
-import { Facility, Stand } from '../types/index';
+import { Facility, Stand, CategoryCode } from '../types/index';
 
 export const SVO_MAP_METERS = {
   width: 4000,
@@ -182,21 +182,49 @@ export const TECHNICIAN_NAMES = [
 ];
 
 // Каталог типов неисправностей ВС -> требуемая квалификация
+// По стандарту ATA Specification 100 (главы 24/32/34/49/72).
+// categoryCode — основная квалификация для диспетчера; requiredCrew — полный
+// регламентный состав бригады для данной главы ATA (количество по каждой Cat).
+export interface CrewRequirement {
+  categoryCode: CategoryCode;
+  count: number;
+}
+
 export interface DefectType {
   id: string;
   name: string;
-  categoryCode: 'B1' | 'B2' | 'A';
+  ataLabel: string;
+  categoryCode: CategoryCode;
+  requiredCrew: CrewRequirement[];
   description: string;
 }
 
 export const DEFECT_TYPES: DefectType[] = [
-  { id: 'HYD', name: 'Утечка гидравлики / масла', categoryCode: 'B1', description: 'Контроль контуров гидросистемы, планер и двигатели' },
-  { id: 'ENG', name: 'Помпаж / вибрация двигателя', categoryCode: 'B1', description: 'Силовая установка, узлы крепления' },
-  { id: 'LDG', name: 'Дефект шасси / тормозов', categoryCode: 'B1', description: 'Стойки, колеса, тормозная система' },
-  { id: 'AVN', name: 'Отказ авионики / индикации', categoryCode: 'B2', description: 'Электроника, дисплеи, системы управления' },
-  { id: 'ELC', name: 'Электрика / генератор', categoryCode: 'B2', description: 'Бортовая сеть, ВСУ, генераторы' },
-  { id: 'CAB', name: 'Отделка салона / кресла', categoryCode: 'A', description: 'Мелкий ремонт интерьера, багажных полок' },
-  { id: 'RAMP', name: 'Повреждение обшивки / створок', categoryCode: 'A', description: 'Внешний осмотр, лючки, обтекатели' }
+  {
+    id: 'ATA24', name: 'Электрическое питание / генераторы', ataLabel: 'ATA 24',
+    categoryCode: 'B2', requiredCrew: [{ categoryCode: 'B2', count: 1 }],
+    description: 'Бортовая сеть, ВСУ, генераторы — требуется B2 Авионика'
+  },
+  {
+    id: 'ATA32', name: 'Шасси и тормоза', ataLabel: 'ATA 32',
+    categoryCode: 'B1', requiredCrew: [{ categoryCode: 'B1', count: 1 }],
+    description: 'Стойки, колеса, тормозная система — требуется B1 Механика'
+  },
+  {
+    id: 'ATA34', name: 'Навигация и авионика', ataLabel: 'ATA 34',
+    categoryCode: 'B2', requiredCrew: [{ categoryCode: 'B2', count: 1 }],
+    description: 'Электроника, дисплеи, системы навигации — требуется B2 Авионика'
+  },
+  {
+    id: 'ATA49', name: 'Аварийный ВСУ (APU Emergency)', ataLabel: 'ATA 49',
+    categoryCode: 'B1', requiredCrew: [{ categoryCode: 'B1', count: 1 }, { categoryCode: 'A', count: 1 }],
+    description: 'Вспомогательная силовая установка — требуется B1 + Cat A'
+  },
+  {
+    id: 'ATA72', name: 'Работа двигателя', ataLabel: 'ATA 72',
+    categoryCode: 'B1', requiredCrew: [{ categoryCode: 'B1', count: 2 }, { categoryCode: 'A', count: 1 }],
+    description: 'Силовая установка, узлы крепления — требуется 2× B1 + Cat A'
+  }
 ];
 
 // Справочная стоимость простоя ВС (₽/мин) для экономического обоснования

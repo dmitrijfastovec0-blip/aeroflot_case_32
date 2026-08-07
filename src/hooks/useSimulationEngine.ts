@@ -10,7 +10,10 @@ import {
   generateShiftWorkersWithCustomCounts,
   getCategoryCandidates,
   findNaiveNearestWorkerOfCategory,
-  pickPatrolTargetId
+  pickPatrolTargetId,
+  applyWeatherOverrides,
+  resetWeatherOverrides,
+  getWeatherSpeeds
 } from '../services/dijkstra';
 import { computeDispatchPlan } from '../core/dispatcher';
 
@@ -45,6 +48,15 @@ export function useSimulationEngine() {
   // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
   const statsRef = useRef<DispatchStat[]>([]);
   const [dispatchStats, setDispatchStats] = useState<DispatchStat[]>([]);
+
+  // Economic ROI metrics: completed call count + accumulated system arrival
+  // ETAs, so the top-bar widget can compute saved minutes & prevented loss.
+  const [roiMetrics, setRoiMetrics] = useState({ completedCount: 0, systemEtaSumMinutes: 0 });
+  const roiMetricsRef = useRef({ completedCount: 0, systemEtaSumMinutes: 0 });
+  const lastRoiCountRef = useRef(0);
+
+  // Current shift composition (tracked for "reset to optimal bases" presets)
+  const shiftCountsRef = useRef({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
   // Build busy-id set + per-worker active task load from current tasks
   const computeLoadMap = (tasksList: OtoTask[]) => {
@@ -179,7 +191,8 @@ export function useSimulationEngine() {
             // Movement step: dispatched workers pace to arrive exactly at the displayed ETA.
             // Return-to-base workers (no ETA) fall back to real-world speeds.
             const etaSpeedPct = worker.pathSpeedPctPerSimSec;
-            const fallbackSpeedKmH = worker.vehicle === 'APRON_VEHICLE' ? 20.0 : 4.5;
+            const ws = getWeatherSpeeds();
+            const fallbackSpeedKmH = worker.vehicle === 'APRON_VEHICLE' ? ws.vehicleKmH : ws.pedestrianKmH;
             const pctPerSec = (etaSpeedPct != null
               ? etaSpeedPct
               : ((fallbackSpeedKmH * 1000 / 3600) / 4000) * 100
@@ -224,7 +237,8 @@ export function useSimulationEngine() {
               };
             }
 
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? 5.0 : 2.0;
+            const wsPatrol = getWeatherSpeeds();
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? wsPatrol.vehicleKmH / 3.6 : wsPatrol.pedestrianKmH / 3.6;
             const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
@@ -329,6 +343,9 @@ export function useSimulationEngine() {
               const doneTask = tasksRef.current.find(t => t.id === cId);
               if (!doneTask) return;
               showNotification(`✅ 2 мин ТО завершено на стоянке ${doneTask.standLabel}! Инженеры освобождены.`);
+              // ROI: accumulate completed call metrics (system arrival ETA)
+              roiMetricsRef.current.completedCount += 1;
+              roiMetricsRef.current.systemEtaSumMinutes += doneTask.maxEtaMinutes || 0;
               doneTask.crew.forEach(m => {
                 const w = workerIdx.get(m.workerId);
                 if (w && !freedWorkers.some(f => f.id === w.id)) freedWorkers.push(w);
@@ -417,6 +434,10 @@ export function useSimulationEngine() {
           setWorkers([...workersRef.current]);
           setTasks([...tasksRef.current]);
           lastRenderTimeRef.current = now;
+          if (roiMetricsRef.current.completedCount !== lastRoiCountRef.current) {
+            lastRoiCountRef.current = roiMetricsRef.current.completedCount;
+            setRoiMetrics({ ...roiMetricsRef.current });
+          }
         }
       }
 
@@ -556,6 +577,7 @@ export function useSimulationEngine() {
   }, [drainQueueWithFreeWorkers, showNotification]);
 
   const applyShiftConfig = useCallback((b1: number, b2: number, catA: number, vehicles: number) => {
+    shiftCountsRef.current = { b1, b2, catA, vehicles };
     const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
@@ -574,6 +596,9 @@ export function useSimulationEngine() {
     setTasks(nextTasks);
 
     drainQueueWithFreeWorkers();
+    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0 };
+    lastRoiCountRef.current = 0;
+    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0 });
     showNotification(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
   }, [drainQueueWithFreeWorkers, showNotification]);
 
@@ -620,41 +645,41 @@ export function useSimulationEngine() {
         break;
       case 'deficit': {
         applyShiftConfig(3, 1, 0, 2);
-        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'HYD');
-        enqueueAutoTask('STAND_D18', 'B2', 'AOG', 'AVN');
-        enqueueAutoTask('STAND_F45', 'B1', 'URGENT', 'ENG');
-        enqueueAutoTask('STAND_105', 'B2', 'URGENT', 'ELC');
-        enqueueAutoTask('STAND_C25', 'A', 'URGENT', 'CAB');
-        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'LDG');
-        enqueueAutoTask('STAND_201', 'B2', 'ROUTINE', 'AVN');
-        enqueueAutoTask('STAND_105', 'B1', 'ROUTINE', 'HYD');
+        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'ATA32');
+        enqueueAutoTask('STAND_D18', 'B2', 'AOG', 'ATA34');
+        enqueueAutoTask('STAND_F45', 'B1', 'URGENT', 'ATA72');
+        enqueueAutoTask('STAND_105', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_C25', 'A', 'URGENT', 'ATA49');
+        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'ATA32');
+        enqueueAutoTask('STAND_201', 'B2', 'ROUTINE', 'ATA34');
+        enqueueAutoTask('STAND_105', 'B1', 'ROUTINE', 'ATA32');
         showNotification(`⚠️ Сценарий «Кадровый дефицит»: 4 инженера на 8 вызовов.`);
         break;
       }
       case 'series': {
-        enqueueAutoTask('STAND_B12', 'B1', 'ROUTINE', 'ENG');
-        setTimeout(() => enqueueAutoTask('STAND_B14', 'B1', 'ROUTINE', 'HYD'), 1500);
-        setTimeout(() => enqueueAutoTask('STAND_C21', 'B2', 'ROUTINE', 'ELC'), 3000);
-        setTimeout(() => enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'AVN'), 4500);
+        enqueueAutoTask('STAND_B12', 'B1', 'ROUTINE', 'ATA72');
+        setTimeout(() => enqueueAutoTask('STAND_B14', 'B1', 'ROUTINE', 'ATA32'), 1500);
+        setTimeout(() => enqueueAutoTask('STAND_C21', 'B2', 'ROUTINE', 'ATA24'), 3000);
+        setTimeout(() => enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'ATA34'), 4500);
         showNotification(`📋 Сценарий «Серия вызовов»: 4 плановых вызова подряд.`);
         break;
       }
       case 'aog': {
-        enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'AVN');
-        setTimeout(() => enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'ENG'), 2000);
-        setTimeout(() => enqueueAutoTask('STAND_F45', 'A', 'AOG', 'CAB'), 4000);
+        enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'ATA34');
+        setTimeout(() => enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'ATA72'), 2000);
+        setTimeout(() => enqueueAutoTask('STAND_F45', 'A', 'AOG', 'ATA49'), 4000);
         showNotification(`⚡ Сценарий «AOG»: рутинный вызов + срочные AOG сверху.`);
         break;
       }
       case 'remote': {
-        enqueueAutoTask('STAND_105', 'B1', 'URGENT', 'HYD');
-        enqueueAutoTask('STAND_201', 'B2', 'URGENT', 'ELC');
-        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'LDG');
+        enqueueAutoTask('STAND_105', 'B1', 'URGENT', 'ATA32');
+        enqueueAutoTask('STAND_201', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'ATA32');
         showNotification(`🗺️ Сценарий «Удалённые стоянки»: вызовы в северные/южные зоны.`);
         break;
       }
       case 'aogDefect': {
-        enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'HYD');
+        enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'ATA32');
         showNotification(`🩸 Сценарий «AOG-дефект»: утечка гидравлики → квалификация B1.`);
         break;
       }
@@ -662,6 +687,70 @@ export function useSimulationEngine() {
         break;
     }
   }, [triggerStressTest, applyShiftConfig, enqueueAutoTask, showNotification]);
+
+  // Reset the shift to its optimal base deployment (FREE at home bases),
+  // clear all active/queued calls, analytics and ROI history.
+  const resetShiftToOptimal = useCallback((showToast: boolean) => {
+    const { b1, b2, catA, vehicles } = shiftCountsRef.current;
+    const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
+    workersRef.current = updatedWorkers;
+    setWorkers(updatedWorkers);
+
+    tasksRef.current = [];
+    setTasks([]);
+    statsRef.current = [];
+    setDispatchStats([]);
+    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0 };
+    lastRoiCountRef.current = 0;
+    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0 });
+    resetWeatherOverrides();
+    if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
+  }, [showNotification]);
+
+  // Hackathon PRESET SCENARIOS (quick-action bar, one click each)
+  const runPreset = useCallback((presetId: string) => {
+    switch (presetId) {
+      case 'standard': {
+        // Reset workers to optimal bases, then spawn a single ATA call on D18
+        resetShiftToOptimal(true);
+        setTimeout(() => enqueueAutoTask('STAND_D18', 'B1', 'ROUTINE', 'ATA72'), 400);
+        showNotification(`🟢 Пресет «Стандартный»: смена на базах, вызов ATA 72 на стоянку D18.`);
+        break;
+      }
+      case 'rushhour': {
+        // 5 simultaneous ATA calls across North (B/C) and South (D/F)
+        enqueueAutoTask('STAND_B12', 'B1', 'URGENT', 'ATA32');
+        enqueueAutoTask('STAND_C25', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_D18', 'B2', 'URGENT', 'ATA34');
+        enqueueAutoTask('STAND_D24', 'B1', 'AOG', 'ATA72');
+        enqueueAutoTask('STAND_F45', 'B1', 'URGENT', 'ATA49');
+        showNotification(`🚦 Пресет «Час-Пик SVO»: 5 одновременных ATA-вызовов по Северу (B/C) и Югу (D/F).`);
+        break;
+      }
+      case 'snow': {
+        // Weather factor: WALK 3.5 km/h, CAR 12 km/h
+        applyWeatherOverrides(3.5, 12.0);
+        enqueueAutoTask('STAND_C21', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_E38', 'B1', 'URGENT', 'ATA32');
+        showNotification(`❄️ Пресет «Снегопад»: скорость пешком 3.5 км/ч, авто 12 км/ч. ETA вызовов выросли.`);
+        break;
+      }
+      case 'slaBreach': {
+        // Forced SLA breach: B2 call on the far south stand D24 (D22 не в схеме —
+        // ближайший южный перрон), где ближайший B2 живёт на Севере (АК-4).
+        enqueueAutoTask('STAND_D24', 'B2', 'AOG', 'ATA24');
+        showNotification(`🚨 CRITICAL_SLA_ALERT: B2-вызов на стоянку D24, ближайший B2 — на Севере (АК-4), превышение SLA +8.5 мин!`);
+        break;
+      }
+      case 'reset': {
+        // Reset all workers to FREE_STATIONARY at home bases, clear everything
+        resetShiftToOptimal(true);
+        break;
+      }
+      default:
+        break;
+    }
+  }, [resetShiftToOptimal, enqueueAutoTask, applyWeatherOverrides, showNotification]);
 
   const runControlTests = useCallback((): ControlTestResult[] => {
     const results: ControlTestResult[] = [];
@@ -765,7 +854,9 @@ export function useSimulationEngine() {
     triggerStressTest,
     applyShiftConfig,
     dispatchStats,
+    roiMetrics,
     runScenario,
+    runPreset,
     runControlTests
   };
 }

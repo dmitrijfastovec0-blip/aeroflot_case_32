@@ -2,6 +2,34 @@ import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus } f
 import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } from '../constants/index';
 
 // ============================================================================
+// WEATHER / CONDITIONS SPEED OVERRIDES (scenario "Снегопад")
+// ----------------------------------------------------------------------------
+// Baseline: pedestrian 4.5 km/h, apron vehicle 20 km/h, tunnel shuttle 40 km/h.
+// The snow scenario drops WALK → 3.5 km/h and CAR → 12 km/h. Because dispatched
+// workers pace via pathSpeedFor(etaMinutes), changing these values automatically
+// slows down every routed move; patrol / return-to-base also read them here.
+// ============================================================================
+const WEATHER_DEFAULTS = { pedestrianKmH: 4.5, vehicleKmH: 20.0, tunnelVehicleKmH: 40.0 };
+let weatherSpeeds = { ...WEATHER_DEFAULTS };
+
+export function getWeatherSpeeds() {
+  return { ...weatherSpeeds };
+}
+
+export function applyWeatherOverrides(pedestrianKmH: number, vehicleKmH: number) {
+  weatherSpeeds = {
+    pedestrianKmH,
+    vehicleKmH,
+    tunnelVehicleKmH: vehicleKmH // tunnel shuttle shares the vehicle slowdown
+  };
+}
+
+export function resetWeatherOverrides() {
+  weatherSpeeds = { ...WEATHER_DEFAULTS };
+}
+
+
+// ============================================================================
 // OPTIMIZED ROUTING ENGINE
 // ----------------------------------------------------------------------------
 // The road graph is static and tiny (25 apron nodes + 4 duty stations, 33 edges),
@@ -190,6 +218,21 @@ const routeBetween = (startNodeId: string, endId: string) => {
   return { nodePath, distanceMeters, hasTunnel };
 };
 
+// Real-world length (meters) of a single road graph edge between two node ids.
+// Used by moving-target ETA interpolation to map %-waypoints back to exact
+// meters (the tunnel edge is ~120 m per % unit, taxiways ~9-37 m — a single
+// global scale factor would be wrong).
+export function edgeDistanceMeters(nodeIdA: string, nodeIdB: string): number {
+  if (nodeIdA === nodeIdB) return 0;
+  const edge = SVO_EDGES.find(
+    e => (e.from === nodeIdA && e.to === nodeIdB) || (e.from === nodeIdB && e.to === nodeIdA)
+  );
+  if (edge) return edge.distance;
+  const a = NODE_COORD[nodeIdA] || { x: 0, y: 0 };
+  const b = NODE_COORD[nodeIdB] || { x: 0, y: 0 };
+  return Math.hypot(b.x - a.x, b.y - a.y) * 25;
+}
+
 // 2. Shortest Path Finder (O(1) lookup + path reconstruction from precomputed tables)
 export function findDijkstraShortestPath(startNodeId: string, endNodeId: string): string[] {
   if (startNodeId === endNodeId) return [startNodeId, endNodeId];
@@ -214,16 +257,55 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
 }
 
 // 4. Calculate ETA for Single Worker to Target Stand
+// Dynamic interpolation (moving-target routing): the worker's CURRENT live
+// position is used (not the base/node where they started). For a worker mid-
+// path the remaining fraction of the current graph edge is counted in real
+// meters, then the precomputed all-pairs shortest path from that edge's far
+// node to the target stand is added — so no static-node overestimate when
+// someone is already 70% across a long edge.
 export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCrewMember {
-  const startNodeId = getClosestNodeId(worker.x, worker.y);
-  const { nodePath, distanceMeters, hasTunnel } = routeBetween(startNodeId, stand.id);
-
   const isVehicle = worker.vehicle === 'APRON_VEHICLE';
-  const speedKmH = isVehicle ? (hasTunnel ? 40 : 20) : 4.5;
+  const onPath = (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING')
+    && worker.pathWaypoints
+    && worker.pathWaypoints.length >= 2
+    && (worker.currentSegmentIndex ?? 0) < worker.pathWaypoints.length - 1;
+
+  let routeStartNodeId: string;
+  let partialDistanceMeters = 0;
+
+  if (onPath) {
+    // Interpolate: remaining fraction of the CURRENT graph edge the worker is
+    // crossing (real meters), then add the precomputed shortest path from the
+    // edge's far node to the target stand. Mapping %-waypoints back to real
+    // road edges keeps the meters exact (the tunnel edge is far longer per %
+    // unit than a short taxiway link).
+    const wps = worker.pathWaypoints!;
+    const currIdx = worker.currentSegmentIndex ?? 0;
+    const prevPt = wps[currIdx];
+    const nextPt = wps[currIdx + 1];
+
+    const segPct = Math.hypot(nextPt.x - prevPt.x, nextPt.y - prevPt.y);
+    const prevNodeId = getClosestNodeId(prevPt.x, prevPt.y);
+    const nextNodeId = getClosestNodeId(nextPt.x, nextPt.y);
+    const segMeters = edgeDistanceMeters(prevNodeId, nextNodeId);
+
+    const remainingFraction = segPct > 0
+      ? Math.min(1, Math.max(0, Math.hypot(nextPt.x - worker.x, nextPt.y - worker.y) / segPct))
+      : 1;
+    partialDistanceMeters = segMeters * remainingFraction;
+
+    routeStartNodeId = nextNodeId;
+  } else {
+    routeStartNodeId = getClosestNodeId(worker.x, worker.y);
+  }
+
+  const { nodePath, distanceMeters, hasTunnel } = routeBetween(routeStartNodeId, stand.id);
+
+  const speedKmH = isVehicle ? (hasTunnel ? weatherSpeeds.tunnelVehicleKmH : weatherSpeeds.vehicleKmH) : weatherSpeeds.pedestrianKmH;
   const speedMetersPerMin = (speedKmH * 1000) / 60;
 
   const penaltyMinutes = isVehicle ? (hasTunnel ? 2.0 : 1.0) : 0;
-  const travelMinutes = distanceMeters / speedMetersPerMin;
+  const travelMinutes = (partialDistanceMeters + distanceMeters) / speedMetersPerMin;
   const etaMinutes = Math.max(1.0, Math.round((travelMinutes + penaltyMinutes) * 10) / 10);
 
   const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
@@ -234,7 +316,7 @@ export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCre
     workerName: worker.name,
     categoryCode: worker.categoryCode,
     startLocationText: baseObj ? baseObj.code : `База (${worker.baseId})`,
-    distanceMeters: Math.round(distanceMeters),
+    distanceMeters: Math.round(partialDistanceMeters + distanceMeters),
     vehicle: worker.vehicle,
     vehicleLabel: isVehicle ? (hasTunnel ? '🏎️ Шаттл тоннеля' : '🚘 Спецавтомобиль') : '🚶 Пешком',
     etaMinutes,
@@ -263,6 +345,32 @@ export function findNearestFreeWorkerOfCategory(
   let minEta = Infinity;
 
   for (const worker of eligibleWorkers) {
+    const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
+    if (memberCandidate.etaMinutes < minEta) {
+      minEta = memberCandidate.etaMinutes;
+      bestMember = memberCandidate;
+    }
+  }
+
+  return bestMember;
+}
+
+// 5.1. Strict nearest free worker of an EXACT category (Cat A is a real
+// qualification here, not "any engineer"). Used by ATA crew auto-assembly,
+// where the regulation demands e.g. "1× Cat A" specifically.
+export function findNearestFreeWorkerOfExactCategory(
+  catCode: CategoryCode,
+  targetStand: Stand,
+  allWorkers: Worker[],
+  alreadySelectedWorkerIds: Set<string>
+): TaskCrewMember | null {
+  let bestMember: TaskCrewMember | null = null;
+  let minEta = Infinity;
+
+  for (const worker of allWorkers) {
+    if (alreadySelectedWorkerIds.has(worker.id)) continue;
+    if (worker.categoryCode !== catCode) continue;
+    if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') continue;
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
     if (memberCandidate.etaMinutes < minEta) {
       minEta = memberCandidate.etaMinutes;

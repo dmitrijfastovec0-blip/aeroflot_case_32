@@ -8,6 +8,8 @@ import { RightPanel } from './components/RightPanel';
 import { BottomConsole } from './components/BottomConsole';
 import { SlaConfirmModal } from './components/SlaConfirmModal';
 import { ShiftConfigModal } from './components/ShiftConfigModal';
+import { EconomicWidget } from './components/EconomicWidget';
+import { ScenarioBar } from './components/ScenarioBar';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
@@ -48,7 +50,9 @@ export function App() {
     triggerStressTest,
     applyShiftConfig,
     dispatchStats,
+    roiMetrics,
     runScenario,
+    runPreset,
     runControlTests
   } = useSimulationEngine();
 
@@ -131,6 +135,12 @@ export function App() {
         onTriggerStressTest={triggerStressTest}
         onRunScenario={runScenario}
       />
+
+      {/* REAL-TIME SHIFT ECONOMICS (ROI WIDGET) */}
+      <EconomicWidget roiMetrics={roiMetrics} theme={theme} />
+
+      {/* QUICK-ACTION PRESET SCENARIO BAR */}
+      <ScenarioBar onRunPreset={runPreset} theme={theme} />
 
       {/* B & C. Central CAD Canvas & Right Task Panel */}
       <div className="flex-1 flex overflow-hidden relative">

@@ -1,4 +1,7 @@
-import { Worker, OtoTask, TaskCrewMember, WorkerStatus, CategoryCode, Stand, DispatchStat } from '../types/index';
+import { Worker, OtoTask, TaskCrewMember, WorkerStatus, CategoryCode, Stand, DispatchStat, TaskPriority } from '../types/index';
+import { hungarianMinCost } from '../services/hungarian';
+
+const INF = 1e6;
 
 // ============================================================================
 // PURE DISPATCH ENGINE (no React state)
@@ -79,21 +82,13 @@ export function pathSpeedFor(member: TaskCrewMember): number {
   return Math.max(0.01, totalPct / etaSimSec);
 }
 
-interface DispatchPair {
-  q: OtoTask;
-  w: Worker;
-  eta: number;
-  cost: number;
-  delay: number;
-  member?: TaskCrewMember;
-}
-
-// Build every (task × worker) candidate pair with a weighted cost (ETA +
-// fair-share penalty + zone guard), sort globally by cost and assign greedily,
-// so no free engineer idles while a matching queued call exists and the
-// nearest engineer is never "raped" by a series. Lookahead: an engineer
-// finishing maintenance counts as an almost-available candidate; if they win,
-// the call is reserved to them instead of dragging a distant worker across.
+// GLOBAL optimal matching: build a (task × worker) cost matrix where cost = ETA
+// + fair-share penalty + zone guard + SLA-penalty − priority bonus, then solve
+// the assignment with the Hungarian algorithm (O(n^3)). No free engineer idles
+// while a matching queued call exists, the nearest engineer is never drained by
+// a series, and AOG/URGENT calls win scarce workers. Lookahead: an engineer
+// finishing maintenance counts as an almost-available candidate column; if they
+// win, the call is reserved to them instead of dragging a distant worker across.
 export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
   const { tasks, workers, standById, calculateEta, findNaiveNearest } = ctx;
 
@@ -104,10 +99,6 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
   const dispatchedWorkers: Record<string, Worker> = {};
   const newStats: DispatchStat[] = [];
   const notifications: string[] = [];
-
-  if (queuedAll.length === 0) {
-    return { dispatchedTasks, dispatchedWorkers, stats: [], notifications, changed: false };
-  }
 
   // O(1) index over workers
   const workerById = new Map<string, Worker>();
@@ -192,10 +183,18 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     pushStat(qTask, Math.min(...freshMembers.map(m => m.etaMinutes)));
   }
 
-  // ---- Step 2: auto tasks → global greedy with weighted cost + lookahead ----
+  // ---- Step 2: auto tasks → GLOBAL MIN-COST ASSIGNMENT (Hungarian) ----
+  // Instead of greedy nearest-first (which collapses a shift when 3-5 calls
+  // arrive at once), build a cost matrix C[i][j] = arrival time of worker j to
+  // task i's stand and solve the assignment with the Hungarian algorithm. The
+  // cost bakes in: SLA-penalty (breaching 15 min is very expensive), priority
+  // bonus (AOG/URGENT win scarce workers), fair-share (workers used repeatedly
+  // get +10% per dispatch) and zone guard (never strip a base below 2 idle).
+  // WORKING_ON_SITE engineers are candidate COLUMNS with a "delay" cost; if the
+  // optimum pairs a task with such a worker, the task is RESERVED (not
+  // dispatched) — the engineer will finish and head out directly.
   const autoTasks = ordered.filter(t => t.crew.length === 0);
   if (autoTasks.length > 0) {
-    // Item 2: zone guard — don't strip a base below 2 idle technicians
     const freeByBase = new Map<string, number>();
     for (const w of workers) {
       if (busy.has(w.id)) continue;
@@ -203,9 +202,6 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
         freeByBase.set(w.baseId, (freeByBase.get(w.baseId) || 0) + 1);
       }
     }
-    const consumeBase = (baseId: string) => {
-      freeByBase.set(baseId, Math.max(0, (freeByBase.get(baseId) || 0) - 1));
-    };
 
     // Valid reservations: a reserved engineer is still mid-maintenance and
     // will finish + travel in `eta`. A reservation only HARD-BLOCKS its task
@@ -225,93 +221,387 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
       reservation.set(q.id, { w: rw, eta: remainingSimMin + travel });
     }
 
-    const pairs: DispatchPair[] = [];
-
-    for (const q of autoTasks) {
-      const stand = standById.get(q.standId);
-      if (!stand) continue;
-      const res = reservation.get(q.id);
-      for (const w of workerById.values()) {
-        if (!(w.categoryCode === q.categoryCode || q.categoryCode === 'A')) continue;
-
-        if (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') {
-          if (busy.has(w.id)) continue;
-          const member = calculateEta(w, stand);
-          const eta = member.etaMinutes;
-          // Reservation yields only to a free engineer who is STRICTLY closer
-          // than the reserved one (who is already on his way after finishing).
-          if (res && eta >= res.eta) continue;
-          const zoneFree = freeByBase.get(w.baseId) || 0;
-          const zonePenalty = zoneFree - 1 < 2 ? 3 : 0;
-          const cost = eta + eta * 0.1 * Math.min(w.dispatchedCount || 0, 4) + zonePenalty;
-          pairs.push({ q, w, eta, cost, delay: 0, member });
-        } else if (w.status === 'WORKING_ON_SITE') {
-          // Item 4: lookahead — engineer mid-maintenance, frees up shortly.
-          // Only the reserved engineer is a lookahead candidate for this task,
-          // so reservations don't churn between multiple busy engineers.
-          if (res && res.w.id !== w.id) continue;
-          const active = tasks.find(t => t.id === w.currentTaskId && t.status === 'WORKING');
-          if (!active) continue;
-          const remainingSimMin = Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60);
-          const travel = calculateEta(w, stand).etaMinutes;
-          const eta = remainingSimMin + travel;
-          const cost = eta + eta * 0.1 * Math.min(w.dispatchedCount || 0, 4);
-          pairs.push({ q, w, eta, cost, delay: remainingSimMin });
-        }
+    interface CandidateCol { w: Worker; delay: number; member: TaskCrewMember | null; }
+    const candidates: CandidateCol[] = [];
+    for (const w of workerById.values()) {
+      if (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') {
+        if (busy.has(w.id)) continue;
+        candidates.push({ w, delay: 0, member: null });
+      } else if (w.status === 'WORKING_ON_SITE') {
+        // Lookahead column: engineer finishing maintenance is an almost-free
+        // candidate. Cost = remaining work + travel.
+        const active = tasks.find(t => t.id === w.currentTaskId && t.status === 'WORKING');
+        if (!active) continue;
+        const remainingSimMin = Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60);
+        candidates.push({ w, delay: remainingSimMin, member: null });
       }
     }
 
-    // Global greedy: cheapest pairs first, no double-assignment
-    pairs.sort((a, b) => a.cost - b.cost);
+    const PRIORITY_BONUS: Record<TaskPriority, number> = { AOG: 100, URGENT: 40, ROUTINE: 0 };
+    const SLA_PENALTY = 60;
+    const zonePenaltyFor = (w: Worker) => (freeByBase.get(w.baseId) || 0) - 1 < 2 ? 3 : 0;
 
-    const assignedWorker = new Set<string>();
-    const assignedTask = new Set<string>();
+    // Only tasks with at least ONE eligible candidate enter the matrix. A task
+    // whose category has zero free workers (e.g. a Cat A call during a 0-CatA
+    // shift) must NOT be a row — an all-INF row breaks the Hungarian core loop
+    // (j1 = -1 → p[-1] → crash). It simply stays QUEUED until staff appears.
+    const matrixTasks: { task: OtoTask; eligible: number[] }[] = [];
+    for (const q of autoTasks) {
+      const stand = standById.get(q.standId);
+      if (!stand) continue;
+      const eligible: number[] = [];
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const { w } = candidates[ci];
+        if (w.categoryCode === q.categoryCode || q.categoryCode === 'A') eligible.push(ci);
+      }
+      if (eligible.length > 0) matrixTasks.push({ task: q, eligible });
+    }
 
-    for (const p of pairs) {
-      if (assignedTask.has(p.q.id)) continue;
+    const costMatrix: number[][] = [];
+    const etaCache: (TaskCrewMember | null)[][] = matrixTasks.map(() => new Array(candidates.length).fill(null));
 
-      if (p.delay > 0) {
+    for (let ti = 0; ti < matrixTasks.length; ti++) {
+      const q = matrixTasks[ti].task;
+      const stand = standById.get(q.standId);
+      const row: number[] = [];
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const { w, delay } = candidates[ci];
+        const matches = w.categoryCode === q.categoryCode || q.categoryCode === 'A';
+        if (!stand || !matches) { row.push(INF); continue; }
+        const member = calculateEta(w, stand);
+        etaCache[ti][ci] = member;
+        const eta = delay + member.etaMinutes;
+        const fairShare = eta * 0.1 * Math.min(w.dispatchedCount || 0, 4);
+        const zonePenalty = delay === 0 ? zonePenaltyFor(w) : 0;
+        const slaPenalty = eta > q.slaLimitMinutes ? SLA_PENALTY : 0;
+        const cost = eta + fairShare + zonePenalty + slaPenalty - PRIORITY_BONUS[q.priority];
+        row.push(cost);
+      }
+      costMatrix.push(row);
+    }
+
+    const { assignment } = hungarianMinCost(costMatrix);
+    for (let ti = 0; ti < assignment.length; ti++) {
+      const ci = assignment[ti];
+      if (ci < 0 || ci >= candidates.length) continue;
+      const q = matrixTasks[ti].task;
+      const cand = candidates[ci];
+      const member = cand.member || etaCache[ti][ci];
+      if (!member) continue;
+
+      const targetStand = standById.get(q.standId);
+      if (!targetStand) continue;
+
+      if (cand.delay > 0) {
         // Lookahead wins → reserve the call for the engineer who is about to finish
-        if (assignedWorker.has(p.w.id)) continue;
-        assignedWorker.add(p.w.id);
-        assignedTask.add(p.q.id);
-        dispatchedTasks[p.q.id] = { ...p.q, reservedWorkerId: p.w.id };
-        if (!reservation.has(p.q.id)) {
-          notifications.push(`⏳ Задача ${p.q.id} (${p.q.priority}) зарезервирована за ${p.w.name} — закончит ТО и выедет сразу, не возвращаясь в базу.`);
+        if (dispatchedTasks[q.id]) continue;
+        dispatchedTasks[q.id] = { ...q, reservedWorkerId: cand.w.id };
+        if (!reservation.has(q.id)) {
+          notifications.push(`⏳ Задача ${q.id} (${q.priority}) зарезервирована за ${cand.w.name} — закончит ТО и выедет сразу, не возвращаясь в базу.`);
         }
         continue;
       }
 
-      if (assignedWorker.has(p.w.id) || busy.has(p.w.id)) continue;
-
-      const targetStand = standById.get(p.q.standId);
-      if (!targetStand || !p.member) continue;
-
-      assignedWorker.add(p.w.id);
-      assignedTask.add(p.q.id);
-      busy.add(p.w.id);
-      consumeBase(p.w.baseId);
-      load[p.w.id] = (load[p.w.id] || 0) + 1;
-
-      dispatchedWorkers[p.w.id] = {
-        ...p.w,
+      dispatchedWorkers[cand.w.id] = {
+        ...cand.w,
         status: 'IN_TRANSIT' as WorkerStatus,
-        currentTaskId: p.q.id,
-        pathWaypoints: p.member.waypoints,
-        pathSpeedPctPerSimSec: pathSpeedFor(p.member),
+        currentTaskId: q.id,
+        pathWaypoints: member.waypoints,
+        pathSpeedPctPerSimSec: pathSpeedFor(member),
         currentSegmentIndex: 0,
-        dispatchedCount: (p.w.dispatchedCount || 0) + 1
+        dispatchedCount: (cand.w.dispatchedCount || 0) + 1
       };
 
-      dispatchedTasks[p.q.id] = {
-        ...p.q,
+      busy.add(cand.w.id);
+      load[cand.w.id] = (load[cand.w.id] || 0) + 1;
+
+      dispatchedTasks[q.id] = {
+        ...q,
         status: 'DISPATCHED' as const,
-        crew: [p.member],
+        crew: [member],
         arrivedCount: 0,
-        maxEtaMinutes: p.eta,
+        maxEtaMinutes: member.etaMinutes,
         reservedWorkerId: undefined
       };
-      pushStat(p.q, p.eta);
+      pushStat(q, member.etaMinutes);
+    }
+  }
+
+  // ---- Step 3: re-dispatch in-flight tasks whose crew is still far away ----
+  // The "one guy walks across the apron while free people stand near the
+  // target" case: an already-DISPATCHED task may have a crew member still
+  // IN_TRANSIT while a FREE worker of the right category is now closer.
+  // Only switch when the gain is meaningful (REASSIGN_GAIN_MIN) to avoid
+  // churning workers back and forth on every completion.
+  const REASSIGN_GAIN_MIN = 2.0; // minutes
+  for (const task of tasks) {
+    if (task.status !== 'DISPATCHED') continue;
+    if (dispatchedTasks[task.id]) continue; // just assigned this pass
+    if (task.crew.length === 0 || (task.arrivedCount || 0) > 0) continue;
+
+    const stand = standById.get(task.standId);
+    if (!stand) continue;
+
+    // Slowest still-in-transit member = the one we try to replace
+    let slowestMember: TaskCrewMember | null = null;
+    for (const m of task.crew) {
+      const w = workerById.get(m.workerId);
+      if (!w || w.status !== 'IN_TRANSIT') continue;
+      if (!slowestMember || m.etaMinutes > slowestMember.etaMinutes) slowestMember = m;
+    }
+    if (!slowestMember) continue;
+
+    const remainingTransit = Math.max(0, (slowestMember.etaMinutes - (task.elapsedTransitSec || 0) / 60));
+
+    // Find the closest FREE worker (matching category) who beats the slowest
+    // member's remaining transit by a meaningful margin
+    let bestFree: Worker | null = null;
+    let bestMember: TaskCrewMember | null = null;
+    for (const w of workerById.values()) {
+      if (busy.has(w.id)) continue;
+      if (w.status !== 'FREE_STATIONARY' && w.status !== 'FREE_PATROLLING') continue;
+      if (!(w.categoryCode === task.categoryCode || task.categoryCode === 'A')) continue;
+      const member = calculateEta(w, stand);
+      if (member.etaMinutes >= remainingTransit - REASSIGN_GAIN_MIN) continue;
+      if (!bestMember || member.etaMinutes < bestMember.etaMinutes) {
+        bestFree = w;
+        bestMember = member;
+      }
+    }
+    if (!bestFree || !bestMember) continue;
+
+    // Switch: the free worker takes the task, the old far one stops and idles
+    busy.add(bestFree.id);
+    load[bestFree.id] = (load[bestFree.id] || 0) + 1;
+    dispatchedWorkers[bestFree.id] = {
+      ...bestFree,
+      status: 'IN_TRANSIT' as WorkerStatus,
+      currentTaskId: task.id,
+      pathWaypoints: bestMember.waypoints,
+      pathSpeedPctPerSimSec: pathSpeedFor(bestMember),
+      currentSegmentIndex: 0,
+      dispatchedCount: (bestFree.dispatchedCount || 0) + 1
+    };
+
+    const oldWorker = workerById.get(slowestMember.workerId);
+    if (oldWorker) {
+      dispatchedWorkers[oldWorker.id] = {
+        ...oldWorker,
+        status: oldWorker.isPatrolPreference ? 'FREE_PATROLLING' as WorkerStatus : 'FREE_STATIONARY' as WorkerStatus,
+        currentTaskId: undefined,
+        pathWaypoints: undefined,
+        pathSpeedPctPerSimSec: undefined,
+        currentSegmentIndex: 0
+      };
+    }
+
+    const newCrew = task.crew.map(m =>
+      m.workerId === slowestMember.workerId ? bestMember : m
+    );
+    const newMaxEta = Math.max(...newCrew.map(m => m.etaMinutes));
+    dispatchedTasks[task.id] = {
+      ...task,
+      crew: newCrew,
+      arrivedCount: 0,
+      maxEtaMinutes: newMaxEta,
+      elapsedTransitSec: 0,
+      reservedWorkerId: undefined
+    };
+    pushStat(task, newMaxEta);
+    notifications.push(`🔁 Задача ${task.id} перекинута на ${bestFree.name} — он ближе к стоянке, чем ${slowestMember.workerName}.`);
+  }
+
+  // ---- Step 4: priority preemption / cascade reassignment ----
+  // "КАСКАДНАЯ ПЕРЕБРОСКА": if a critical call (AOG / 777 about to depart)
+  // cannot be staffed by ANY free worker within SLA, yank an engineer off a
+  // low-priority single-engineer maintenance task that still has real work
+  // left, and send him to the critical stand instead. The low-priority task
+  // reverts to QUEUED and is re-staffed on the next drain. Guards: only
+  // preempt single-member tasks, never tasks near completion, never AOG, and
+  // only when the reassignment truly saves the high SLA (no pointless churn).
+  const aircraftWeight = (task: OtoTask): number => {
+    const t = task.aircraftType || '';
+    if (t.includes('777') || t.includes('A350') || t.includes('777-300ER')) return 3.0;
+    if (t.includes('A320') || t.includes('A321') || t.includes('737') || t.includes('A330')) return 1.5;
+    return 1.0; // Superjet 100 / прочие
+  };
+  const defectSeverity = (task: OtoTask): number => {
+    const d = (task.defectLabel || '') + ' ' + (task.categoryLabel || '');
+    if (d.includes('двигател') || d.includes('Электрическое') || d.includes('ATA 72') || d.includes('ATA 24')) return 2.0;
+    if (d.includes('Шасси') || d.includes('Навигация') || d.includes('ВСУ')) return 1.0;
+    return 0.5;
+  };
+  // P = AircraftWeight × DefectSeverity / max(1, minutesToDeparture)
+  const priorityScore = (task: OtoTask): number => {
+    const minutesToDeparture = Math.max(1, (task.slaLimitMinutes || 15) - (task.elapsedQueueSec || 0) / 60);
+    return (aircraftWeight(task) * defectSeverity(task)) / minutesToDeparture;
+  };
+  const PREEMPT_HIGH_MIN = 5.0;   // only critical calls may preempt
+  const PREEMPT_LOW_MAX = 1.5;    // only non-urgent tasks may be yanked
+  const PREEMPT_ALMOST_DONE = 0.6; // never yank a task >60% through its 2-min work
+
+  for (const highTask of tasks) {
+    if (highTask.status !== 'QUEUED') continue;
+    if (dispatchedTasks[highTask.id]) continue; // already handled (dispatch/reserve)
+    if (highTask.priority !== 'AOG') continue;  // only AOG can cascade
+    if (priorityScore(highTask) < PREEMPT_HIGH_MIN) continue;
+
+    const highStand = standById.get(highTask.standId);
+    if (!highStand) continue;
+
+    // Best achievable ETA with a FREE worker; if someone can still make SLA,
+    // no need to preempt — Hungarian already staffed or will staff them.
+    let bestFreeEta = Infinity;
+    let bestFreeMember: TaskCrewMember | null = null;
+    for (const w of workerById.values()) {
+      if (busy.has(w.id)) continue;
+      if (w.status !== 'FREE_STATIONARY' && w.status !== 'FREE_PATROLLING') continue;
+      if (!(w.categoryCode === highTask.categoryCode || highTask.categoryCode === 'A')) continue;
+      const member = calculateEta(w, highStand);
+      if (member.etaMinutes < bestFreeEta) { bestFreeEta = member.etaMinutes; bestFreeMember = member; }
+    }
+    // Free workers can still meet the SLA → the normal dispatcher is enough.
+    if (bestFreeEta <= highTask.slaLimitMinutes) continue;
+
+    // No free worker meets SLA → look for a low-priority single-engineer
+    // WORKING task whose engineer is close to the critical stand.
+    let bestVictim: { lowTask: OtoTask; worker: Worker; member: TaskCrewMember } | null = null;
+    for (const lowTask of tasks) {
+      if (lowTask.status !== 'WORKING') continue;
+      if (lowTask.priority === 'AOG') continue;
+      if (lowTask.crew.length !== 1) continue; // multi-engineer crews are not yanked
+      if (priorityScore(lowTask) > PREEMPT_LOW_MAX) continue;
+      // Don't yank someone who is almost done with maintenance (wasteful)
+      const progress = (lowTask.elapsedWorkSec || 0) / (lowTask.targetWorkSec || 120);
+      if (progress > PREEMPT_ALMOST_DONE) continue;
+
+      const victimWorker = workerById.get(lowTask.crew[0].workerId);
+      if (!victimWorker || victimWorker.status !== 'WORKING_ON_SITE') continue;
+      if (!(victimWorker.categoryCode === highTask.categoryCode || highTask.categoryCode === 'A')) continue;
+
+      const member = calculateEta(victimWorker, highStand);
+      // Must beat the best free worker by a meaningful margin AND still make SLA
+      if (member.etaMinutes > highTask.slaLimitMinutes) continue;
+      if (member.etaMinutes >= bestFreeEta) continue;
+
+      if (!bestVictim || member.etaMinutes < bestVictim.member.etaMinutes) {
+        bestVictim = { lowTask, worker: victimWorker, member };
+      }
+    }
+    if (!bestVictim) continue;
+
+    const { lowTask, worker, member } = bestVictim;
+
+    // CASCADE: reassign the engineer to the critical task
+    dispatchedWorkers[worker.id] = {
+      ...worker,
+      status: 'IN_TRANSIT' as WorkerStatus,
+      currentTaskId: highTask.id,
+      pathWaypoints: member.waypoints,
+      pathSpeedPctPerSimSec: pathSpeedFor(member),
+      currentSegmentIndex: 0,
+      dispatchedCount: (worker.dispatchedCount || 0) + 1
+    };
+
+    // High task becomes DISPATCHED with the preempted engineer
+    dispatchedTasks[highTask.id] = {
+      ...highTask,
+      status: 'DISPATCHED' as const,
+      crew: [member],
+      arrivedCount: 0,
+      maxEtaMinutes: member.etaMinutes,
+      reservedWorkerId: undefined
+    };
+
+    // Low task reverts to QUEUED and will be re-staffed on the next drain
+    dispatchedTasks[lowTask.id] = {
+      ...lowTask,
+      status: 'QUEUED' as const,
+      crew: [],
+      arrivedCount: 0,
+      maxEtaMinutes: 12.0,
+      elapsedWorkSec: 0,
+      elapsedTransitSec: 0,
+      reservedWorkerId: undefined
+    };
+
+    pushStat(highTask, member.etaMinutes);
+    notifications.push(`⚠️ КАСКАДНОЕ ПЕРЕНАЗНАЧЕНИЕ: ${worker.name} снят с ${lowTask.id} и направлен на ${highTask.standLabel} (${highTask.aircraftType}) — критический вызов ${highTask.id}.`);
+  }
+
+  // ---- Step 5: proactive hot-standby repositioning ----
+  // ПРЕДИКТИВНАЯ РАССТАНОВКА: in idle time (no queued calls), redistribute
+  // FREE_STATIONARY engineers from over-covered bases toward under-covered
+  // apron zones, so a future call at a remote stand is answered from a nearby
+  // duty post instead of a 15-minute walk across the apron. Runs only when the
+  // queue is empty (so it never competes with real dispatch), moves at most a
+  // couple engineers per pass, and only when the coverage gap is meaningful.
+  const queuedAfter = tasks.filter(t => t.status === 'QUEUED');
+  if (queuedAfter.length === 0) {
+    const STATIONARY_MIN_PER_BASE = 1;  // keep at least this many idle per base
+    const REPOSITION_GAIN_MIN = 6;      // minutes of ETA to justify a move
+    const MAX_REPOSITIONS = 2;
+
+    // Group FREE_STATIONARY workers by base; skip patrol-preferred (they roam).
+    const stationaryByBase = new Map<string, Worker[]>();
+    for (const w of workerById.values()) {
+      if (busy.has(w.id)) continue;
+      if (w.status !== 'FREE_STATIONARY') continue;
+      if (w.isPatrolPreference) continue;
+      const arr = stationaryByBase.get(w.baseId) || [];
+      arr.push(w);
+      stationaryByBase.set(w.baseId, arr);
+    }
+
+    // Candidate stands for coverage: every remote/under-covered corner plus
+    // duty posts. For each base, pick the stand with the WORST coverage from
+    // the current free workforce.
+    const allStands = Array.from(standById.values());
+    let repositioned = 0;
+
+    for (const [baseId, pool] of stationaryByBase) {
+      if (repositioned >= MAX_REPOSITIONS) break;
+      if (pool.length <= STATIONARY_MIN_PER_BASE) continue; // don't strip a base
+
+      // Coverage = distance from the pool to each stand (min over pool).
+      let worstStand: Stand | null = null;
+      let worstCoverage = -Infinity;
+      for (const stand of allStands) {
+        let nearestEta = Infinity;
+        for (const w of pool) {
+          const eta = calculateEta(w, stand).etaMinutes;
+          if (eta < nearestEta) nearestEta = eta;
+        }
+        if (nearestEta > worstCoverage) {
+          worstCoverage = nearestEta;
+          worstStand = stand;
+        }
+      }
+      if (!worstStand || worstCoverage < REPOSITION_GAIN_MIN) continue;
+
+      // The engineer closest to that under-covered stand moves to its duty post
+      // (or to the stand itself) and idles there as hot-standby.
+      let mover: Worker | null = null;
+      let moverEta = Infinity;
+      for (const w of pool) {
+        const eta = calculateEta(w, worstStand).etaMinutes;
+        if (eta < moverEta) { moverEta = eta; mover = w; }
+      }
+      if (!mover) continue;
+
+      const moverMember = calculateEta(mover, worstStand);
+      if (moverMember.etaMinutes < REPOSITION_GAIN_MIN * 0.5) continue; // already close enough
+
+      dispatchedWorkers[mover.id] = {
+        ...mover,
+        status: 'RETURNING_TO_BASE' as WorkerStatus,
+        currentTaskId: undefined,
+        pathWaypoints: moverMember.waypoints,
+        pathSpeedPctPerSimSec: pathSpeedFor(moverMember),
+        currentSegmentIndex: 0
+      };
+      repositioned++;
+      notifications.push(`🧭 Предиктивная расстановка: ${mover.name} передислоцирован к стоянке ${worstStand.label} — зона без прикрытия.`);
     }
   }
 
