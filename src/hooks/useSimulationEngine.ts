@@ -623,6 +623,7 @@ export function useSimulationEngine() {
       priority,
       status: 'QUEUED',
       crew: [],
+      requiredCrew: defect ? defect.requiredCrew : [{ categoryCode, count: 1 }],
       arrivedCount: 0,
       maxEtaMinutes: 12.0,
       slaLimitMinutes: 15.0,

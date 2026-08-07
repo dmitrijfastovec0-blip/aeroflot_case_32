@@ -1,4 +1,7 @@
-import { Facility, Stand, CategoryCode } from '../types/index';
+import { Facility, Stand, CategoryCode, CrewRequirement } from '../types/index';
+
+// Реэкспорт для обратной совместимости (RightPanel и др. импортируют из constants)
+export type { CrewRequirement };
 
 export const SVO_MAP_METERS = {
   width: 4000,
@@ -185,11 +188,6 @@ export const TECHNICIAN_NAMES = [
 // По стандарту ATA Specification 100 (главы 24/32/34/49/72).
 // categoryCode — основная квалификация для диспетчера; requiredCrew — полный
 // регламентный состав бригады для данной главы ATA (количество по каждой Cat).
-export interface CrewRequirement {
-  categoryCode: CategoryCode;
-  count: number;
-}
-
 export interface DefectType {
   id: string;
   name: string;

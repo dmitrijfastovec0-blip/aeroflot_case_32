@@ -105,6 +105,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
       priority: 'ROUTINE',
       status: 'DISPATCHED',
       crew,
+      requiredCrew: selectedDefect ? selectedDefect.requiredCrew : [{ categoryCode: reqCat, count: 1 }],
       arrivedCount: 0,
       maxEtaMinutes: maxEtaMinutes || 10.0,
       slaLimitMinutes: SLA_LIMIT,

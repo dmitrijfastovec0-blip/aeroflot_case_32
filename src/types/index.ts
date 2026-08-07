@@ -7,6 +7,14 @@ export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE';
 export type ThemeMode = 'dark' | 'light';
 export type TaskPriority = 'AOG' | 'URGENT' | 'ROUTINE';
 
+// Регламентный состав бригады: сколько инженеров какой квалификации нужно
+// для данной главы ATA (единый источник — используется и в каталоге дефектов,
+// и в диспетчере для сборки полных бригад).
+export interface CrewRequirement {
+  categoryCode: CategoryCode;
+  count: number;
+}
+
 export interface Facility {
   id: string;
   name: string;
@@ -79,6 +87,7 @@ export interface OtoTask {
   defectLabel?: string;
   priority: TaskPriority; // AOG (1), URGENT (2), ROUTINE (3)
   status: 'QUEUED' | 'DISPATCHED' | 'WORKING' | 'COMPLETED';
+  requiredCrew?: CrewRequirement[]; // Полный регламентный состав бригады (для сборки в диспетчере)
   crew: TaskCrewMember[];
   arrivedCount: number;
   maxEtaMinutes: number;
