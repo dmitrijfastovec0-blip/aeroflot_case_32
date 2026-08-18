@@ -5,6 +5,7 @@ export type Complex = 'NORTH' | 'SOUTH' | 'REMOTE';
 export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE';
 
 export type ThemeMode = 'dark' | 'light';
+export type WeatherMode = 'CLEAR' | 'SNOW' | 'ICE' | 'NIGHT';
 export type TaskPriority = 'AOG' | 'URGENT' | 'ROUTINE';
 
 // Регламентный состав бригады: сколько инженеров какой квалификации нужно
@@ -62,6 +63,7 @@ export interface Worker {
   dutyStandId?: string;
   isPatrolPreference?: boolean;
   dispatchedCount?: number;
+  isEmergency?: boolean; // AOG emergency beacon flashing lights
 }
 
 export interface TaskCrewMember {
@@ -104,6 +106,7 @@ export interface OtoTask {
   createdAtSimSec?: number;  // Время создания задачи по сим-часам (сек)
   startedAtSimSec?: number;  // Время первого отправления бригады по сим-часам (сек)
   completedAtSimSec?: number; // Время завершения ТО по сим-часам (сек)
+  isEmergency?: boolean;     // AOG urgent dispatch siren mode
 }
 
 export interface HoverTooltipData {

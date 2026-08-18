@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember, CategoryCode, DispatchStat } from '../types/index';
+import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember, CategoryCode, DispatchStat, WeatherMode } from '../types/index';
 import { SVO_STANDS, SVO_FACILITIES, SVO_NODES, DEFECT_TYPES, AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import {
   getClosestNodeId,
@@ -36,11 +36,32 @@ export function useSimulationEngine() {
     generateShiftWorkersWithCustomCounts(22, 12, 6, 20)
   );
   const [tasks, setTasks] = useState<OtoTask[]>([]);
+  const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
 
+  const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
+    setNotificationBanner(msg);
+    setTimeout(() => setNotificationBanner(null), durationMs);
+  }, []);
+
+  // Weather Mode State
+  const [weatherMode, setWeatherModeState] = useState<WeatherMode>('CLEAR');
+
+  const setWeatherMode = useCallback((mode: WeatherMode) => {
+    setWeatherModeState(mode);
+    if (mode === 'SNOW') {
+      applyWeatherOverrides(3.5, 12.0);
+      showNotification('🌨️ Включён режим «Снегопад»: пешком 3.5 км/ч, авто 12 км/ч.');
+    } else if (mode === 'ICE') {
+      applyWeatherOverrides(3.0, 10.0);
+      showNotification('🧊 Включён режим «Гололёд»: скорость спецавто 10 км/ч.');
+    } else {
+      resetWeatherOverrides();
+      showNotification(`☀️ Включён режим «${mode === 'NIGHT' ? 'Ночная смена' : 'Штатный (Ясно)'}».`);
+    }
+  }, [showNotification]);
   // Simulation Controls
   const [simSpeed, setSimSpeed] = useState<number>(5);
   const [isPaused, setIsPaused] = useState<boolean>(false);
-  const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
 
   // Refs for continuous 60FPS loop without stale closures
   const workersRef = useRef<Worker[]>(workers);
@@ -82,11 +103,6 @@ export function useSimulationEngine() {
 
   // We no longer sync refs from state, because refs ARE the source of truth
   // and state is just a throttled snapshot for the UI.
-
-  const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
-    setNotificationBanner(msg);
-    setTimeout(() => setNotificationBanner(null), durationMs);
-  }, []);
 
   // -----------------------------------------------------------------
   // DRAIN QUEUE ALGORITHM: GLOBAL GREEDY ASSIGNMENT (items 2+3)
@@ -917,6 +933,8 @@ export function useSimulationEngine() {
     dispatchStats,
     roiMetrics,
     simClockSec,
+    weatherMode,
+    setWeatherMode,
     runScenario,
     runPreset,
     runControlTests

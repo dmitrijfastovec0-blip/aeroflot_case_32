@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Worker, ThemeMode } from '../types/index';
+import { Worker, ThemeMode, WeatherMode } from '../types/index';
 import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import { WeatherWidget } from './WeatherWidget';
 import {
   FastForward, Sun, Moon, Pause, Play, Settings2, Users,
-  Wallet, TrendingDown, ShieldCheck, Rocket, ListChecks, Zap, Siren, AlertOctagon, Snowflake, RefreshCcw, ChevronDown
+  Wallet, TrendingDown, ShieldCheck, Rocket, ListChecks, Zap, Siren, AlertOctagon, Snowflake, RefreshCcw, ChevronDown, BarChart3
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -17,6 +18,9 @@ interface HeaderProps {
   onOpenShiftConfig: () => void;
   roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
   onRunScenario: (scenarioId: string) => void;
+  weatherMode: WeatherMode;
+  onWeatherChange: (mode: WeatherMode) => void;
+  onOpenAnalytics: () => void;
 }
 
 const SCENARIOS = [
@@ -39,7 +43,10 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleTheme,
   onOpenShiftConfig,
   roiMetrics,
-  onRunScenario
+  onRunScenario,
+  weatherMode,
+  onWeatherChange,
+  onOpenAnalytics
 }) => {
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isRoiOpen, setIsRoiOpen] = useState(false);
@@ -197,6 +204,23 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
         </div>
+
+        {/* Weather Selector */}
+        <WeatherWidget
+          weatherMode={weatherMode}
+          onWeatherChange={onWeatherChange}
+          theme={theme}
+        />
+
+        {/* Analytics Modal Launcher */}
+        <button
+          onClick={onOpenAnalytics}
+          className="flex items-center space-x-1.5 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-500/40 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-sky-400 transition-all cursor-pointer shadow-sm"
+          title="Открыть сравнительную аналитику эффективности"
+        >
+          <BarChart3 className="w-3.5 h-3.5 text-sky-400" />
+          <span className="hidden sm:inline">📊 Аналитика</span>
+        </button>
 
         {/* Shift Personnel Button */}
         <button

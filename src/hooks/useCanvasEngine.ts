@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Worker, OtoTask, HoverTooltipData, ThemeMode, TaskCrewMember } from '../types/index';
+import { Worker, OtoTask, HoverTooltipData, ThemeMode, WeatherMode, TaskCrewMember } from '../types/index';
 import { SVO_BUILDINGS, SVO_FACILITIES, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
 
 // Polyfill for CanvasRenderingContext2D.roundRect (missing in older Safari/Firefox)
@@ -202,6 +202,7 @@ interface UseCanvasEngineProps {
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   theme: ThemeMode;
+  weatherMode?: WeatherMode;
   isDevMode: boolean;
   onDevPointClick?: (pctX: number, pctY: number) => void;
   showMapSublayer: boolean;
@@ -213,6 +214,7 @@ export function useCanvasEngine({
   selectedStandId,
   onSelectStand,
   theme,
+  weatherMode = 'CLEAR',
   isDevMode,
   onDevPointClick,
   showMapSublayer
@@ -765,6 +767,28 @@ export function useCanvasEngine({
         ctx.globalAlpha = 1;
       }
 
+      // AOG URGENT EMERGENCY BEACON SIREN LIGHTS (Feature 4)
+      const isAogEmergency = worker.isEmergency || tasksRef.current.some(t => t.priority === 'AOG' && (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.crew.some(m => m.workerId === worker.id));
+      if (isAogEmergency && (worker.status === 'IN_TRANSIT' || worker.status === 'WORKING_ON_SITE')) {
+        const isRed = Math.floor(now / 120) % 2 === 0;
+        const sirenColor = isRed ? '#ef4444' : '#3b82f6';
+        ctx.save();
+        ctx.shadowColor = sirenColor;
+        ctx.shadowBlur = 24;
+        ctx.strokeStyle = sirenColor;
+        ctx.lineWidth = 3;
+        const pulseR = 18 + Math.sin(now / 60) * 5;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, pulseR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = sirenColor;
+        ctx.font = '800 8px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('🚨 AOG', pos.x, pos.y - pulseR - 4);
+        ctx.restore();
+      }
+
       ctx.fillStyle = statusColor;
       ctx.strokeStyle = theme === 'dark' ? '#070a0e' : '#ffffff';
       ctx.lineWidth = 1.5;
@@ -789,6 +813,27 @@ export function useCanvasEngine({
 
       ctx.restore();
     });
+
+    // WEATHER EFFECTS OVERLAY (Feature 2: SNOW / NIGHT)
+    if (weatherMode === 'SNOW') {
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = 0.85;
+      for (let i = 0; i < 90; i++) {
+        const flakeX = (Math.sin(now / 1000 + i * 17) * 0.5 + 0.5) * canvas.width;
+        const flakeY = ((now * 0.05 + i * 23) % canvas.height);
+        const flakeR = 1.5 + (i % 3) * 0.8;
+        ctx.beginPath();
+        ctx.arc(flakeX, flakeY, flakeR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    } else if (weatherMode === 'NIGHT') {
+      ctx.save();
+      ctx.fillStyle = 'rgba(3, 7, 18, 0.4)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr

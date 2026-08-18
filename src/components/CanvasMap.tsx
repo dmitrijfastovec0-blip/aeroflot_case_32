@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Worker, OtoTask, ThemeMode } from '../types/index';
+import { Worker, OtoTask, ThemeMode, WeatherMode } from '../types/index';
 import { useCanvasEngine } from '../hooks/useCanvasEngine';
 
 interface CanvasMapProps {
@@ -8,6 +8,7 @@ interface CanvasMapProps {
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   theme: ThemeMode;
+  weatherMode?: WeatherMode;
   isDevMode: boolean;
   onDevPointClick?: (pctX: number, pctY: number) => void;
   showMapSublayer: boolean;

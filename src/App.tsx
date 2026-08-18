@@ -8,12 +8,16 @@ import { RightPanel } from './components/RightPanel';
 import { BottomConsole } from './components/BottomConsole';
 import { SlaConfirmModal } from './components/SlaConfirmModal';
 import { ShiftConfigModal } from './components/ShiftConfigModal';
+import { AnalyticsModal } from './components/AnalyticsModal';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
 
   // Light / Dark Theme Mode Engine
   const [theme, setTheme] = useState<ThemeMode>('dark');
+
+  // Comparative Analytics Modal State
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState<boolean>(false);
 
   // Custom SLA Exceeded Warning Modal State
   const [pendingSlaTask, setPendingSlaTask] = useState<OtoTask | null>(null);
@@ -46,7 +50,10 @@ export function App() {
     submitTask,
     cancelTask,
     applyShiftConfig,
+    dispatchStats,
     roiMetrics,
+    weatherMode,
+    setWeatherMode,
     runScenario
   } = useSimulationEngine();
 
@@ -109,6 +116,15 @@ export function App() {
         theme={theme}
       />
 
+      {/* Comparative Analytics Dashboard Modal */}
+      <AnalyticsModal
+        isOpen={isAnalyticsOpen}
+        onClose={() => setIsAnalyticsOpen(false)}
+        roiMetrics={roiMetrics}
+        dispatchStats={dispatchStats}
+        theme={theme}
+      />
+
       {/* FLOATING TOAST NOTIFICATION BANNER */}
       {notificationBanner && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none bg-emerald-600/95 text-white font-mono text-xs md:text-sm font-bold py-2.5 px-6 rounded-xl border border-emerald-400 shadow-2xl animate-bounce flex items-center justify-center space-x-2 backdrop-blur-md">
@@ -128,6 +144,9 @@ export function App() {
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
         roiMetrics={roiMetrics}
         onRunScenario={runScenario}
+        weatherMode={weatherMode}
+        onWeatherChange={setWeatherMode}
+        onOpenAnalytics={() => setIsAnalyticsOpen(true)}
       />
 
       {/* 2. Main Fullscreen CAD Airport Map & Floating Drawer Overlays */}
@@ -139,6 +158,7 @@ export function App() {
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
           theme={theme}
+          weatherMode={weatherMode}
           isDevMode={false}
           showMapSublayer={true}
         />
