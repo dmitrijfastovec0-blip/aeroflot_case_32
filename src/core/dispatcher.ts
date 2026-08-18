@@ -71,6 +71,7 @@ export interface DispatcherOutput {
   dispatchedWorkers: Record<string, Worker>;
   stats: DispatchStat[];
   notifications: string[];
+  waitingReasons: Record<string, string>;
   changed: boolean;
 }
 
@@ -147,6 +148,11 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
   const newStats: DispatchStat[] = [];
   const notifications: string[] = [];
 
+  // Naive ("manual") dispatcher ETA per task: the straight-line nearest free
+  // engineer, computed at dispatch time. Lets the ROI widget show a LIVE
+  // system-vs-manual comparison instead of a hardcoded baseline.
+  const naiveEtaByTask: Record<string, number> = {};
+
   // O(1) index over workers
   const workerById = new Map<string, Worker>();
   for (const w of workers) workerById.set(w.id, w);
@@ -171,6 +177,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     if (!targetStand) return;
     const naivePick = findNaiveNearest(q.categoryCode, targetStand, workers, busy);
     if (!naivePick) return;
+    naiveEtaByTask[q.id] = naivePick.etaMinutes;
     const saved = Math.max(0, Math.round((naivePick.etaMinutes - systemEta) * 10) / 10);
     newStats.push({
       taskId: q.id,
@@ -849,11 +856,79 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     }
   }
 
+  // ---- Step 6: waiting reasons (explainability) + naive ETA attachment ----
+  // Every task still QUEUED after all steps gets a human-readable explanation of
+  // WHY it cannot be staffed right now ("не хватает 1× Cat A", "нет свободного
+  // B1"), so the demo shows the intelligence instead of a silent queue. Also
+  // attach the naive (manual) dispatcher ETA to each dispatched task for the
+  // live system-vs-manual ROI comparison.
+  const waitingReasons: Record<string, string> = {};
+  const freeAfter: Worker[] = [];
+  for (const w of workerById.values()) {
+    if ((w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING') && !busy.has(w.id)) {
+      freeAfter.push(w);
+    }
+  }
+
+  for (const q of queuedAll) {
+    const out = dispatchedTasks[q.id];
+    const stillQueued = out ? out.status === 'QUEUED' : true;
+    if (!stillQueued) continue;
+    const stand = standById.get(q.standId);
+    if (!stand) continue;
+
+    // Lookahead reservation: explain that a specific engineer is about to finish
+    if (q.reservedWorkerId) {
+      const rw = workerById.get(q.reservedWorkerId);
+      if (rw && rw.status === 'WORKING_ON_SITE') {
+        const active = tasks.find(t => t.id === rw.currentTaskId && t.status === 'WORKING');
+        const remaining = active ? Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60) : 0;
+        waitingReasons[q.id] = `⏳ Резерв: ${rw.name} завершает ТО (≈${Math.ceil(remaining)} мин) и выедет сразу, без возврата на базу.`;
+        continue;
+      }
+    }
+
+    // Which required qualification is blocking the crew?
+    const missing: string[] = [];
+    for (const r of reqOf(q)) {
+      const exact = freeAfter.filter(w => w.categoryCode === r.categoryCode);
+      let avail = exact.length;
+      const bestEta = exact.length > 0
+        ? Math.min(...exact.map(w => calculateEta(w, stand).etaMinutes))
+        : Infinity;
+      if (r.categoryCode === 'A' && avail < r.count) {
+        // B1/B2 могут закрыть слот Cat-A с надбавкой за переквалификацию
+        avail += freeAfter.filter(w => w.categoryCode !== 'A').length;
+      }
+      if (avail < r.count) {
+        const short = r.count - avail;
+        let msg = short >= r.count
+          ? `нет свободного Cat ${r.categoryCode}`
+          : `не хватает ${short}× Cat ${r.categoryCode}`;
+        if (Number.isFinite(bestEta) && bestEta > (q.slaLimitMinutes || 15)) {
+          msg += ` (ближайший в ${bestEta} мин > SLA ${q.slaLimitMinutes} мин)`;
+        }
+        missing.push(msg);
+      }
+    }
+    waitingReasons[q.id] = missing.length > 0
+      ? `⏳ Ждём бригаду: ${missing.join('; ')}.`
+      : '⏳ Ожидание: все свободные специалисты нужных категорий уже задействованы на других вызовах.';
+  }
+
+  for (const id of Object.keys(dispatchedTasks)) {
+    const t = dispatchedTasks[id];
+    if (t && naiveEtaByTask[id] != null) {
+      dispatchedTasks[id] = { ...t, intuitiveEtaMinutes: naiveEtaByTask[id] };
+    }
+  }
+
   return {
     dispatchedTasks,
     dispatchedWorkers,
     stats: newStats,
     notifications,
+    waitingReasons,
     changed: Object.keys(dispatchedTasks).length > 0
   };
 }

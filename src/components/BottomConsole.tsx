@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { OtoTask, Worker, ThemeMode } from '../types/index';
-import { Terminal, Layers, Clock, Trash2 } from 'lucide-react';
+import { Terminal, Layers, Clock, Trash2, ChevronUp, ChevronDown, Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface BottomConsoleProps {
   tasks: OtoTask[];
@@ -19,253 +19,199 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
   onSelectTask,
   theme
 }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'REGISTRY'>('ACTIVE');
 
   const activeTasks = tasks.filter(t => t.status === 'DISPATCHED' || t.status === 'WORKING');
 
+  const barStyle = theme === 'dark'
+    ? 'bg-[#070a0e]/95 border-[#1e2a3a] text-gray-200 backdrop-blur-md shadow-2xl'
+    : 'bg-white/95 border-slate-200 text-slate-900 backdrop-blur-md shadow-xl';
+
   return (
-    <footer className={`h-[160px] min-h-[160px] border-t flex flex-col overflow-hidden text-xs md:text-sm select-none font-mono transition-colors ${
-      theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-gray-200' : 'bg-white border-slate-300 text-slate-800 shadow-inner'
+    <footer className={`absolute bottom-3 left-4 right-4 z-20 flex flex-col rounded-2xl border transition-all overflow-hidden ${barStyle} ${
+      isExpanded ? 'h-72' : 'h-11 min-h-[44px]'
     }`}>
-      {/* Header Tabs */}
-      <div className={`h-9 border-b flex items-center justify-between px-4 ${
-        theme === 'dark' ? 'bg-[#121820] border-[#263345]' : 'bg-slate-100 border-slate-300'
-      }`}>
-        <div className="flex space-x-2">
-          {/* Active Tasks Tab */}
-          <button
-            onClick={() => setActiveTab('ACTIVE')}
-            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
-              activeTab === 'ACTIVE'
-                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-sky-400' : 'bg-white border-slate-300 text-sky-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300'
-            }`}
-          >
-            <Terminal className="w-4 h-4" />
-            <span>📜 Активные задачи ({activeTasks.length})</span>
-          </button>
+      {/* 1. COLLAPSED COMPACT STATUS BAR HEADER */}
+      <div className="h-11 px-4 flex items-center justify-between border-b border-slate-200 dark:border-[#1e2a3a] font-mono text-xs cursor-pointer select-none">
+        {/* Left Live Indicators */}
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-1.5" onClick={() => { setIsExpanded(true); setActiveTab('ACTIVE'); }}>
+            <Activity className="w-4 h-4 text-emerald-400" />
+            <span className="font-bold text-slate-700 dark:text-gray-300">Активные:</span>
+            <span className="font-extrabold text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/10">
+              {activeTasks.length}
+            </span>
+          </div>
 
-          {/* QUEUED TASKS TAB (Highlighted amber if M > 0) */}
-          <button
-            onClick={() => setActiveTab('QUEUED')}
-            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
-              queuedTasks.length > 0 ? 'bg-amber-500/20 text-amber-400 border-amber-500 animate-pulse' : ''
-            } ${
-              activeTab === 'QUEUED'
-                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-amber-400' : 'bg-white border-slate-300 text-amber-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300'
-            }`}
-          >
+          <div className="flex items-center space-x-1.5" onClick={() => { setIsExpanded(true); setActiveTab('QUEUED'); }}>
             <Clock className="w-4 h-4 text-amber-400" />
-            <span>⏳ Очередь ожидания ({queuedTasks.length})</span>
-          </button>
-
-          {/* Registry Tab */}
-          <button
-            onClick={() => setActiveTab('REGISTRY')}
-            className={`flex items-center space-x-2 px-3 py-1 font-mono text-xs md:text-sm font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
-              activeTab === 'REGISTRY'
-                ? theme === 'dark' ? 'bg-[#070a0e] border-[#263345] text-emerald-400' : 'bg-white border-slate-300 text-emerald-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>📊 Реестр смены ({workers.length})</span>
-          </button>
-        </div>
-
-        <div className="text-xs text-gray-500 hidden md:block">
-          СИТУАЦИОННЫЙ ЦЕНТР ОТО — ДИСПЕТЧЕРИЗАЦИЯ SVO
-        </div>
-      </div>
-
-      {/* Tab Content */}
-      <div className={`flex-1 overflow-y-auto p-2.5 ${theme === 'dark' ? 'bg-[#070a0e]' : 'bg-white'}`}>
-        {/* Tab 1: Active Dispatched Tasks */}
-        {activeTab === 'ACTIVE' && (
-          activeTasks.length > 0 ? (
-            <table className="w-full text-left border-collapse text-xs md:text-sm">
-              <thead className={`sticky top-0 border-b ${
-                theme === 'dark' ? 'bg-[#121820] text-gray-400 border-[#263345]' : 'bg-slate-100 text-slate-600 border-slate-300'
-              }`}>
-                <tr>
-                  <th className="py-1.5 px-3">№ Задачи</th>
-                  <th className="py-1.5 px-3">Стоянка / Борт</th>
-                  <th className="py-1.5 px-3">Приоритет</th>
-                  <th className="py-1.5 px-3">Состав бригады</th>
-                  <th className="py-1.5 px-3">Прибытие спецов</th>
-                  <th className="py-1.5 px-3">Время сбора (ETA)</th>
-                  <th className="py-1.5 px-3 text-right">Действие</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/60">
-                {activeTasks.map((t) => (
-                  <tr
-                    key={t.id}
-                    onClick={() => onSelectTask(t)}
-                    className="hover:bg-slate-100 dark:hover:bg-[#121820] cursor-pointer transition-colors"
-                  >
-                    <td className="py-2 px-3 text-sky-400 font-bold">{t.id}</td>
-                    <td className="py-2 px-3 font-bold">
-                      {t.standLabel} <span className="text-gray-400 text-xs font-normal">({t.aircraftType})</span>
-                    </td>
-                    <td className="py-2 px-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                        t.priority === 'AOG' ? 'bg-red-500/20 text-red-400 border border-red-500' :
-                        t.priority === 'URGENT' ? 'bg-amber-500/20 text-amber-400 border border-amber-500' :
-                        'bg-sky-500/20 text-sky-400 border border-sky-500'
-                      }`}>
-                        {t.priority}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-purple-400 dark:text-purple-300 font-bold">
-                      {t.crew.length} чел. <span className="text-gray-400 text-xs font-normal">({t.crew.map(c => c.categoryCode).join(', ')})</span>
-                    </td>
-                    <td className="py-2 px-3 font-bold">
-                      <span className={t.arrivedCount === t.crew.length ? 'text-red-400' : 'text-emerald-500'}>
-                        {t.arrivedCount} / {t.crew.length} {t.arrivedCount === t.crew.length ? '🔴 На ТО' : '🔵 В пути'}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 font-bold">{t.maxEtaMinutes} мин</td>
-                    <td className="py-2 px-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onCancelTask(t.id);
-                        }}
-                        className="px-3 py-1 bg-red-500/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg border border-red-500 transition-colors text-xs font-bold flex items-center space-x-1.5 ml-auto cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>🗑️ Отменить</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-              Активных вызовных задач нет.
-            </div>
-          )
-        )}
-
-        {/* Tab 2: QUEUED TASKS */}
-        {activeTab === 'QUEUED' && (
-          queuedTasks.length > 0 ? (
-            <table className="w-full text-left border-collapse text-xs md:text-sm">
-              <thead className={`sticky top-0 border-b ${
-                theme === 'dark' ? 'bg-[#121820] text-gray-400 border-[#263345]' : 'bg-slate-100 text-slate-600 border-slate-300'
-              }`}>
-                <tr>
-                  <th className="py-1.5 px-3">№ Задачи</th>
-                  <th className="py-1.5 px-3">Стоянка / Борт</th>
-                  <th className="py-1.5 px-3">Приоритет</th>
-                  <th className="py-1.5 px-3">Необходимая квалификация</th>
-                  <th className="py-1.5 px-3">Время в очереди</th>
-                  <th className="py-1.5 px-3 text-right">Действие</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/60">
-                {queuedTasks.map((t) => {
-                  const waitSec = Math.floor(t.elapsedQueueSec || 0);
-                  const waitMinStr = `${String(Math.floor(waitSec / 60)).padStart(2, '0')}:${String(waitSec % 60).padStart(2, '0')}`;
-
-                  return (
-                    <tr
-                      key={t.id}
-                      onClick={() => onSelectTask(t)}
-                      className="hover:bg-amber-500/10 cursor-pointer transition-colors"
-                    >
-                      <td className="py-2 px-3 text-amber-400 font-bold">{t.id}</td>
-                      <td className="py-2 px-3 font-bold">
-                        {t.standLabel} <span className="text-gray-400 text-xs font-normal">({t.aircraftType})</span>
-                      </td>
-                      <td className="py-2 px-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                          t.priority === 'AOG' ? 'bg-red-500/25 text-red-400 border border-red-500' :
-                          t.priority === 'URGENT' ? 'bg-amber-500/25 text-amber-400 border border-amber-500' :
-                          'bg-sky-500/25 text-sky-400 border border-sky-500'
-                        }`}>
-                          {t.priority}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 text-purple-300 font-bold">
-                        Требуется Cat {t.categoryCode}
-                        {t.reservedWorkerId && (
-                          <span className="ml-2 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/60 text-sky-300 text-[10px] font-bold whitespace-nowrap">
-                            ⏳ Резерв инженера (почти свободен)
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-amber-400 font-bold">
-                        ⏳ {waitMinStr}
-                      </td>
-                      <td className="py-2 px-3 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onCancelTask(t.id);
-                          }}
-                          className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg font-bold text-xs transition-colors cursor-pointer"
-                        >
-                          Отмена
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          ) : (
-            <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-              🟢 Очередь ожидания пуста. Все вызовы успешно укомплектованы инженерами.
-            </div>
-          )
-        )}
-
-        {/* Tab 3: Registry */}
-        {activeTab === 'REGISTRY' && (
-          <table className="w-full text-left border-collapse text-xs md:text-sm">
-            <thead className={`sticky top-0 border-b ${
-              theme === 'dark' ? 'bg-[#121820] text-gray-400 border-[#263345]' : 'bg-slate-100 text-slate-600 border-slate-300'
+            <span className="font-bold text-slate-700 dark:text-gray-300">Очередь:</span>
+            <span className={`font-extrabold px-1.5 py-0.5 rounded ${
+              queuedTasks.length > 0 ? 'bg-amber-500/20 text-amber-400 animate-pulse' : 'bg-slate-200 dark:bg-slate-800 text-gray-400'
             }`}>
-              <tr>
-                <th className="py-1.5 px-3">ID</th>
-                <th className="py-1.5 px-3">ФИО инженера</th>
-                <th className="py-1.5 px-3">Квалификация</th>
-                <th className="py-1.5 px-3">Динамический статус</th>
-                <th className="py-1.5 px-3">Транспорт</th>
-                <th className="py-1.5 px-3">Координаты</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-[#263345]/60">
-              {workers.map((w) => (
-                <tr key={w.id} className="hover:bg-slate-100 dark:hover:bg-[#121820] transition-colors">
-                  <td className="py-1.5 px-3 text-sky-400 font-bold">{w.id}</td>
-                  <td className="py-1.5 px-3 font-semibold">{w.name}</td>
-                  <td className="py-1.5 px-3">
-                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700">
-                      Категория {w.categoryCode}
-                    </span>
-                  </td>
-                  <td className="py-1.5 px-3 font-bold">
-                    {w.status === 'FREE_STATIONARY' && <span className="text-emerald-400">🟢 Дежурит на базе</span>}
-                    {w.status === 'FREE_PATROLLING' && <span className="text-emerald-300">🟢 Патрулирует перрон</span>}
-                    {w.status === 'IN_TRANSIT' && <span className="text-sky-400">🔵 В пути на вызов</span>}
-                    {w.status === 'WORKING_ON_SITE' && <span className="text-red-400">🔴 Работает на борту</span>}
-                    {w.status === 'RETURNING_TO_BASE' && <span className="text-amber-400">🟡 Возврат на базу</span>}
-                  </td>
-                  <td className="py-1.5 px-3 text-gray-400">
-                    {w.vehicle === 'APRON_VEHICLE' ? '🚘 Спецавтомобиль' : '🚶 Пешком'}
-                  </td>
-                  <td className="py-1.5 px-3 text-gray-400">X:{w.x.toFixed(1)}% Y:{w.y.toFixed(1)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              {queuedTasks.length}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-1.5 hidden md:flex" onClick={() => { setIsExpanded(true); setActiveTab('REGISTRY'); }}>
+            <Layers className="w-4 h-4 text-sky-400" />
+            <span className="font-bold text-slate-700 dark:text-gray-300">Смена:</span>
+            <span className="font-bold text-sky-400">{workers.length} чел.</span>
+          </div>
+        </div>
+
+        {/* Right Toggle Button */}
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-300 dark:border-[#263345] text-slate-800 dark:text-gray-200 font-bold transition-all cursor-pointer"
+        >
+          <span>{isExpanded ? '🔽 Свернуть' : '📜 Журнал задач и лог'}</span>
+          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+        </button>
       </div>
+
+      {/* 2. EXPANDED CONTENT AREA */}
+      {isExpanded && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Sub-tabs */}
+          <div className="h-9 px-4 border-b flex items-center space-x-2 bg-slate-100/50 dark:bg-[#121820]/50 border-slate-200 dark:border-[#1e2a3a]">
+            <button
+              onClick={() => setActiveTab('ACTIVE')}
+              className={`flex items-center space-x-1.5 px-3 py-1 font-mono text-xs font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+                activeTab === 'ACTIVE'
+                  ? 'bg-slate-200 dark:bg-[#070a0e] border-slate-300 dark:border-[#263345] text-sky-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>📜 Активные ({activeTasks.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('QUEUED')}
+              className={`flex items-center space-x-1.5 px-3 py-1 font-mono text-xs font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+                activeTab === 'QUEUED'
+                  ? 'bg-slate-200 dark:bg-[#070a0e] border-slate-300 dark:border-[#263345] text-amber-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>⏳ Очередь ({queuedTasks.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('REGISTRY')}
+              className={`flex items-center space-x-1.5 px-3 py-1 font-mono text-xs font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+                activeTab === 'REGISTRY'
+                  ? 'bg-slate-200 dark:bg-[#070a0e] border-slate-300 dark:border-[#263345] text-emerald-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>📊 Реестр персонала ({workers.length})</span>
+            </button>
+          </div>
+
+          {/* Table Container */}
+          <div className="flex-1 overflow-y-auto p-3 font-mono text-xs">
+            {activeTab === 'ACTIVE' && (
+              activeTasks.length > 0 ? (
+                <table className="w-full text-left border-collapse">
+                  <thead className="border-b border-slate-200 dark:border-[#263345] text-gray-400">
+                    <tr>
+                      <th className="py-1 px-2">№ Задачи</th>
+                      <th className="py-1 px-2">Стоянка</th>
+                      <th className="py-1 px-2">Приоритет</th>
+                      <th className="py-1 px-2">Состав бригады</th>
+                      <th className="py-1 px-2">ETA</th>
+                      <th className="py-1 px-2 text-right">Отмена</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeTasks.map(t => (
+                      <tr key={t.id} className="border-b border-slate-100 dark:border-[#1e2a3a]/50 hover:bg-slate-100 dark:hover:bg-[#121820]">
+                        <td className="py-1.5 px-2 font-bold text-sky-400 cursor-pointer" onClick={() => onSelectTask(t)}>
+                          {t.id}
+                        </td>
+                        <td className="py-1.5 px-2 font-bold">{t.standLabel}</td>
+                        <td className="py-1.5 px-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                            t.priority === 'AOG' ? 'bg-red-500/20 text-red-400' : 'bg-sky-500/20 text-sky-400'
+                          }`}>
+                            {t.priority}
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2 text-gray-400">
+                          {t.crew.map(c => `${c.workerName} (${c.categoryCode})`).join(', ')}
+                        </td>
+                        <td className="py-1.5 px-2 font-bold text-emerald-400">{t.maxEtaMinutes} мин</td>
+                        <td className="py-1.5 px-2 text-right">
+                          <button
+                            onClick={() => onCancelTask(t.id)}
+                            className="p-1 rounded text-red-400 hover:bg-red-500/20 transition-colors"
+                            title="Отменить задачу"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="p-4 text-center text-gray-500">Нет активных задач на стоянках</div>
+              )
+            )}
+
+            {activeTab === 'QUEUED' && (
+              queuedTasks.length > 0 ? (
+                <div className="space-y-2">
+                  {queuedTasks.map(t => (
+                    <div key={t.id} className="p-2.5 rounded-xl border bg-amber-500/10 border-amber-500/30 flex justify-between items-center">
+                      <div>
+                        <span className="font-bold text-amber-400 mr-2">{t.id}</span>
+                        <span className="font-bold mr-2">{t.standLabel}</span>
+                        <span className="text-gray-400">({t.defectLabel || t.categoryLabel})</span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <span className="text-gray-400">{t.waitingReason || 'Ожидание свободного инженера'}</span>
+                        <button
+                          onClick={() => onCancelTask(t.id)}
+                          className="p-1 text-red-400 hover:bg-red-500/20 rounded"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 text-center text-gray-500">Очередь вызовов пуста</div>
+              )
+            )}
+
+            {activeTab === 'REGISTRY' && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {workers.map(w => (
+                  <div key={w.id} className="p-2 rounded-lg border bg-slate-50 dark:bg-[#121820] border-slate-200 dark:border-[#263345] text-[11px] flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-slate-800 dark:text-gray-200">{w.name} ({w.categoryCode})</div>
+                      <div className="text-[10px] text-gray-500">{w.status}</div>
+                    </div>
+                    <span className={`w-2 h-2 rounded-full ${
+                      w.status === 'WORKING_ON_SITE' ? 'bg-red-400 animate-pulse' :
+                      w.status === 'IN_TRANSIT' ? 'bg-sky-400' : 'bg-emerald-400'
+                    }`} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </footer>
   );
 };
+
+export default BottomConsole;

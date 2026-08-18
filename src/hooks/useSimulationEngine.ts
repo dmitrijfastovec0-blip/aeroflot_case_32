@@ -16,6 +16,7 @@ import {
   getWeatherSpeeds
 } from '../services/dijkstra';
 import { computeDispatchPlan } from '../core/dispatcher';
+import { formatSimClock } from '../utils/time';
 
 // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
 export type { DispatchStat };
@@ -49,11 +50,17 @@ export function useSimulationEngine() {
   const statsRef = useRef<DispatchStat[]>([]);
   const [dispatchStats, setDispatchStats] = useState<DispatchStat[]>([]);
 
-  // Economic ROI metrics: completed call count + accumulated system arrival
-  // ETAs, so the top-bar widget can compute saved minutes & prevented loss.
-  const [roiMetrics, setRoiMetrics] = useState({ completedCount: 0, systemEtaSumMinutes: 0 });
-  const roiMetricsRef = useRef({ completedCount: 0, systemEtaSumMinutes: 0 });
+  // Economic ROI metrics: completed call count + accumulated system AND naive
+  // (manual) arrival ETAs, so the top-bar widget can compute saved minutes &
+  // prevented loss LIVE against the simulated manual dispatcher.
+  const [roiMetrics, setRoiMetrics] = useState({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+  const roiMetricsRef = useRef({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
   const lastRoiCountRef = useRef(0);
+
+  // Simulation clock (HH:MM:SS) — the single source of task timestamps so the
+  // demo can show "когда задача началась / когда завершилась" in SIM time.
+  const [simClockSec, setSimClockSec] = useState(0);
+  const simClockRef = useRef(0);
 
   // Current shift composition (tracked for "reset to optimal bases" presets)
   const shiftCountsRef = useRef({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
@@ -95,12 +102,28 @@ export function useSimulationEngine() {
       findNaiveNearest: findNaiveNearestWorkerOfCategory
     });
 
-    if (!plan.changed) return;
+    if (!plan.changed && Object.keys(plan.waitingReasons).length === 0) return;
 
     plan.notifications.forEach(msg => showNotification(msg, 5000));
 
-    // Apply all dispatches in a single O(T + W) pass
-    const nextTasks = tasksRef.current.map(t => plan.dispatchedTasks[t.id] || t);
+    // Apply all dispatches in a single O(T + W) pass: mark the task as started
+    // the moment it turns DISPATCHED, clear a stale waiting reason, and attach
+    // the explainable "why is this still queued" reason for tasks that wait.
+    const nextTasks = tasksRef.current.map(t => {
+      const dt = plan.dispatchedTasks[t.id];
+      if (dt) {
+        const startedAtSimSec = dt.status === 'DISPATCHED' && !dt.startedAtSimSec
+          ? simClockRef.current
+          : dt.startedAtSimSec;
+        return {
+          ...dt,
+          startedAtSimSec,
+          waitingReason: dt.status === 'DISPATCHED' ? undefined : dt.waitingReason
+        };
+      }
+      const wr = plan.waitingReasons[t.id];
+      return wr ? { ...t, waitingReason: wr } : t;
+    });
     const nextWorkers = workersRef.current.map(w => plan.dispatchedWorkers[w.id] || w);
 
     workersRef.current = nextWorkers;
@@ -131,6 +154,9 @@ export function useSimulationEngine() {
       lastTimeRef.current = now;
 
       if (!isPaused) {
+        // 0. ADVANCE SIMULATION CLOCK (single source of task timestamps)
+        simClockRef.current += dtSec * simSpeed;
+
         // 1. UPDATE WORKER POSITIONS (LERP)
         const nextWorkers = workersRef.current.map((worker): Worker => {
           if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') {
@@ -335,17 +361,28 @@ export function useSimulationEngine() {
 
           // 3. HANDLE TASK COMPLETIONS, CHAIN FREED WORKERS TO NEXT QUEUED TASKS & RE-DRAIN QUEUE
           if (completedTaskIds.length > 0) {
-            const remainingTasks = nextTasks.filter(t => !completedTaskIds.includes(t.id));
+            const completedAtSim = simClockRef.current;
+
+            // Mark completed (NOT removed) so the console can show start → finish
+            const completedTasks = nextTasks.map(t =>
+              completedTaskIds.includes(t.id)
+                ? { ...t, status: 'COMPLETED' as const, completedAtSimSec: completedAtSim }
+                : t
+            );
 
             // Collect every worker freed by the completed tasks (deduped)
             const freedWorkers: Worker[] = [];
             completedTaskIds.forEach(cId => {
               const doneTask = tasksRef.current.find(t => t.id === cId);
               if (!doneTask) return;
-              showNotification(`✅ 2 мин ТО завершено на стоянке ${doneTask.standLabel}! Инженеры освобождены.`);
-              // ROI: accumulate completed call metrics (system arrival ETA)
+              const durMin = doneTask.startedAtSimSec != null
+                ? ((completedAtSim - doneTask.startedAtSimSec) / 60).toFixed(1)
+                : null;
+              showNotification(`✅ ТО завершено на стоянке ${doneTask.standLabel} (${formatSimClock(completedAtSim)}). ${durMin ? `Цикл задачи: ${durMin} мин. ` : ''}Инженеры освобождены.`);
+              // ROI: accumulate completed call metrics (system + naive/manual ETA)
               roiMetricsRef.current.completedCount += 1;
               roiMetricsRef.current.systemEtaSumMinutes += doneTask.maxEtaMinutes || 0;
+              roiMetricsRef.current.intuitiveEtaSumMinutes += doneTask.intuitiveEtaMinutes || doneTask.maxEtaMinutes || 0;
               doneTask.crew.forEach(m => {
                 const w = workerIdx.get(m.workerId);
                 if (w && !freedWorkers.some(f => f.id === w.id)) freedWorkers.push(w);
@@ -369,7 +406,19 @@ export function useSimulationEngine() {
             });
 
             workersRef.current = workersRef.current.map(w => freedFree.get(w.id) || w);
-            tasksRef.current = remainingTasks;
+
+            // Keep a rolling log of completed tasks (status COMPLETED) so the
+            // console can show start → finish timestamps; drop the oldest beyond cap.
+            const MAX_COMPLETED_LOG = 25;
+            const completedOnes = completedTasks.filter(t => t.status === 'COMPLETED');
+            if (completedOnes.length > MAX_COMPLETED_LOG) {
+              const dropIds = new Set(
+                completedOnes.slice(0, completedOnes.length - MAX_COMPLETED_LOG).map(t => t.id)
+              );
+              tasksRef.current = completedTasks.filter(t => !dropIds.has(t.id));
+            } else {
+              tasksRef.current = completedTasks;
+            }
 
             // Force UI update on completion
             setWorkers([...workersRef.current]);
@@ -431,6 +480,7 @@ export function useSimulationEngine() {
         
         // 4. THROTTLE UI UPDATES to ~10 FPS (100ms) to prevent React blocking the main thread
         if (now - lastRenderTimeRef.current > 100) {
+          setSimClockSec(simClockRef.current);
           setWorkers([...workersRef.current]);
           setTasks([...tasksRef.current]);
           lastRenderTimeRef.current = now;
@@ -456,6 +506,7 @@ export function useSimulationEngine() {
     const queuedTask: OtoTask = {
       ...newTask,
       status: 'QUEUED',
+      createdAtSimSec: newTask.createdAtSimSec ?? simClockRef.current,
       elapsedQueueSec: 0,
       arrivedCount: 0
     };
@@ -560,6 +611,7 @@ export function useSimulationEngine() {
         slaLimitMinutes: 15.0,
         withinSla: true,
         createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
+        createdAtSimSec: simClockRef.current,
         elapsedQueueSec: 0,
         elapsedWorkSec: 0,
         targetWorkSec: 120
@@ -596,9 +648,11 @@ export function useSimulationEngine() {
     setTasks(nextTasks);
 
     drainQueueWithFreeWorkers();
-    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0 };
+    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 };
     lastRoiCountRef.current = 0;
-    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0 });
+    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+    simClockRef.current = 0;
+    setSimClockSec(0);
     showNotification(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
   }, [drainQueueWithFreeWorkers, showNotification]);
 
@@ -629,6 +683,7 @@ export function useSimulationEngine() {
       slaLimitMinutes: 15.0,
       withinSla: true,
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false }),
+      createdAtSimSec: simClockRef.current,
       elapsedQueueSec: 0,
       elapsedWorkSec: 0,
       targetWorkSec: 120
@@ -651,9 +706,11 @@ export function useSimulationEngine() {
     setTasks([]);
     statsRef.current = [];
     setDispatchStats([]);
-    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0 };
+    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 };
     lastRoiCountRef.current = 0;
-    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0 });
+    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+    simClockRef.current = 0;
+    setSimClockSec(0);
     resetWeatherOverrides();
     if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
   }, [showNotification]);
@@ -873,6 +930,7 @@ export function useSimulationEngine() {
     applyShiftConfig,
     dispatchStats,
     roiMetrics,
+    simClockSec,
     runScenario,
     runPreset,
     runControlTests

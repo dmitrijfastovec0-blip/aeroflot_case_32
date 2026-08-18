@@ -8,8 +8,6 @@ import { RightPanel } from './components/RightPanel';
 import { BottomConsole } from './components/BottomConsole';
 import { SlaConfirmModal } from './components/SlaConfirmModal';
 import { ShiftConfigModal } from './components/ShiftConfigModal';
-import { EconomicWidget } from './components/EconomicWidget';
-import { ScenarioBar } from './components/ScenarioBar';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
@@ -87,8 +85,8 @@ export function App() {
   const activeTaskForSelectedStand = tasks.find(t => t.standId === selectedStandId);
 
   return (
-    <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans select-none transition-colors relative ${
-      theme === 'dark' ? 'bg-[#090d11] text-gray-100' : 'bg-slate-100 text-slate-900'
+    <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans select-none relative ${
+      theme === 'dark' ? 'bg-[#05080c] text-gray-100' : 'bg-slate-100 text-slate-900'
     }`}>
       {/* Custom SLA Warning Modal */}
       <SlaConfirmModal
@@ -111,14 +109,14 @@ export function App() {
         theme={theme}
       />
 
-      {/* FLOATING NON-LAYOUT-SHIFTING TOAST NOTIFICATION BANNER */}
+      {/* FLOATING TOAST NOTIFICATION BANNER */}
       {notificationBanner && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 pointer-events-none bg-emerald-700/95 text-white font-mono text-xs md:text-sm font-bold py-2.5 px-6 rounded-xl border border-emerald-400 shadow-2xl animate-bounce flex items-center justify-center space-x-2">
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none bg-emerald-600/95 text-white font-mono text-xs md:text-sm font-bold py-2.5 px-6 rounded-xl border border-emerald-400 shadow-2xl animate-bounce flex items-center justify-center space-x-2 backdrop-blur-md">
           <span>{notificationBanner}</span>
         </div>
       )}
 
-      {/* A. Top Header Bar */}
+      {/* 1. Unified Sleek Top Header Bar */}
       <Header
         workers={workers}
         simSpeed={simSpeed}
@@ -128,17 +126,13 @@ export function App() {
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
+        roiMetrics={roiMetrics}
+        onRunScenario={runScenario}
       />
 
-      {/* REAL-TIME SHIFT ECONOMICS (ROI WIDGET) */}
-      <EconomicWidget roiMetrics={roiMetrics} theme={theme} />
-
-      {/* QUICK-ACTION PRESET SCENARIO BAR */}
-      <ScenarioBar onRunScenario={runScenario} theme={theme} />
-
-      {/* B & C. Central CAD Canvas & Right Task Panel */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* B. Central CAD/GIS Airport Canvas */}
+      {/* 2. Main Fullscreen CAD Airport Map & Floating Drawer Overlays */}
+      <main className="flex-1 w-full h-full relative overflow-hidden">
+        {/* Fullscreen Interactive CAD Airport Canvas */}
         <CanvasMap
           workersRef={workersRef}
           tasksRef={tasksRef}
@@ -149,7 +143,7 @@ export function App() {
           showMapSublayer={true}
         />
 
-        {/* C. Right Task Constructor Sidebar */}
+        {/* Floating Collapsible Right Task Drawer */}
         <RightPanel
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
@@ -160,17 +154,17 @@ export function App() {
           activeTaskForStand={activeTaskForSelectedStand}
           theme={theme}
         />
-      </div>
 
-      {/* D. Bottom Active Tasks & Queue Console Table */}
-      <BottomConsole
-        tasks={tasks}
-        queuedTasks={queuedTasks}
-        workers={workers}
-        onCancelTask={cancelTask}
-        onSelectTask={(task) => setSelectedStandId(task.standId)}
-        theme={theme}
-      />
+        {/* Floating Collapsible Bottom Console & Status Bar */}
+        <BottomConsole
+          tasks={tasks}
+          queuedTasks={queuedTasks}
+          workers={workers}
+          onCancelTask={cancelTask}
+          onSelectTask={(task) => setSelectedStandId(task.standId)}
+          theme={theme}
+        />
+      </main>
     </div>
   );
 }

@@ -100,6 +100,10 @@ export interface OtoTask {
   elapsedWorkSec: number;   // Elapsed work time in seconds (0 to 120s)
   targetWorkSec: number;    // Target 120s (2 real minutes)
   reservedWorkerId?: string; // Lookahead: queued task promised to a worker still on duty
+  waitingReason?: string;   // Explainability: почему задача ждёт в очереди (для UI)
+  createdAtSimSec?: number;  // Время создания задачи по сим-часам (сек)
+  startedAtSimSec?: number;  // Время первого отправления бригады по сим-часам (сек)
+  completedAtSimSec?: number; // Время завершения ТО по сим-часам (сек)
 }
 
 export interface HoverTooltipData {

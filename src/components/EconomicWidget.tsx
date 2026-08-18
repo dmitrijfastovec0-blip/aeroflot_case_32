@@ -4,27 +4,30 @@ import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import { Wallet, TrendingDown, Timer, ShieldCheck } from 'lucide-react';
 
 interface EconomicWidgetProps {
-  roiMetrics: { completedCount: number; systemEtaSumMinutes: number };
+  roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
   theme: ThemeMode;
 }
 
 // Economic constants used by the ROI model
 export const SLA_BASELINE_MINUTES = 15.0;
-export const MANUAL_DISPATCH_AVG_MINUTES = 13.5;
 // Единая ставка простоя ВС — единственный источник в constants/index.ts
 export const PREVENTED_LOSS_RUB_PER_MIN = AIRCRAFT_DOWNTIME_COST_PER_MIN;
 
 export const EconomicWidget: React.FC<EconomicWidgetProps> = ({ roiMetrics, theme }) => {
-  const { completedCount, systemEtaSumMinutes } = roiMetrics;
+  const { completedCount, systemEtaSumMinutes, intuitiveEtaSumMinutes } = roiMetrics;
 
-  // Current system avg SLA arrival time from active/completed tasks
+  // Live baselines — no hardcoded "manual average": the naive dispatcher runs
+  // in parallel in the sim, so the comparison is honest and demonstrable.
   const systemAvgMinutes = completedCount > 0
     ? Math.round((systemEtaSumMinutes / completedCount) * 10) / 10
     : 0;
+  const manualAvgMinutes = completedCount > 0
+    ? Math.round((intuitiveEtaSumMinutes / completedCount) * 10) / 10
+    : 0;
 
-  // ΔT = (Manual Avg - System Avg) × Completed Tasks Count
+  // ΔT = (Manual Avg − System Avg) × Completed Tasks Count
   const savedMinutes = completedCount > 0
-    ? Math.max(0, Math.round((MANUAL_DISPATCH_AVG_MINUTES - systemAvgMinutes) * completedCount * 10) / 10)
+    ? Math.max(0, Math.round((manualAvgMinutes - systemAvgMinutes) * completedCount * 10) / 10)
     : 0;
 
   // Prevented Loss (RUB) = ΔT × 13,500 RUB/min
@@ -46,14 +49,16 @@ export const EconomicWidget: React.FC<EconomicWidgetProps> = ({ roiMetrics, them
         <span className="font-bold text-sky-400">{SLA_BASELINE_MINUTES} мин</span>
       </div>
 
-      {/* Manual vs System avg */}
+      {/* Manual vs System avg (live baseline) */}
       <div className="flex items-center space-x-1.5" title="Сравнение диспетчеров">
         <Timer className="w-3.5 h-3.5 text-gray-400 shrink-0" />
         <span className="text-gray-500">Ручной диспетчер:</span>
-        <span className="font-bold text-amber-400">{MANUAL_DISPATCH_AVG_MINUTES} мин</span>
+        <span className={`font-bold ${manualAvgMinutes > 0 ? 'text-amber-400' : 'text-gray-500'}`}>
+          {manualAvgMinutes > 0 ? `${fmtMin(manualAvgMinutes)} мин` : '—'}
+        </span>
         <span className="text-gray-600 dark:text-gray-500">→</span>
         <span className="text-gray-500">Система (сред. ETA):</span>
-        <span className={`font-bold ${systemAvgMinutes > 0 && systemAvgMinutes < MANUAL_DISPATCH_AVG_MINUTES ? 'text-emerald-400' : 'text-red-400'}`}>
+        <span className={`font-bold ${systemAvgMinutes > 0 && systemAvgMinutes < manualAvgMinutes ? 'text-emerald-400' : 'text-red-400'}`}>
           {systemAvgMinutes > 0 ? `${fmtMin(systemAvgMinutes)} мин` : '—'}
         </span>
         <span className="text-gray-600 dark:text-gray-500">({completedCount} вызовов закрыто)</span>
