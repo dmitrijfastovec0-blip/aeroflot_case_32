@@ -311,7 +311,7 @@ export function useSimulationEngine() {
             if (isAllArrived) {
               status = 'WORKING';
               elapsedWorkSec += dtSec * simSpeed;
-              if (elapsedWorkSec >= 120.0) { // 120 seconds target (2 real minutes)
+              if (elapsedWorkSec >= (task.targetWorkSec || 40.0)) {
                 completedTaskIds.push(task.id);
               }
             } else {
@@ -622,7 +622,7 @@ export function useSimulationEngine() {
         createdAtSimSec: simClockRef.current,
         elapsedQueueSec: 0,
         elapsedWorkSec: 0,
-        targetWorkSec: 120
+      targetWorkSec: 40
       };
 
       newTasks.push(task);

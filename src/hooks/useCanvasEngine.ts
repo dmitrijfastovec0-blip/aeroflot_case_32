@@ -564,7 +564,8 @@ export function useCanvasEngine({
     SVO_NODES.filter(n => n.type === 'STAND').forEach(stand => {
       const pos = pctToLogical(stand.x, stand.y);
       const isSelected = selectedStandId === stand.id;
-      const isTaskActive = tasks.some(t => t.standId === stand.id);
+      const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
+      const isTaskActive = !!activeTask;
       const isHovered = hoveredNodeId === stand.id;
 
       ctx.save();
@@ -583,14 +584,14 @@ export function useCanvasEngine({
         borderColor = '#38bdf8';
         bgColor = '#38bdf825';
       } else if (isTaskActive) {
-        borderColor = '#f59e0b';
-        bgColor = '#f59e0b25';
+        borderColor = activeTask?.status === 'WORKING' ? '#22c55e' : '#f59e0b';
+        bgColor = activeTask?.status === 'WORKING' ? '#22c55e25' : '#f59e0b25';
       }
 
       // Pulsing halo for selected / active / hovered stands
       if (isSelected || isTaskActive || isHovered) {
         const pulse = 3 + Math.sin(now / 180) * 1.8;
-        ctx.strokeStyle = isSelected ? '#38bdf8' : isTaskActive ? '#f59e0b' : '#238636';
+        ctx.strokeStyle = isSelected ? '#38bdf8' : activeTask?.status === 'WORKING' ? '#22c55e' : isTaskActive ? '#f59e0b' : '#238636';
         ctx.globalAlpha = 0.3;
         ctx.lineWidth = 1.2;
         ctx.setLineDash([2, 4]);
@@ -618,17 +619,40 @@ export function useCanvasEngine({
         ctx.shadowBlur = 0;
       }
 
-      ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : isTaskActive ? '#fbbf24' : palette.standText;
+      ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : activeTask?.status === 'WORKING' ? '#22c55e' : isTaskActive ? '#fbbf24' : palette.standText;
       ctx.font = '700 14px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(stand.label, pos.x, pos.y - 2);
 
       // Small aircraft glyph below the label
-      ctx.fillStyle = isSelected ? '#38bdf8' : isTaskActive ? '#fbbf24' : '#94a3b8';
+      ctx.fillStyle = isSelected ? '#38bdf8' : activeTask?.status === 'WORKING' ? '#22c55e' : isTaskActive ? '#fbbf24' : '#94a3b8';
       ctx.beginPath();
       ctx.arc(pos.x, pos.y + 8, 2, 0, Math.PI * 2);
       ctx.rect(pos.x - 7, pos.y + 7, 14, 1.8);
       ctx.fill();
+
+      // LIVE PROGRESS BAR WHEN WORKING ON SITE
+      if (activeTask && activeTask.status === 'WORKING') {
+        const pct = Math.min(1.0, (activeTask.elapsedWorkSec || 0) / (activeTask.targetWorkSec || 120));
+        const barW = 54;
+        const barH = 5;
+        const barX = pos.x - barW / 2;
+        const barY = boxY + boxH + 3;
+
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW, barH, 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, Math.max(2, barW * pct), barH, 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#22c55e';
+        ctx.font = '700 9px "JetBrains Mono", monospace';
+        ctx.fillText(`🔧 ${Math.round(pct * 100)}%`, pos.x, barY + barH + 9);
+      }
 
       ctx.restore();
     });

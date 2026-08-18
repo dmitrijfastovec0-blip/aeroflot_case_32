@@ -82,7 +82,7 @@ export function App() {
       if (rankA !== rankB) return rankA - rankB;
       return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
     });
-  const activeTaskForSelectedStand = tasks.find(t => t.standId === selectedStandId);
+  const activeTaskForSelectedStand = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === selectedStandId);
 
   return (
     <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans select-none relative ${

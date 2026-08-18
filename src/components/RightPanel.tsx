@@ -81,7 +81,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
       slaLimitMinutes: SLA_LIMIT,
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
       elapsedWorkSec: 0,
-      targetWorkSec: 120
+      targetWorkSec: 40
     };
 
     if (!withinSla) {

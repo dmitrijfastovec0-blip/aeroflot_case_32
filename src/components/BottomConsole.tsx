@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { OtoTask, Worker, ThemeMode } from '../types/index';
-import { Terminal, Layers, Clock, Trash2, ChevronUp, ChevronDown, Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Terminal, Layers, Clock, Trash2, ChevronUp, ChevronDown, Activity, CheckCircle2 } from 'lucide-react';
 
 interface BottomConsoleProps {
   tasks: OtoTask[];
@@ -20,9 +20,10 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
   theme
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'REGISTRY'>('ACTIVE');
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'COMPLETED' | 'REGISTRY'>('ACTIVE');
 
   const activeTasks = tasks.filter(t => t.status === 'DISPATCHED' || t.status === 'WORKING');
+  const completedTasks = tasks.filter(t => t.status === 'COMPLETED');
 
   const barStyle = theme === 'dark'
     ? 'bg-[#070a0e]/95 border-[#1e2a3a] text-gray-200 backdrop-blur-md shadow-2xl'
@@ -54,10 +55,16 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-1.5 hidden md:flex" onClick={() => { setIsExpanded(true); setActiveTab('REGISTRY'); }}>
-            <Layers className="w-4 h-4 text-sky-400" />
+          <div className="flex items-center space-x-1.5 hidden md:flex" onClick={() => { setIsExpanded(true); setActiveTab('COMPLETED'); }}>
+            <CheckCircle2 className="w-4 h-4 text-sky-400" />
+            <span className="font-bold text-slate-700 dark:text-gray-300">Завершено:</span>
+            <span className="font-bold text-sky-400">{completedTasks.length}</span>
+          </div>
+
+          <div className="flex items-center space-x-1.5 hidden lg:flex" onClick={() => { setIsExpanded(true); setActiveTab('REGISTRY'); }}>
+            <Layers className="w-4 h-4 text-emerald-400" />
             <span className="font-bold text-slate-700 dark:text-gray-300">Смена:</span>
-            <span className="font-bold text-sky-400">{workers.length} чел.</span>
+            <span className="font-bold text-emerald-400">{workers.length} чел.</span>
           </div>
         </div>
 
@@ -85,7 +92,7 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
               }`}
             >
               <Terminal className="w-3.5 h-3.5" />
-              <span>📜 Активные ({activeTasks.length})</span>
+              <span>📜 В работе ({activeTasks.length})</span>
             </button>
 
             <button
@@ -101,15 +108,27 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
             </button>
 
             <button
-              onClick={() => setActiveTab('REGISTRY')}
+              onClick={() => setActiveTab('COMPLETED')}
               className={`flex items-center space-x-1.5 px-3 py-1 font-mono text-xs font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
-                activeTab === 'REGISTRY'
+                activeTab === 'COMPLETED'
                   ? 'bg-slate-200 dark:bg-[#070a0e] border-slate-300 dark:border-[#263345] text-emerald-400'
                   : 'border-transparent text-gray-500 hover:text-gray-300'
               }`}
             >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>✅ Завершённые ({completedTasks.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('REGISTRY')}
+              className={`flex items-center space-x-1.5 px-3 py-1 font-mono text-xs font-bold rounded-t border-t border-x transition-colors cursor-pointer ${
+                activeTab === 'REGISTRY'
+                  ? 'bg-slate-200 dark:bg-[#070a0e] border-slate-300 dark:border-[#263345] text-sky-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
               <Layers className="w-3.5 h-3.5" />
-              <span>📊 Реестр персонала ({workers.length})</span>
+              <span>📊 Смена ({workers.length})</span>
             </button>
           </div>
 
@@ -122,41 +141,51 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
                     <tr>
                       <th className="py-1 px-2">№ Задачи</th>
                       <th className="py-1 px-2">Стоянка</th>
-                      <th className="py-1 px-2">Приоритет</th>
+                      <th className="py-1 px-2">Статус</th>
+                      <th className="py-1 px-2">Прогресс ТО</th>
                       <th className="py-1 px-2">Состав бригады</th>
-                      <th className="py-1 px-2">ETA</th>
                       <th className="py-1 px-2 text-right">Отмена</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {activeTasks.map(t => (
-                      <tr key={t.id} className="border-b border-slate-100 dark:border-[#1e2a3a]/50 hover:bg-slate-100 dark:hover:bg-[#121820]">
-                        <td className="py-1.5 px-2 font-bold text-sky-400 cursor-pointer" onClick={() => onSelectTask(t)}>
-                          {t.id}
-                        </td>
-                        <td className="py-1.5 px-2 font-bold">{t.standLabel}</td>
-                        <td className="py-1.5 px-2">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            t.priority === 'AOG' ? 'bg-red-500/20 text-red-400' : 'bg-sky-500/20 text-sky-400'
-                          }`}>
-                            {t.priority}
-                          </span>
-                        </td>
-                        <td className="py-1.5 px-2 text-gray-400">
-                          {t.crew.map(c => `${c.workerName} (${c.categoryCode})`).join(', ')}
-                        </td>
-                        <td className="py-1.5 px-2 font-bold text-emerald-400">{t.maxEtaMinutes} мин</td>
-                        <td className="py-1.5 px-2 text-right">
-                          <button
-                            onClick={() => onCancelTask(t.id)}
-                            className="p-1 rounded text-red-400 hover:bg-red-500/20 transition-colors"
-                            title="Отменить задачу"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {activeTasks.map(t => {
+                      const pct = Math.min(100, Math.round(((t.elapsedWorkSec || 0) / (t.targetWorkSec || 120)) * 100));
+                      return (
+                        <tr key={t.id} className="border-b border-slate-100 dark:border-[#1e2a3a]/50 hover:bg-slate-100 dark:hover:bg-[#121820]">
+                          <td className="py-1.5 px-2 font-bold text-sky-400 cursor-pointer" onClick={() => onSelectTask(t)}>
+                            {t.id}
+                          </td>
+                          <td className="py-1.5 px-2 font-bold">{t.standLabel}</td>
+                          <td className="py-1.5 px-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              t.status === 'WORKING' ? 'bg-emerald-500/20 text-emerald-400 animate-pulse' : 'bg-sky-500/20 text-sky-400'
+                            }`}>
+                              {t.status === 'WORKING' ? '🔧 Проведение ТО' : '🔵 В пути'}
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-2">
+                            <div className="flex items-center space-x-2">
+                              <div className="w-24 bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                                <div className="bg-emerald-400 h-full transition-all duration-300" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="font-bold text-emerald-400 text-[10px]">{pct}%</span>
+                            </div>
+                          </td>
+                          <td className="py-1.5 px-2 text-gray-400">
+                            {t.crew.map(c => `${c.workerName} (${c.categoryCode})`).join(', ')}
+                          </td>
+                          <td className="py-1.5 px-2 text-right">
+                            <button
+                              onClick={() => onCancelTask(t.id)}
+                              className="p-1 rounded text-red-400 hover:bg-red-500/20 transition-colors"
+                              title="Отменить задачу"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : (
@@ -188,6 +217,41 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
                 </div>
               ) : (
                 <div className="p-4 text-center text-gray-500">Очередь вызовов пуста</div>
+              )
+            )}
+
+            {activeTab === 'COMPLETED' && (
+              completedTasks.length > 0 ? (
+                <table className="w-full text-left border-collapse">
+                  <thead className="border-b border-slate-200 dark:border-[#263345] text-gray-400">
+                    <tr>
+                      <th className="py-1 px-2">№ Задачи</th>
+                      <th className="py-1 px-2">Стоянка / Борт</th>
+                      <th className="py-1 px-2">Дефект / Неисправность</th>
+                      <th className="py-1 px-2">Состав бригады</th>
+                      <th className="py-1 px-2 text-right">Статус</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {completedTasks.map(t => (
+                      <tr key={t.id} className="border-b border-slate-100 dark:border-[#1e2a3a]/50">
+                        <td className="py-1.5 px-2 font-bold text-emerald-400">{t.id}</td>
+                        <td className="py-1.5 px-2 font-bold">{t.standLabel}</td>
+                        <td className="py-1.5 px-2 text-gray-300">{t.defectLabel || t.categoryLabel}</td>
+                        <td className="py-1.5 px-2 text-gray-400">
+                          {t.crew.map(c => `${c.workerName} (${c.categoryCode})`).join(', ')}
+                        </td>
+                        <td className="py-1.5 px-2 text-right">
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
+                            ✅ ТО Завершено
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="p-4 text-center text-gray-500">Завершённых задач пока нет</div>
               )
             )}
 
