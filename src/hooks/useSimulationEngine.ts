@@ -366,7 +366,7 @@ export function useSimulationEngine() {
             // Mark completed (NOT removed) so the console can show start → finish
             const completedTasks = nextTasks.map(t =>
               completedTaskIds.includes(t.id)
-                ? { ...t, status: 'COMPLETED' as const, completedAtSimSec: completedAtSim }
+                ? { ...t, status: 'COMPLETED' as const, completedAtSimSec: completedAtSim, completedAtMs: Date.now() }
                 : t
             );
 

@@ -565,7 +565,8 @@ export function useCanvasEngine({
       const pos = pctToLogical(stand.x, stand.y);
       const isSelected = selectedStandId === stand.id;
       const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
-      const isTaskActive = !!activeTask;
+      const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (now - ((t as any).completedAtMs || now)) < 3000);
+      const isTaskActive = !!activeTask || !!recentCompletedTask;
       const isHovered = hoveredNodeId === stand.id;
 
       ctx.save();
@@ -583,6 +584,9 @@ export function useCanvasEngine({
       } else if (isSelected) {
         borderColor = '#38bdf8';
         bgColor = '#38bdf825';
+      } else if (recentCompletedTask) {
+        borderColor = '#22c55e';
+        bgColor = '#22c55e30';
       } else if (isTaskActive) {
         borderColor = activeTask?.status === 'WORKING' ? '#22c55e' : '#f59e0b';
         bgColor = activeTask?.status === 'WORKING' ? '#22c55e25' : '#f59e0b25';
@@ -591,7 +595,7 @@ export function useCanvasEngine({
       // Pulsing halo for selected / active / hovered stands
       if (isSelected || isTaskActive || isHovered) {
         const pulse = 3 + Math.sin(now / 180) * 1.8;
-        ctx.strokeStyle = isSelected ? '#38bdf8' : activeTask?.status === 'WORKING' ? '#22c55e' : isTaskActive ? '#f59e0b' : '#238636';
+        ctx.strokeStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#f59e0b' : '#238636';
         ctx.globalAlpha = 0.3;
         ctx.lineWidth = 1.2;
         ctx.setLineDash([2, 4]);
@@ -619,39 +623,58 @@ export function useCanvasEngine({
         ctx.shadowBlur = 0;
       }
 
-      ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : activeTask?.status === 'WORKING' ? '#22c55e' : isTaskActive ? '#fbbf24' : palette.standText;
+      ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#fbbf24' : palette.standText;
       ctx.font = '700 14px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(stand.label, pos.x, pos.y - 2);
 
       // Small aircraft glyph below the label
-      ctx.fillStyle = isSelected ? '#38bdf8' : activeTask?.status === 'WORKING' ? '#22c55e' : isTaskActive ? '#fbbf24' : '#94a3b8';
+      ctx.fillStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#fbbf24' : '#94a3b8';
       ctx.beginPath();
       ctx.arc(pos.x, pos.y + 8, 2, 0, Math.PI * 2);
       ctx.rect(pos.x - 7, pos.y + 7, 14, 1.8);
       ctx.fill();
 
-      // LIVE PROGRESS BAR WHEN WORKING ON SITE
+      // LIVE ACCURATE PROGRESS BAR (ONLY ON ACTIVE WORKING TASKS)
       if (activeTask && activeTask.status === 'WORKING') {
-        const pct = Math.min(1.0, (activeTask.elapsedWorkSec || 0) / (activeTask.targetWorkSec || 120));
+        const targetSec = activeTask.targetWorkSec || 40;
+        const elapsedSec = activeTask.elapsedWorkSec || 0;
+        const pctRatio = Math.min(1.0, Math.max(0.0, elapsedSec / targetSec));
+        const pctInt = Math.min(100, Math.floor(pctRatio * 100));
+
         const barW = 54;
         const barH = 5;
         const barX = pos.x - barW / 2;
         const barY = boxY + boxH + 3;
 
+        // Background Bar Track
         ctx.fillStyle = '#0f172a';
         ctx.beginPath();
         ctx.roundRect(barX, barY, barW, barH, 2);
         ctx.fill();
 
+        // Green Progress Fill
         ctx.fillStyle = '#22c55e';
         ctx.beginPath();
-        ctx.roundRect(barX, barY, Math.max(2, barW * pct), barH, 2);
+        ctx.roundRect(barX, barY, Math.max(2, barW * pctRatio), barH, 2);
         ctx.fill();
 
+        // Label: 🔧 XX%
         ctx.fillStyle = '#22c55e';
         ctx.font = '700 9px "JetBrains Mono", monospace';
-        ctx.fillText(`🔧 ${Math.round(pct * 100)}%`, pos.x, barY + barH + 9);
+        ctx.fillText(`🔧 ${pctInt}%`, pos.x, barY + barH + 9);
+      } else if (activeTask && activeTask.status === 'DISPATCHED' && (activeTask.arrivedCount || 0) > 0) {
+        // Gathering Crew Badge
+        const barY = boxY + boxH + 3;
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '700 9px "JetBrains Mono", monospace';
+        ctx.fillText(`⏳ Сбор (${activeTask.arrivedCount}/${activeTask.crew.length})`, pos.x, barY + 9);
+      } else if (recentCompletedTask) {
+        // Brief Completion Badge
+        const barY = boxY + boxH + 3;
+        ctx.fillStyle = '#22c55e';
+        ctx.font = '700 9px "JetBrains Mono", monospace';
+        ctx.fillText(`✅ ТО Выполнено!`, pos.x, barY + 9);
       }
 
       ctx.restore();
