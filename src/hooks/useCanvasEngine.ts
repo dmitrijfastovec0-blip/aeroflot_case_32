@@ -567,7 +567,7 @@ export function useCanvasEngine({
       const pos = pctToLogical(stand.x, stand.y);
       const isSelected = selectedStandId === stand.id;
       const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
-      const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (now - (t as any).completedAtMs) < 1500);
+      const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (now - (t as any).completedAtMs) < 5000);
       const isTaskActive = !!activeTask;
       const isHovered = hoveredNodeId === stand.id;
 

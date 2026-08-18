@@ -105,33 +105,48 @@ export const SVO_NODES = [
 ];
 
 export const SVO_EDGES = [
+  // Северный комплекс (Терминалы B / C)
   { from: 'AK_4', to: 'STAND_101', type: 'ROAD', distance: 200 },
   { from: 'STAND_101', to: 'STAND_102', type: 'ROAD', distance: 220 },
+  { from: 'STAND_101', to: 'STAND_105', type: 'ROAD', distance: 250 },
   { from: 'STAND_102', to: 'WAY_N1', type: 'ROAD', distance: 250 },
   { from: 'WAY_N1', to: 'STAND_105', type: 'ROAD', distance: 300 },
-  { from: 'WAY_N1', to: 'PTO_1', type: 'ROAD', distance: 350 },
+  { from: 'WAY_N1', to: 'PTO_1', type: 'ROAD', distance: 200 },
   { from: 'PTO_1', to: 'WAY_N2', type: 'ROAD', distance: 300 },
   { from: 'WAY_N1', to: 'STAND_B10', type: 'ROAD', distance: 150 },
+  { from: 'STAND_B10', to: 'STAND_B12', type: 'ROAD', distance: 100 },
+  { from: 'STAND_B12', to: 'STAND_B14', type: 'ROAD', distance: 100 },
   { from: 'PTO_1', to: 'STAND_B12', type: 'ROAD', distance: 100 },
   { from: 'PTO_1', to: 'STAND_B14', type: 'ROAD', distance: 120 },
+  { from: 'STAND_B14', to: 'WAY_N2', type: 'ROAD', distance: 120 },
   { from: 'WAY_N2', to: 'WAY_N3', type: 'ROAD', distance: 300 },
   { from: 'WAY_N2', to: 'STAND_C21', type: 'ROAD', distance: 180 },
+  { from: 'STAND_C21', to: 'STAND_C25', type: 'ROAD', distance: 120 },
+  { from: 'STAND_C25', to: 'STAND_C27', type: 'ROAD', distance: 100 },
   { from: 'WAY_N3', to: 'STAND_C25', type: 'ROAD', distance: 150 },
   { from: 'WAY_N3', to: 'STAND_C27', type: 'ROAD', distance: 200 },
 
-  { from: 'WAY_S1', to: 'PTO_2', type: 'ROAD', distance: 250 },
+  // Южный комплекс (Терминалы D / E / F)
+  { from: 'WAY_S1', to: 'PTO_2', type: 'ROAD', distance: 200 },
   { from: 'PTO_2', to: 'WAY_S2', type: 'ROAD', distance: 350 },
   { from: 'WAY_S2', to: 'WAY_S3', type: 'ROAD', distance: 450 },
   { from: 'WAY_S3', to: 'AK_1', type: 'ROAD', distance: 250 },
   { from: 'WAY_S3', to: 'STAND_201', type: 'ROAD', distance: 150 },
+  { from: 'STAND_201', to: 'STAND_204', type: 'ROAD', distance: 180 },
   { from: 'AK_1', to: 'STAND_204', type: 'ROAD', distance: 180 },
   { from: 'WAY_S1', to: 'STAND_D12', type: 'ROAD', distance: 100 },
+  { from: 'STAND_D12', to: 'STAND_D14', type: 'ROAD', distance: 100 },
+  { from: 'STAND_D14', to: 'STAND_D18', type: 'ROAD', distance: 120 },
+  { from: 'STAND_D18', to: 'STAND_D24', type: 'ROAD', distance: 120 },
   { from: 'WAY_S1', to: 'STAND_D14', type: 'ROAD', distance: 120 },
   { from: 'PTO_2', to: 'STAND_D18', type: 'ROAD', distance: 150 },
   { from: 'PTO_2', to: 'STAND_D24', type: 'ROAD', distance: 170 },
+  { from: 'STAND_D24', to: 'WAY_S2', type: 'ROAD', distance: 150 },
   { from: 'WAY_S2', to: 'STAND_E38', type: 'ROAD', distance: 140 },
+  { from: 'STAND_E38', to: 'STAND_F45', type: 'ROAD', distance: 180 },
   { from: 'WAY_S2', to: 'STAND_F45', type: 'ROAD', distance: 160 },
 
+  // Межтерминальный тоннель (Север <-> Юг)
   { from: 'WAY_N2', to: 'WAY_TUNNEL_N', type: 'TUNNEL', distance: 300 },
   { from: 'WAY_TUNNEL_N', to: 'WAY_TUNNEL_S', type: 'TUNNEL', distance: 1200 },
   { from: 'WAY_TUNNEL_S', to: 'PTO_2', type: 'TUNNEL', distance: 250 }
