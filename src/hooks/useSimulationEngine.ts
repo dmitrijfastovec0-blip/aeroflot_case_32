@@ -429,43 +429,21 @@ export function useSimulationEngine() {
             // Reservations are respected, but only while nobody closer is free.
             drainQueueWithFreeWorkers();
 
-            // Freed workers the dispatcher did NOT use: patrollers resume their
-            // local patrol loop, stationary crews head back to their duty post
-            // (or base) so remote stands stay manned.
+            // Freed workers remain FREE_STATIONARY (green) at their current stand position
+            // so they are immediately available for nearby tasks in their sector!
             const idleFinal = new Map<string, Worker>();
             freedWorkers.forEach(w => {
               const cur = workersRef.current.find(x => x.id === w.id);
               if (!cur) return;
               if (cur.status === 'IN_TRANSIT' || cur.status === 'WORKING_ON_SITE') return; // re-dispatched
-              if (cur.isPatrolPreference) {
-                const currentNodeId = getClosestNodeId(cur.x, cur.y);
-                const randomTargetId = pickPatrolTargetId(cur.baseId);
-                const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
-                idleFinal.set(cur.id, {
-                  ...cur,
-                  status: 'FREE_PATROLLING' as WorkerStatus,
-                  currentTaskId: undefined,
-                  pathWaypoints: getWaypointsForNodePath({ x: cur.x, y: cur.y }, nodePath),
-                  pathSpeedPctPerSimSec: undefined,
-                  currentSegmentIndex: 0
-                });
-                return;
-              }
-              const dutyStand = cur.dutyStandId ? SVO_STANDS.find(s => s.id === cur.dutyStandId) : undefined;
-              const targetNode = dutyStand || SVO_FACILITIES.find(f => f.id === cur.baseId);
-              if (targetNode) {
-                const nodePath = findDijkstraShortestPath(getClosestNodeId(cur.x, cur.y), targetNode.id);
-                idleFinal.set(cur.id, {
-                  ...cur,
-                  status: 'RETURNING_TO_BASE' as WorkerStatus,
-                  currentTaskId: undefined,
-                  pathWaypoints: getWaypointsForNodePath({ x: cur.x, y: cur.y }, nodePath),
-                  pathSpeedPctPerSimSec: undefined,
-                  currentSegmentIndex: 0
-                });
-                return;
-              }
-              idleFinal.set(cur.id, { ...cur, status: 'FREE_STATIONARY' as WorkerStatus, currentTaskId: undefined });
+              idleFinal.set(cur.id, {
+                ...cur,
+                status: 'FREE_STATIONARY' as WorkerStatus,
+                currentTaskId: undefined,
+                pathWaypoints: undefined,
+                pathSpeedPctPerSimSec: undefined,
+                currentSegmentIndex: undefined
+              });
             });
             if (idleFinal.size > 0) {
               workersRef.current = workersRef.current.map(w => idleFinal.get(w.id) || w);

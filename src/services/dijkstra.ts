@@ -342,12 +342,15 @@ export function findNearestFreeWorkerOfCategory(
   if (eligibleWorkers.length === 0) return null;
 
   let bestMember: TaskCrewMember | null = null;
-  let minEta = Infinity;
+  let minCost = Infinity;
 
   for (const worker of eligibleWorkers) {
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
-    if (memberCandidate.etaMinutes < minEta) {
-      minEta = memberCandidate.etaMinutes;
+    const isExact = worker.categoryCode === catCode;
+    const cost = memberCandidate.distanceMeters + (isExact ? 0 : 400);
+
+    if (cost < minCost) {
+      minCost = cost;
       bestMember = memberCandidate;
     }
   }
@@ -355,9 +358,7 @@ export function findNearestFreeWorkerOfCategory(
   return bestMember;
 }
 
-// 5.1. Strict nearest free worker of an EXACT category (Cat A is a real
-// qualification here, not "any engineer"). Used by ATA crew auto-assembly,
-// where the regulation demands e.g. "1× Cat A" specifically.
+// 5.1. Strict nearest free worker of an EXACT category
 export function findNearestFreeWorkerOfExactCategory(
   catCode: CategoryCode,
   targetStand: Stand,
@@ -365,15 +366,15 @@ export function findNearestFreeWorkerOfExactCategory(
   alreadySelectedWorkerIds: Set<string>
 ): TaskCrewMember | null {
   let bestMember: TaskCrewMember | null = null;
-  let minEta = Infinity;
+  let minDist = Infinity;
 
   for (const worker of allWorkers) {
     if (alreadySelectedWorkerIds.has(worker.id)) continue;
     if (worker.categoryCode !== catCode) continue;
     if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') continue;
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
-    if (memberCandidate.etaMinutes < minEta) {
-      minEta = memberCandidate.etaMinutes;
+    if (memberCandidate.distanceMeters < minDist) {
+      minDist = memberCandidate.distanceMeters;
       bestMember = memberCandidate;
     }
   }
