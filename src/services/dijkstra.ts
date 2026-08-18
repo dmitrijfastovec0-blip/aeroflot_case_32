@@ -304,9 +304,9 @@ export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCre
   const speedKmH = isVehicle ? (hasTunnel ? weatherSpeeds.tunnelVehicleKmH : weatherSpeeds.vehicleKmH) : weatherSpeeds.pedestrianKmH;
   const speedMetersPerMin = (speedKmH * 1000) / 60;
 
-  const penaltyMinutes = isVehicle ? (hasTunnel ? 2.0 : 1.0) : 0;
+  const penaltyMinutes = isVehicle ? (hasTunnel ? 1.5 : 0.5) : 0;
   const travelMinutes = (partialDistanceMeters + distanceMeters) / speedMetersPerMin;
-  const etaMinutes = Math.max(1.0, Math.round((travelMinutes + penaltyMinutes) * 10) / 10);
+  const etaMinutes = Math.max(0.2, Math.round((travelMinutes + penaltyMinutes) * 10) / 10);
 
   const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
   const baseObj = SVO_FACILITIES.find(f => f.id === worker.baseId);
@@ -344,10 +344,16 @@ export function findNearestFreeWorkerOfCategory(
   let bestMember: TaskCrewMember | null = null;
   let minCost = Infinity;
 
+  const isTargetNorth = targetStand.y < 45;
+
   for (const worker of eligibleWorkers) {
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
     const isExact = worker.categoryCode === catCode;
-    const cost = memberCandidate.distanceMeters + (isExact ? 0 : 400);
+    const isWorkerNorth = worker.y < 45;
+    const isSameComplex = isTargetNorth === isWorkerNorth;
+    
+    // Cost calculation: physical meters + non-exact penalty + cross-complex penalty
+    const cost = memberCandidate.distanceMeters + (isExact ? 0 : 300) + (isSameComplex ? 0 : 450);
 
     if (cost < minCost) {
       minCost = cost;
