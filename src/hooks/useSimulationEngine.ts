@@ -498,6 +498,14 @@ export function useSimulationEngine() {
     return () => cancelAnimationFrame(animFrameId);
   }, [isPaused, simSpeed, drainQueueWithFreeWorkers, showNotification]);
 
+  // Auto-launch initial active simulation on startup so engineers move and perform work immediately!
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      runScenario('standard');
+    }, 400);
+    return () => clearTimeout(timer);
+  }, []);
+
   // -----------------------------------------------------------------
   // USER ACTIONS: SUBMIT TASK, CANCEL TASK, STRESS TEST, RECONFIG
   // -----------------------------------------------------------------
