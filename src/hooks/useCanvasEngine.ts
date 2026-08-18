@@ -565,9 +565,10 @@ export function useCanvasEngine({
     // Aircraft Stands Markers (stable, no layout shift; pulsing ring when relevant)
     SVO_NODES.filter(n => n.type === 'STAND').forEach(stand => {
       const pos = pctToLogical(stand.x, stand.y);
+      const realNow = Date.now();
       const isSelected = selectedStandId === stand.id;
       const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
-      const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (now - (t as any).completedAtMs) < 5000);
+      const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (realNow - (t as any).completedAtMs) < 5000);
       const isTaskActive = !!activeTask;
       const isHovered = hoveredNodeId === stand.id;
 
