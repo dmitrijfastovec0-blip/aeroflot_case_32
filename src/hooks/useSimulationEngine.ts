@@ -306,6 +306,9 @@ export function useSimulationEngine() {
           const completedTaskIds: string[] = [];
 
           const nextTasks = tasksRef.current.map(task => {
+            if (task.status === 'COMPLETED') {
+              return task;
+            }
             if (task.status === 'QUEUED') {
               return {
                 ...task,
