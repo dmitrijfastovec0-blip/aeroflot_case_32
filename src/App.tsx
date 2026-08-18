@@ -80,16 +80,21 @@ export function App() {
     }
   };
 
-  const queuedTasks = tasks
-    .filter(t => t.status === 'QUEUED')
-    .sort((a, b) => {
-      const getRank = (p: string) => p === 'AOG' ? 1 : p === 'URGENT' ? 2 : 3;
-      const rankA = getRank(a.priority);
-      const rankB = getRank(b.priority);
-      if (rankA !== rankB) return rankA - rankB;
-      return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
-    });
-  const activeTaskForSelectedStand = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === selectedStandId);
+  const queuedTasks = React.useMemo(() => {
+    return tasks
+      .filter(t => t.status === 'QUEUED')
+      .sort((a, b) => {
+        const getRank = (p: string) => p === 'AOG' ? 1 : p === 'URGENT' ? 2 : 3;
+        const rankA = getRank(a.priority);
+        const rankB = getRank(b.priority);
+        if (rankA !== rankB) return rankA - rankB;
+        return (b.elapsedQueueSec || 0) - (a.elapsedQueueSec || 0);
+      });
+  }, [tasks]);
+
+  const activeTaskForSelectedStand = React.useMemo(() => {
+    return tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === selectedStandId);
+  }, [tasks, selectedStandId]);
 
   return (
     <div className={`h-screen w-screen overflow-hidden flex flex-col font-sans select-none relative ${

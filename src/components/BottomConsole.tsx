@@ -11,7 +11,7 @@ interface BottomConsoleProps {
   theme: ThemeMode;
 }
 
-export const BottomConsole: React.FC<BottomConsoleProps> = ({
+export const BottomConsole = React.memo<BottomConsoleProps>(({
   tasks,
   queuedTasks,
   workers,
@@ -276,6 +276,6 @@ export const BottomConsole: React.FC<BottomConsoleProps> = ({
       )}
     </footer>
   );
-};
+});
 
 export default BottomConsole;

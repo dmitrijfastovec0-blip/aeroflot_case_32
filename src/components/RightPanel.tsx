@@ -18,7 +18,7 @@ interface RightPanelProps {
 
 const SLA_LIMIT = 15.0;
 
-export const RightPanel: React.FC<RightPanelProps> = ({
+export const RightPanel = React.memo<RightPanelProps>(({
   selectedStandId,
   onSelectStand,
   workers,
@@ -269,6 +269,6 @@ export const RightPanel: React.FC<RightPanelProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default RightPanel;
