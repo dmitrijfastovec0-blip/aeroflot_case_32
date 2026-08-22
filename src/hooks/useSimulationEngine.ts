@@ -796,6 +796,8 @@ export function useSimulationEngine() {
     setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
     simClockRef.current = 0;
     setSimClockSec(0);
+    isStressTestActiveRef.current = false;
+    setIsStressTestActive(false);
     resetWeatherOverrides();
     if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
   }, [showNotification]);
@@ -847,6 +849,7 @@ export function useSimulationEngine() {
     standard: 'Стандартный день',
     series: 'Серия вызовов',
     peak: 'Час пик (10 бортов)',
+    hellish: '🔥 Стресс-тест (3–5)',
     aog: 'Срочный AOG-перехват',
     deficit: 'Кадровый дефицит',
     snow: 'Снегопад',
@@ -857,6 +860,17 @@ export function useSimulationEngine() {
     archiveCurrentTasks();
     setActiveScenarioName(SCENARIO_NAMES[scenarioId] || 'Оперативный план');
     switch (scenarioId) {
+      case 'hellish': {
+        isStressTestActiveRef.current = true;
+        setIsStressTestActive(true);
+
+        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'ATA32');
+        enqueueAutoTask('STAND_C25', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_D18', 'B1', 'ROUTINE', 'ATA72');
+        enqueueAutoTask('STAND_F45', 'A', 'URGENT', 'ATA49');
+        showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает 3–5 задач в очереди!`);
+        break;
+      }
       case 'peak':
         triggerStressTest();
         break;
