@@ -352,8 +352,8 @@ export function findNearestFreeWorkerOfCategory(
     const isWorkerNorth = worker.y < 45;
     const isSameComplex = isTargetNorth === isWorkerNorth;
     
-    // Cost calculation: physical meters + non-exact penalty + cross-complex penalty
-    const cost = memberCandidate.distanceMeters + (isExact ? 0 : 300) + (isSameComplex ? 0 : 450);
+    // Cost calculation: ETA in minutes + non-exact penalty (5 min) + cross-complex penalty (2 min)
+    const cost = memberCandidate.etaMinutes + (isExact ? 0 : 5.0) + (isSameComplex ? 0 : 2.0);
 
     if (cost < minCost) {
       minCost = cost;
@@ -364,7 +364,7 @@ export function findNearestFreeWorkerOfCategory(
   return bestMember;
 }
 
-// 5.1. Strict nearest free worker of an EXACT category
+// 5.1. Strict nearest free worker of an EXACT category (ranked by ETA time in minutes)
 export function findNearestFreeWorkerOfExactCategory(
   catCode: CategoryCode,
   targetStand: Stand,
@@ -372,15 +372,15 @@ export function findNearestFreeWorkerOfExactCategory(
   alreadySelectedWorkerIds: Set<string>
 ): TaskCrewMember | null {
   let bestMember: TaskCrewMember | null = null;
-  let minDist = Infinity;
+  let minEta = Infinity;
 
   for (const worker of allWorkers) {
     if (alreadySelectedWorkerIds.has(worker.id)) continue;
     if (worker.categoryCode !== catCode) continue;
     if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') continue;
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
-    if (memberCandidate.distanceMeters < minDist) {
-      minDist = memberCandidate.distanceMeters;
+    if (memberCandidate.etaMinutes < minEta) {
+      minEta = memberCandidate.etaMinutes;
       bestMember = memberCandidate;
     }
   }

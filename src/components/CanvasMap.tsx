@@ -15,6 +15,7 @@ interface CanvasMapProps {
   trackedWorkerId?: string | null;
   onStopTracking?: () => void;
   onOpenRadialMenu?: (stand: any, x: number, y: number) => void;
+  onSelectWorker?: (worker: Worker) => void;
 }
 
 export const CanvasMap: React.FC<CanvasMapProps> = (props) => {

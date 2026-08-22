@@ -219,6 +219,7 @@ interface UseCanvasEngineProps {
   showMapSublayer: boolean;
   trackedWorkerId?: string | null;
   onStopTracking?: () => void;
+  onSelectWorker?: (worker: Worker) => void;
 }
 
 export function useCanvasEngine({
@@ -232,7 +233,8 @@ export function useCanvasEngine({
   onDevPointClick,
   showMapSublayer,
   trackedWorkerId,
-  onStopTracking
+  onStopTracking,
+  onSelectWorker
 }: UseCanvasEngineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1089,6 +1091,9 @@ export function useCanvasEngine({
   const handleMouseUp = () => setIsDragging(false);
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Hide hover tooltip popover card when clicking anywhere on canvas
+    setHoverTooltip(null);
+
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const rawX = e.clientX - rect.left;
@@ -1106,6 +1111,22 @@ export function useCanvasEngine({
       return;
     }
 
+    // 1. Worker Click Hit Test
+    const clusterIdx = buildClusterIndexes(workersRef.current);
+    for (const worker of workersRef.current) {
+      const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
+      const renderPos = workerClusterPos(worker, hash, clusterIdx);
+      const pos = pctToLogical(renderPos.x, renderPos.y);
+
+      if (Math.hypot(lx - pos.x, ly - pos.y) <= 15) {
+        if (onSelectWorker) {
+          onSelectWorker(worker);
+        }
+        return;
+      }
+    }
+
+    // 2. Stand Click Hit Test
     for (const stand of SVO_NODES.filter(n => n.type === 'STAND')) {
       const pos = pctToLogical(stand.x, stand.y);
       if (Math.abs(lx - pos.x) <= 28 && Math.abs(ly - pos.y) <= 18) {

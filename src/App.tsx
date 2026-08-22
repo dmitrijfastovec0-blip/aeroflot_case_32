@@ -298,6 +298,7 @@ export function App() {
           showMapSublayer={true}
           trackedWorkerId={trackedWorkerId}
           onStopTracking={() => setTrackedWorkerId(null)}
+          onSelectWorker={(w) => setEditingWorker(w)}
         />
 
         {/* Floating Collapsible Right Task Drawer */}
