@@ -1001,6 +1001,7 @@ export function useCanvasEngine({
       if (Math.hypot(lx - pos.x, ly - pos.y) <= 12) {
         const getStatusRu = (st: string) => {
           if (st === 'FREE_STATIONARY' || st === 'FREE_PATROLLING') return '🟢 Свободен (Дежурство)';
+          if (st === 'BOARDING_VEHICLE') return '🟡 Погрузка инструмента и посадка';
           if (st === 'IN_TRANSIT') return '🚘 В пути на вызов';
           if (st === 'WORKING_ON_SITE') return '🔧 На объекте (Ремонт)';
           return st;

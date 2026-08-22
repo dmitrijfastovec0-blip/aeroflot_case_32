@@ -181,8 +181,24 @@ export function useSimulationEngine() {
         // 0. ADVANCE SIMULATION CLOCK (single source of task timestamps)
         simClockRef.current += dtSec * simSpeed;
 
-        // 1. UPDATE WORKER POSITIONS (LERP)
+        // 1. UPDATE WORKER POSITIONS & STATUS (LERP + VEHICLE KINEMATICS)
         const nextWorkers = workersRef.current.map((worker): Worker => {
+          // 1a. Vehicle Boarding & Equipment Preparation Phase (30s sim time for APRON_VEHICLE)
+          if (worker.status === 'BOARDING_VEHICLE') {
+            const remaining = (worker.boardingSecRemaining ?? 30) - dtSec * simSpeed;
+            if (remaining <= 0) {
+              return {
+                ...worker,
+                status: 'IN_TRANSIT',
+                boardingSecRemaining: undefined
+              };
+            }
+            return {
+              ...worker,
+              boardingSecRemaining: remaining
+            };
+          }
+
           if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE') {
             // AUTO-ARRIVAL SAFETY GUARANTEE: If waypoints missing or <= 1, instantly arrived!
             if (!worker.pathWaypoints || worker.pathWaypoints.length <= 1) {
@@ -238,15 +254,26 @@ export function useSimulationEngine() {
               return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
             }
 
-            // Movement step: dispatched workers pace to arrive exactly at the displayed ETA.
-            // Return-to-base workers (no ETA) fall back to real-world speeds.
+            // Realistic Vehicle Acceleration & Braking Distance Kinematics
             const etaSpeedPct = worker.pathSpeedPctPerSimSec;
             const ws = getWeatherSpeeds();
             const fallbackSpeedKmH = worker.vehicle === 'APRON_VEHICLE' ? ws.vehicleKmH : ws.pedestrianKmH;
+            
+            let accelFactor = 1.0;
+            if (worker.vehicle === 'APRON_VEHICLE') {
+              const isFirstSeg = currIdx === 0;
+              const isFinalSeg = currIdx >= worker.pathWaypoints.length - 2;
+              if (isFirstSeg && distPct > 2.0) {
+                accelFactor = 0.65; // Acceleration from stop
+              } else if (isFinalSeg && distPct < 3.5) {
+                accelFactor = 0.55; // Deceleration braking distance near stand
+              }
+            }
+
             const pctPerSec = (etaSpeedPct != null
               ? etaSpeedPct
               : ((fallbackSpeedKmH * 1000 / 3600) / 4000) * 100
-            ) * simSpeed;
+            ) * accelFactor * simSpeed;
             const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 

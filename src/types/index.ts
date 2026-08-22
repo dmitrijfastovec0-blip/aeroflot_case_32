@@ -40,6 +40,7 @@ export interface Stand {
 export type WorkerStatus =
   | 'FREE_STATIONARY'    // 🟢 Свободен на базе
   | 'FREE_PATROLLING'     // 🟢 Свободен, патрулирует перрон
+  | 'BOARDING_VEHICLE'    // 🟡 Погрузка инструмента и посадка
   | 'IN_TRANSIT'         // 🔵 В пути на вызов
   | 'WORKING_ON_SITE'    // 🔴 Дошел до борта и проводит ТО
   | 'RETURNING_TO_BASE';  // 🟡 Возврат на базу
@@ -60,6 +61,7 @@ export interface Worker {
   pathWaypoints?: { x: number; y: number }[];
   pathSpeedPctPerSimSec?: number;
   currentSegmentIndex?: number;
+  boardingSecRemaining?: number; // 🟡 Погрузка инструмента и посадка (в сим-секундах)
   dutyStandId?: string;
   isPatrolPreference?: boolean;
   dispatchedCount?: number;
