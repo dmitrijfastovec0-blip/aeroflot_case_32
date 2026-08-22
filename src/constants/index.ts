@@ -63,8 +63,10 @@ export const SVO_BUILDINGS = [
 
 export const SVO_FACILITIES = [
   { id: 'PTO_1', name: 'ПТО-1 СТК (B/C)', code: 'ПТО-1', x: 32, y: 23, type: 'DUTY_STATION' },
+  { id: 'PARKING_1', name: 'Автопарк спецтехники ПТО-1', code: '🅿️ АВТОПАРК-1', x: 34, y: 19, type: 'PARKING' },
   { id: 'AK_4', name: 'АК-4 «Аэрофлот Техникс»', code: 'АК-4', x: 18, y: 12, type: 'HANGAR' },
   { id: 'PTO_2', name: 'ПТО-2 ЮТК (D/E/F)', code: 'ПТО-2', x: 50, y: 68, type: 'DUTY_STATION' },
+  { id: 'PARKING_2', name: 'Автопарк спецтехники ПТО-2', code: '🅿️ АВТОПАРК-2', x: 53, y: 71, type: 'PARKING' },
   { id: 'AK_1', name: 'АК-1/2 Главный Техцентр', code: 'АК-1', x: 82, y: 88, type: 'HANGAR' }
 ];
 

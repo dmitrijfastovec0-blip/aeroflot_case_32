@@ -383,7 +383,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
                               <Clock className="w-3 h-3 text-sky-400" /> Временные метки:
                             </div>
                             {(() => {
-                              const { startTime, etaText, endTimeText } = getTaskTimestamps(task);
+                              const { startTime, etaText } = getTaskTimestamps(task);
                               return (
                                 <div className="space-y-1 font-semibold pt-1">
                                   <div className="flex justify-between">
@@ -393,10 +393,6 @@ export const RightPanel = React.memo<RightPanelProps>(({
                                   <div className="flex justify-between">
                                     <span className={isCompleted ? 'text-emerald-100' : 'text-gray-400'}>🚘 В пути (ETA):</span>
                                     <span className="font-bold text-sky-300">{etaText}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className={isCompleted ? 'text-emerald-100' : 'text-gray-400'}>🏁 Итоговое время:</span>
-                                    <span className="font-bold text-amber-300">{endTimeText}</span>
                                   </div>
                                 </div>
                               );

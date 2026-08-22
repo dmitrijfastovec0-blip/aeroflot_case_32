@@ -517,10 +517,63 @@ export function useCanvasEngine({
       ctx.restore();
     });
 
-    // Aeroflot Technics Bases (Amber Gold Badges)
+    // Aeroflot Technics Bases & Physical Apron Parking Lots (Amber Gold Badges & Tarmac Bays)
     SVO_FACILITIES.forEach(fac => {
       const pos = pctToLogical(fac.x, fac.y);
       const isHovered = hoveredNodeId === fac.id;
+
+      if (fac.type === 'PARKING') {
+        // Draw Asphalt Parking Bay Zone
+        ctx.save();
+        const pW = 60;
+        const pH = 26;
+        const pX = pos.x - pW / 2;
+        const pY = pos.y - pH / 2;
+
+        // Parking Tarmac Surface with dashed yellow parking perimeter
+        ctx.fillStyle = theme === 'dark' ? '#0b131f' : '#e2e8f0';
+        ctx.strokeStyle = isHovered ? '#38bdf8' : '#f59e0b';
+        ctx.lineWidth = isHovered ? 1.8 : 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.roundRect(pX, pY, pW, pH, 5);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Label: 🅿️ АВТОПАРК-1 / 🅿️ АВТОПАРК-2
+        ctx.fillStyle = isHovered ? '#38bdf8' : '#f59e0b';
+        ctx.font = '800 8.5px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(fac.code, pos.x, pos.y - pH / 2 - 6);
+
+        // Draw Parked Special Vehicles lined up inside the bays
+        for (let i = 0; i < 3; i++) {
+          const carX = pX + 10 + i * 20;
+          const carY = pos.y;
+          ctx.fillStyle = theme === 'dark' ? '#1e293b' : '#ffffff';
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(carX - 7, carY - 5, 14, 10, 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Windshield
+          ctx.fillStyle = '#38bdf860';
+          ctx.fillRect(carX + 2, carY - 3, 3, 6);
+
+          // Flashing Amber Beacon
+          ctx.fillStyle = '#f59e0b';
+          ctx.beginPath();
+          ctx.arc(carX - 2, carY, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+        return;
+      }
 
       ctx.save();
       const size = 28;
