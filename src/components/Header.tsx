@@ -28,6 +28,7 @@ const SCENARIOS = [
   { id: 'standard', label: 'Базовый день', icon: <Rocket className="w-4 h-4 text-emerald-400" /> },
   { id: 'series', label: 'Серия вызовов', icon: <ListChecks className="w-4 h-4 text-sky-400" /> },
   { id: 'peak', label: 'Пиковая нагрузка', icon: <Zap className="w-4 h-4 text-amber-400" /> },
+  { id: 'hellish', label: '🔥 Адский пик (66 вызовов)', icon: <Zap className="w-4 h-4 text-rose-500 animate-pulse" /> },
   { id: 'aog', label: 'AOG Перехват', icon: <Siren className="w-4 h-4 text-rose-400" /> },
   { id: 'deficit', label: 'Кадровый дефицит', icon: <AlertOctagon className="w-4 h-4 text-orange-400" /> },
   { id: 'reset', label: 'Смена ПТО', icon: <RefreshCcw className="w-4 h-4 text-red-400" /> }
@@ -156,6 +157,16 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
         </div>
+
+        {/* Quick Action Button for Hellish Scenario */}
+        <button
+          onClick={() => onRunScenario('hellish')}
+          className="flex items-center space-x-1.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-extrabold text-rose-400 transition-all cursor-pointer shadow-sm animate-pulse"
+          title="Запустить 66 одновременных вызовов по всем стоянкам SVO"
+        >
+          <Zap className="w-4 h-4 text-rose-500" />
+          <span>🔥 66 ВЫЗОВОВ</span>
+        </button>
       </div>
 
       {/* 3. RIGHT METRICS & SETTINGS */}
