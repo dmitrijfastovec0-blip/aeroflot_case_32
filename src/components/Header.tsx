@@ -162,10 +162,10 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onRunScenario('hellish')}
           className="flex items-center space-x-1.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-extrabold text-rose-400 transition-all cursor-pointer shadow-sm animate-pulse"
-          title="Запустить 66 одновременных вызовов по всем стоянкам SVO"
+          title="Запустить постепенный симулятор нагрузки (поддержание 3–5 задач в очереди)"
         >
           <Zap className="w-4 h-4 text-rose-500" />
-          <span>🔥 66 ВЫЗОВОВ</span>
+          <span>🔥 СТРЕСС-ТЕСТ (3–5)</span>
         </button>
       </div>
 

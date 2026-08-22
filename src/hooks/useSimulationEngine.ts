@@ -91,6 +91,11 @@ export function useSimulationEngine() {
   const [simClockSec, setSimClockSec] = useState(0);
   const simClockRef = useRef(0);
 
+  // Continuous Dynamic Stress Generator Refs
+  const isStressTestActiveRef = useRef<boolean>(false);
+  const [isStressTestActive, setIsStressTestActive] = useState<boolean>(false);
+  const lastStressSpawnSimSecRef = useRef<number>(0);
+
   // Current shift composition (tracked for "reset to optimal bases" presets)
   const shiftCountsRef = useRef({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
@@ -180,6 +185,25 @@ export function useSimulationEngine() {
       if (!isPaused) {
         // 0. ADVANCE SIMULATION CLOCK (single source of task timestamps)
         simClockRef.current += dtSec * simSpeed;
+
+        // 0b. DYNAMIC CONTINUOUS STRESS-TEST GENERATOR (Maintains 3-5 tasks in queue)
+        if (isStressTestActiveRef.current && simClockRef.current - lastStressSpawnSimSecRef.current >= 3.5) {
+          const queuedTasks = tasksRef.current.filter(t => t.status === 'QUEUED');
+          if (queuedTasks.length < 4) {
+            lastStressSpawnSimSecRef.current = simClockRef.current;
+            const activeStandIds = new Set(tasksRef.current.filter(t => t.status !== 'COMPLETED').map(t => t.standId));
+            const availableStands = SVO_STANDS.filter(s => !activeStandIds.has(s.id));
+            if (availableStands.length > 0) {
+              const stand = availableStands[Math.floor(Math.random() * availableStands.length)];
+              const defect = DEFECT_TYPES[Math.floor(Math.random() * DEFECT_TYPES.length)];
+              const pList: TaskPriority[] = ['AOG', 'URGENT', 'ROUTINE', 'ROUTINE'];
+              const priority = pList[Math.floor(Math.random() * pList.length)];
+              const cList: CategoryCode[] = ['B1', 'B2', 'A'];
+              const cat = cList[Math.floor(Math.random() * cList.length)];
+              enqueueAutoTask(stand.id, cat, priority, defect.id);
+            }
+          }
+        }
 
         // 1. UPDATE WORKER POSITIONS & STATUS (LERP + VEHICLE KINEMATICS)
         const nextWorkers = workersRef.current.map((worker): Worker => {
@@ -934,18 +958,15 @@ export function useSimulationEngine() {
         break;
       }
       case 'hellish': {
-        // Hellish scenario: 66 simultaneous calls across all SVO stands!
-        const defects = ['ATA24', 'ATA32', 'ATA34', 'ATA49', 'ATA72'];
-        const categories: CategoryCode[] = ['B1', 'B2', 'A'];
+        archiveCurrentTasks();
+        isStressTestActiveRef.current = true;
+        setIsStressTestActive(true);
 
-        for (let i = 0; i < 66; i++) {
-          const stand = SVO_STANDS[i % SVO_STANDS.length];
-          const defect = defects[i % defects.length];
-          const priority: TaskPriority = i < 10 ? 'AOG' : i < 30 ? 'URGENT' : 'ROUTINE';
-          const cat = categories[i % categories.length];
-          enqueueAutoTask(stand.id, cat, priority, defect);
-        }
-        showNotification(`🔥 АДСКИЙ СЦЕНАРИЙ (66 ВЫЗОВОВ): 10 AOG, 20 URGENT, 36 ROUTINE по всем стоянкам SVO!`);
+        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'ATA32');
+        enqueueAutoTask('STAND_C25', 'B2', 'URGENT', 'ATA24');
+        enqueueAutoTask('STAND_D18', 'B1', 'ROUTINE', 'ATA72');
+        enqueueAutoTask('STAND_F45', 'A', 'URGENT', 'ATA49');
+        showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает 3–5 задач в очереди!`);
         break;
       }
       case 'reset': {
