@@ -46,22 +46,15 @@ export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
     const updates: Partial<Worker> = {
       categoryCode,
       category: categoryMap[categoryCode],
-      baseId,
-      vehicle
+      baseId
     };
 
-    // If custom stand selected for manual relocation
+    // ONLY update x,y position IF a stand relocation is explicitly selected by user
     if (targetStandId) {
       const stand = SVO_STANDS.find(s => s.id === targetStandId);
       if (stand) {
         updates.x = stand.x;
         updates.y = stand.y;
-      }
-    } else {
-      const fac = SVO_FACILITIES.find(f => f.id === baseId);
-      if (fac) {
-        updates.x = fac.x;
-        updates.y = fac.y;
       }
     }
 
@@ -135,41 +128,6 @@ export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
               <option value="PTO_NORTH">ПТО-1 (Север B/C)</option>
               <option value="PTO_SOUTH">ПТО-2 (Юг D/E/F)</option>
             </select>
-          </div>
-
-          {/* Transport Mode */}
-          <div>
-            <label className="text-xs font-bold text-gray-400 flex items-center gap-1.5 mb-1.5">
-              <Truck className="w-4 h-4 text-amber-400" /> Способ перемещения:
-            </label>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => setVehicle('APRON_VEHICLE')}
-                className={`p-2.5 rounded-xl border text-center font-bold transition-all cursor-pointer ${
-                  vehicle === 'APRON_VEHICLE'
-                    ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                    : theme === 'dark'
-                    ? 'bg-[#121820] border-[#263345] text-gray-400'
-                    : 'bg-slate-100 border-slate-300 text-slate-700'
-                }`}
-              >
-                🚘 Спецавто (25 км/ч)
-              </button>
-              <button
-                type="button"
-                onClick={() => setVehicle('PEDESTRIAN')}
-                className={`p-2.5 rounded-xl border text-center font-bold transition-all cursor-pointer ${
-                  vehicle === 'PEDESTRIAN'
-                    ? 'bg-sky-500/20 border-sky-500 text-sky-300'
-                    : theme === 'dark'
-                    ? 'bg-[#121820] border-[#263345] text-gray-400'
-                    : 'bg-slate-100 border-slate-300 text-slate-700'
-                }`}
-              >
-                🚶 Пешком (4.5 км/ч)
-              </button>
-            </div>
           </div>
 
           {/* Relocate to Stand */}
