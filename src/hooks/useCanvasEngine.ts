@@ -793,27 +793,122 @@ export function useCanvasEngine({
         ctx.restore();
       }
 
-      ctx.fillStyle = statusColor;
-      ctx.strokeStyle = theme === 'dark' ? '#070a0e' : '#ffffff';
-      ctx.lineWidth = 1.5;
-      
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 11.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      // ----------------------------------------------------------------------
+      // PHYSICAL VEHICLE & UNIT CANVAS GRAPHICS RENDERER
+      // ----------------------------------------------------------------------
+      const isVehicleUnit = worker.vehicle === 'APRON_VEHICLE' && (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'BOARDING_VEHICLE');
 
-      ctx.shadowBlur = 0;
+      if (isVehicleUnit) {
+        // --- 1. PHYSICAL SPECIAL VEHICLE (СПЕЦАВТОМОБИЛЬ ОТО SVO) ---
+        ctx.save();
+        const vW = 38;
+        const vH = 20;
+        const vX = pos.x - vW / 2;
+        const vY = pos.y - vH / 2;
 
-      ctx.fillStyle = palette.bg;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 9.0, 0, Math.PI * 2);
-      ctx.fill();
+        // Vehicle Wheels (4 tyres at corners)
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1;
+        // Top-left tyre
+        ctx.fillRect(vX + 3, vY - 3, 7, 4);
+        // Top-right tyre
+        ctx.fillRect(vX + vW - 10, vY - 3, 7, 4);
+        // Bottom-left tyre
+        ctx.fillRect(vX + 3, vY + vH - 1, 7, 4);
+        // Bottom-right tyre
+        ctx.fillRect(vX + vW - 10, vY + vH - 1, 7, 4);
 
-      ctx.fillStyle = statusColor;
-      ctx.font = '800 10px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(worker.categoryCode, pos.x, pos.y);
+        // Soft vehicle glow halo
+        ctx.shadowColor = statusColor;
+        ctx.shadowBlur = 12;
+
+        // Vehicle Body Chassis
+        ctx.fillStyle = theme === 'dark' ? '#0b131f' : '#ffffff';
+        ctx.strokeStyle = statusColor;
+        ctx.lineWidth = isAogEmergency ? 2.5 : 1.8;
+        ctx.beginPath();
+        ctx.roundRect(vX, vY, vW, vH, 5);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Front Windshield
+        ctx.fillStyle = '#38bdf840';
+        ctx.strokeStyle = '#38bdf888';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(vX + vW - 11, vY + 3, 7, vH - 6, 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Flashing Amber/Rose Roof Beacon (Проблесковый маячок спецтехники)
+        const beaconColor = isAogEmergency ? '#f43f5e' : '#f59e0b';
+        const beaconPulse = Math.sin(now / 80) * 0.5 + 0.5;
+        ctx.fillStyle = beaconColor;
+        ctx.shadowColor = beaconColor;
+        ctx.shadowBlur = 10 * beaconPulse;
+        ctx.beginPath();
+        ctx.arc(pos.x - 3, pos.y, 3 + beaconPulse * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Vehicle Identification Text: 🚘 B1 / 🚘 B2
+        ctx.fillStyle = statusColor;
+        ctx.font = '800 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`🚘 ${worker.categoryCode}`, pos.x - 3, pos.y);
+
+        // Top Floating Vehicle Plate Label
+        const vehIndex = (hash % 12) + 1;
+        const vehLabel = `АВТО-${vehIndex < 10 ? '0' : ''}${vehIndex}`;
+
+        if (worker.status === 'BOARDING_VEHICLE') {
+          // Boarding prep badge
+          const prepSec = Math.ceil(worker.boardingSecRemaining || 30);
+          ctx.fillStyle = '#f59e0b';
+          ctx.font = '800 9px "Montserrat Alternates", sans-serif';
+          ctx.fillText(`📦 ПОГРУЗКА ИНСТРУМЕНТА (${prepSec}с)`, pos.x, vY - 8);
+        } else {
+          ctx.fillStyle = statusColor;
+          ctx.font = '700 9px "JetBrains Mono", monospace';
+          ctx.fillText(`🚘 ${vehLabel} (${worker.categoryCode})`, pos.x, vY - 8);
+        }
+
+        ctx.restore();
+      } else {
+        // --- 2. REGULAR ENGINEER UNIT / PEDESTRIAN ---
+        if (worker.vehicle === 'PEDESTRIAN' && (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE')) {
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = '700 9px "Montserrat Alternates", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`🚶 ПЕШКОМ`, pos.x, pos.y - 15);
+        }
+
+        ctx.fillStyle = statusColor;
+        ctx.strokeStyle = theme === 'dark' ? '#070a0e' : '#ffffff';
+        ctx.lineWidth = 1.5;
+        
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 11.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = palette.bg;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 9.0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = statusColor;
+        ctx.font = '800 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(worker.categoryCode, pos.x, pos.y);
+      }
 
       ctx.restore();
     });
