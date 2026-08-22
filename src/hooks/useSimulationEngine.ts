@@ -36,7 +36,12 @@ export function useSimulationEngine() {
     generateShiftWorkersWithCustomCounts(22, 12, 6, 20)
   );
   const [tasks, setTasks] = useState<OtoTask[]>([]);
+  const allHistoricalTasksRef = useRef<OtoTask[]>([]);
+  const [allHistoricalTasks, setAllHistoricalTasks] = useState<OtoTask[]>([]);
   const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
+
+  const scenarioCompletedFlagRef = useRef<boolean>(false);
+  const autoPauseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
     setNotificationBanner(msg);
@@ -48,15 +53,18 @@ export function useSimulationEngine() {
 
   const setWeatherMode = useCallback((mode: WeatherMode) => {
     setWeatherModeState(mode);
-    if (mode === 'SNOW') {
-      applyWeatherOverrides(3.5, 12.0);
-      showNotification('🌨️ Включён режим «Снегопад»: пешком 3.5 км/ч, авто 12 км/ч.');
-    } else if (mode === 'ICE') {
-      applyWeatherOverrides(3.0, 10.0);
-      showNotification('🧊 Включён режим «Гололёд»: скорость спецавто 10 км/ч.');
+    if (mode === 'RAIN') {
+      applyWeatherOverrides(4.2, 18.0);
+      showNotification('Осадки / Ливень: мокрый перрон, скорость спецавто 18 км/ч.');
+    } else if (mode === 'BLIZZARD') {
+      applyWeatherOverrides(3.2, 12.0);
+      showNotification('Метель SVO: активная снегоочистка перрона, скорость спецавто 12 км/ч.');
+    } else if (mode === 'NIGHT') {
+      applyWeatherOverrides(4.5, 22.0);
+      showNotification('Ночная смена: включено габаритное освещение и фары спецтехники.');
     } else {
       resetWeatherOverrides();
-      showNotification(`☀️ Включён режим «${mode === 'NIGHT' ? 'Ночная смена' : 'Штатный (Ясно)'}».`);
+      showNotification('Штатный режим (Ясно): идеальные сухие условия, спецавто 25 км/ч.');
     }
   }, [showNotification]);
   // Simulation Controls
@@ -475,7 +483,26 @@ export function useSimulationEngine() {
           }
         }
         
-        // 4. THROTTLE UI UPDATES to ~10 FPS (100ms) to prevent React blocking the main thread
+        // 4. AUTO-PAUSE AFTER 7 SECONDS UPON ALL SCENARIO TASKS COMPLETION
+        if (tasksRef.current.length > 0 && tasksRef.current.every(t => t.status === 'COMPLETED')) {
+          if (!scenarioCompletedFlagRef.current) {
+            scenarioCompletedFlagRef.current = true;
+            showNotification('🏁 Все вызовы сценария завершены! Включится Автопауза через 7 секунд...');
+            if (autoPauseTimeoutRef.current) clearTimeout(autoPauseTimeoutRef.current);
+            autoPauseTimeoutRef.current = setTimeout(() => {
+              setIsPaused(true);
+              showNotification('⏸️ Сценарий завершён (Автопауза через 7 сек).');
+            }, 7000);
+          }
+        } else if (tasksRef.current.some(t => t.status !== 'COMPLETED')) {
+          scenarioCompletedFlagRef.current = false;
+          if (autoPauseTimeoutRef.current) {
+            clearTimeout(autoPauseTimeoutRef.current);
+            autoPauseTimeoutRef.current = null;
+          }
+        }
+
+        // 5. THROTTLE UI UPDATES to ~10 FPS (100ms) to prevent React blocking the main thread
         if (now - lastRenderTimeRef.current > 100) {
           setSimClockSec(simClockRef.current);
           setWorkers([...workersRef.current]);
@@ -519,6 +546,7 @@ export function useSimulationEngine() {
     const nextTasks = [queuedTask, ...tasksRef.current];
     tasksRef.current = nextTasks;
     setTasks(nextTasks);
+    syncHistoricalTasks(nextTasks);
 
     drainQueueWithFreeWorkers();
 
@@ -628,6 +656,7 @@ export function useSimulationEngine() {
     const combinedTasks = [...newTasks, ...tasksRef.current];
     tasksRef.current = combinedTasks;
     setTasks(combinedTasks);
+    syncHistoricalTasks(combinedTasks);
 
     drainQueueWithFreeWorkers();
     showNotification(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал выехал по приоритету AOG > URGENT > ROUTINE.`);
@@ -696,6 +725,7 @@ export function useSimulationEngine() {
     const combined = [task, ...tasksRef.current];
     tasksRef.current = combined;
     setTasks(combined);
+    syncHistoricalTasks(combined);
     drainQueueWithFreeWorkers();
   }, [drainQueueWithFreeWorkers]);
 
@@ -707,8 +737,7 @@ export function useSimulationEngine() {
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
 
-    tasksRef.current = [];
-    setTasks([]);
+    archiveCurrentTasks();
     statsRef.current = [];
     setDispatchStats([]);
     roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 };
@@ -720,7 +749,62 @@ export function useSimulationEngine() {
     if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
   }, [showNotification]);
 
+  const [archivedTasks, setArchivedTasks] = useState<OtoTask[]>([]);
+  const [activeScenarioName, setActiveScenarioName] = useState<string>('Оперативный план');
+
+  const syncHistoricalTasks = useCallback((tasksToSync: OtoTask[]) => {
+    if (tasksToSync.length === 0) return;
+    const map = new Map<string, OtoTask>();
+    allHistoricalTasksRef.current.forEach(t => map.set(t.id, t));
+    tasksToSync.forEach(t => map.set(t.id, t));
+    allHistoricalTasksRef.current = Array.from(map.values());
+    setAllHistoricalTasks([...allHistoricalTasksRef.current]);
+  }, []);
+
+  const archiveCurrentTasks = useCallback(() => {
+    if (tasksRef.current.length > 0) {
+      const map = new Map<string, OtoTask>();
+      allHistoricalTasksRef.current.forEach(t => map.set(t.id, t));
+      tasksRef.current.forEach(t => map.set(t.id, t));
+      allHistoricalTasksRef.current = Array.from(map.values());
+      setAllHistoricalTasks([...allHistoricalTasksRef.current]);
+
+      setArchivedTasks(prev => {
+        const aMap = new Map<string, OtoTask>();
+        prev.forEach(t => aMap.set(t.id, t));
+        tasksRef.current.forEach(t => aMap.set(t.id, t));
+        return Array.from(aMap.values());
+      });
+
+      // Instantly free all workers so they can immediately accept new scenario calls
+      workersRef.current = workersRef.current.map(w => ({
+        ...w,
+        status: w.isPatrolPreference ? ('FREE_PATROLLING' as const) : ('FREE_STATIONARY' as const),
+        currentTaskId: undefined,
+        pathWaypoints: undefined,
+        pathSpeedPctPerSimSec: undefined,
+        currentSegmentIndex: undefined
+      }));
+      setWorkers([...workersRef.current]);
+
+      tasksRef.current = [];
+      setTasks([]);
+    }
+  }, []);
+
+  const SCENARIO_NAMES: Record<string, string> = {
+    standard: 'Стандартный день',
+    series: 'Серия вызовов',
+    peak: 'Час пик (10 бортов)',
+    aog: 'Срочный AOG-перехват',
+    deficit: 'Кадровый дефицит',
+    snow: 'Снегопад',
+    reset: 'Базовый режим'
+  };
+
   const runScenario = useCallback((scenarioId: string) => {
+    archiveCurrentTasks();
+    setActiveScenarioName(SCENARIO_NAMES[scenarioId] || 'Оперативный план');
     switch (scenarioId) {
       case 'peak':
         triggerStressTest();
@@ -788,6 +872,7 @@ export function useSimulationEngine() {
 
   // Hackathon PRESET SCENARIOS (quick-action bar, one click each)
   const runPreset = useCallback((presetId: string) => {
+    archiveCurrentTasks();
     switch (presetId) {
       case 'standard': {
         // Reset workers to optimal bases, then spawn a single ATA call on D18
@@ -920,6 +1005,8 @@ export function useSimulationEngine() {
   return {
     workers,
     tasks,
+    archivedTasks,
+    allHistoricalTasks,
     workersRef,
     tasksRef,
     simSpeed,
@@ -939,6 +1026,7 @@ export function useSimulationEngine() {
     weatherMode,
     setWeatherMode,
     runScenario,
+    activeScenarioName,
     runPreset,
     runControlTests
   };

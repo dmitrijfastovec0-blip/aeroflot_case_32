@@ -12,6 +12,9 @@ interface CanvasMapProps {
   isDevMode: boolean;
   onDevPointClick?: (pctX: number, pctY: number) => void;
   showMapSublayer: boolean;
+  trackedWorkerId?: string | null;
+  onStopTracking?: () => void;
+  onOpenRadialMenu?: (stand: any, x: number, y: number) => void;
 }
 
 export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
@@ -19,7 +22,6 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
     containerRef,
     canvasRef,
     hoverTooltip,
-    handleWheel,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
@@ -27,8 +29,10 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
     handlePresetFocus
   } = useCanvasEngine(props);
 
-  const { theme } = props;
+  const { theme, trackedWorkerId, onStopTracking, workersRef } = props;
   const [focusPreset, setFocusPreset] = useState<'ALL' | 'NORTH' | 'SOUTH' | 'RESET'>('ALL');
+
+  const trackedWorker = trackedWorkerId ? workersRef.current.find(w => w.id === trackedWorkerId) : null;
 
   const onPreset = (preset: 'ALL' | 'NORTH' | 'SOUTH' | 'RESET') => {
     setFocusPreset(preset);
@@ -52,7 +56,6 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
       className={`relative flex-1 h-full w-full overflow-hidden cursor-crosshair select-none transition-colors ${
         theme === 'dark' ? 'bg-[#090d11]' : 'bg-[#f1f5f9]'
       }`}
-      onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -92,11 +95,24 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
         </button>
       </div>
 
-      {/* Map Legend */}
-      <div className={`absolute bottom-3 left-3 border rounded-lg px-3 py-2 font-mono text-xs space-y-1.5 z-10 ${
+      {/* TRACK MODE ACTIVE BANNER */}
+      {trackedWorker && (
+        <div className="absolute top-3 right-3 z-30 flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-sky-600/90 text-white font-mono text-xs font-bold border border-sky-400 shadow-xl backdrop-blur-md animate-pulse">
+          <span>🎯 Слежение: {trackedWorker.name} ({trackedWorker.categoryCode})</span>
+          <button
+            onClick={onStopTracking}
+            className="ml-2 px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer text-[11px]"
+          >
+            Сброс (Esc)
+          </button>
+        </div>
+      )}
+
+      {/* Map Legend (Positioned above bottom console) */}
+      <div className={`absolute bottom-16 left-3 border rounded-xl px-3.5 py-2.5 font-mono text-xs space-y-1.5 z-10 backdrop-blur-md shadow-xl ${
         theme === 'dark' ? 'bg-[#070a0e]/90 border-[#263345] text-gray-300' : 'bg-white/90 border-slate-300 text-slate-800 shadow-md'
       }`}>
-        <div className="font-bold border-b border-slate-300 dark:border-[#263345] pb-1 text-xs">ДИСЛОКАЦИЯ И СТАТУСЫ</div>
+        <div className="font-bold border-b border-slate-300 dark:border-[#263345] pb-1 text-xs text-sky-400">ДИСЛОКАЦИЯ И СТАТУСЫ</div>
         <div className="flex items-center space-x-2">
           <span className="w-3 h-3 rounded-full bg-[#238636]" />
           <span>🟢 Свободен (дежурство / патруль)</span>
@@ -106,35 +122,46 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
           <span>🔵 В пути на вызов ОТО</span>
         </div>
         <div className="flex items-center space-x-2">
-          <span className="w-3 h-3 rounded-full bg-[#f59e0b]" />
-          <span>🟡 Возврат на базу ПТО</span>
+          <span className="w-3 h-3 rounded-full bg-[#f43f5e]" />
+          <span>🔴 AOG (Срочный перехват)</span>
         </div>
         <div className="flex items-center space-x-2">
           <span className="w-3 h-3 rounded-full bg-[#da3633]" />
-          <span>🔴 На объекте (ТО на ВС)</span>
+          <span>🔧 На объекте (ТО на ВС)</span>
         </div>
       </div>
 
-      {/* Hover Tooltip Popover */}
+      {/* Beautiful High-Tech Hover Tooltip Popover Card */}
       {hoverTooltip && (
         <div
-          className={`fixed z-50 pointer-events-none border rounded-lg p-3 shadow-2xl min-w-[240px] max-w-[320px] font-mono text-xs ${
-            theme === 'dark' ? 'bg-[#070a0e] border-[#238636] text-gray-200' : 'bg-white border-emerald-600 text-slate-900'
+          className={`fixed z-50 pointer-events-none border rounded-2xl p-3.5 shadow-2xl min-w-[280px] max-w-[360px] font-mono text-sm backdrop-blur-xl animate-fadeIn ${
+            theme === 'dark'
+              ? 'bg-[#070a0e]/95 border-[#238636] text-gray-100 shadow-emerald-950/40'
+              : 'bg-white/95 border-emerald-600 text-slate-900 shadow-xl'
           }`}
           style={{
-            left: `${Math.min(window.innerWidth - 340, hoverTooltip.x + 15)}px`,
-            top: `${Math.min(window.innerHeight - 200, hoverTooltip.y + 15)}px`
+            left: `${Math.min(window.innerWidth - 380, hoverTooltip.x + 20)}px`,
+            top: `${Math.min(window.innerHeight - 240, hoverTooltip.y + 20)}px`
           }}
         >
-          <div className="font-bold text-sm text-emerald-500 border-b border-slate-300 dark:border-[#263345] pb-1 mb-1">
-            {hoverTooltip.title}
+          <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-[#263345] mb-2">
+            <span className="font-extrabold text-base text-emerald-400">
+              {hoverTooltip.title}
+            </span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+              {hoverTooltip.type === 'WORKER' ? 'ИНЖЕНЕР ОТО' : hoverTooltip.type === 'STAND' ? 'СТОЯНКА ВС' : 'БАЗА ПТО'}
+            </span>
           </div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">{hoverTooltip.subtitle}</div>
-          <div className="space-y-1 text-xs">
+
+          <div className="text-xs font-bold text-sky-400 mb-2">
+            {hoverTooltip.subtitle}
+          </div>
+
+          <div className="space-y-1.5 text-xs font-medium">
             {hoverTooltip.details.map((d, idx) => (
-              <div key={idx} className="flex justify-between">
-                <span className="text-gray-500 dark:text-gray-400">{d.label}</span>
-                <span className="font-semibold ml-2 text-right">{d.value}</span>
+              <div key={idx} className="flex justify-between items-center">
+                <span className="text-gray-400">{d.label}</span>
+                <span className="font-bold text-slate-900 dark:text-white ml-2 text-right">{d.value}</span>
               </div>
             ))}
           </div>

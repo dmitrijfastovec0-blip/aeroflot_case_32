@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { OtoTask, ThemeMode } from './types/index';
-import { SVO_STANDS } from './constants/index';
+import React, { useState, useEffect, useCallback } from 'react';
+import { OtoTask, ThemeMode, Stand, WeatherMode } from './types/index';
+import { SVO_STANDS, DEFECT_TYPES } from './constants/index';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { Header } from './components/Header';
 import { CanvasMap } from './components/CanvasMap';
@@ -9,6 +9,8 @@ import { BottomConsole } from './components/BottomConsole';
 import { SlaConfirmModal } from './components/SlaConfirmModal';
 import { ShiftConfigModal } from './components/ShiftConfigModal';
 import { AnalyticsModal } from './components/AnalyticsModal';
+import { StandRadialMenu } from './components/StandRadialMenu';
+import { TimelineModal } from './components/TimelineModal';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
@@ -16,8 +18,17 @@ export function App() {
   // Light / Dark Theme Mode Engine
   const [theme, setTheme] = useState<ThemeMode>('dark');
 
+  // Gantt Chart Timeline Modal State
+  const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(false);
+
   // Comparative Analytics Modal State
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState<boolean>(false);
+
+  // Tracked Worker Unit State
+  const [trackedWorkerId, setTrackedWorkerId] = useState<string | null>(null);
+
+  // Stand Radial Menu State
+  const [radialMenu, setRadialMenu] = useState<{ stand: Stand; x: number; y: number } | null>(null);
 
   // Custom SLA Exceeded Warning Modal State
   const [pendingSlaTask, setPendingSlaTask] = useState<OtoTask | null>(null);
@@ -39,6 +50,8 @@ export function App() {
   const {
     workers,
     tasks,
+    archivedTasks,
+    allHistoricalTasks,
     workersRef,
     tasksRef,
     simSpeed,
@@ -54,8 +67,52 @@ export function App() {
     roiMetrics,
     weatherMode,
     setWeatherMode,
-    runScenario
+    runScenario,
+    activeScenarioName
   } = useSimulationEngine();
+
+  // GLOBAL KEYBOARD SHORTCUTS HANDLER
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore key events when typing inside text inputs, textareas, or selects
+      const activeTag = document.activeElement?.tagName.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setIsPaused(prev => !prev);
+      } else if (e.key === '1') {
+        setSimSpeed(1);
+      } else if (e.key === '2') {
+        setSimSpeed(2);
+      } else if (e.key === '3') {
+        setSimSpeed(5);
+      } else if (e.key === '4') {
+        setSimSpeed(10);
+      } else if (e.key === 'Escape' || e.code === 'Escape') {
+        // Clear tracking, modals, radial menu
+        setTrackedWorkerId(null);
+        setRadialMenu(null);
+        setIsAnalyticsOpen(false);
+        setIsShiftModalOpen(false);
+        setPendingSlaTask(null);
+      } else if (e.key.toLowerCase() === 'w') {
+        const modes: WeatherMode[] = ['CLEAR', 'RAIN', 'BLIZZARD', 'NIGHT'];
+        const currentIdx = modes.indexOf(weatherMode);
+        const nextMode = modes[(currentIdx + 1) % modes.length];
+        setWeatherMode(nextMode);
+      } else if (e.key.toLowerCase() === 'a') {
+        setIsAnalyticsOpen(prev => !prev);
+      } else if (e.key.toLowerCase() === 's') {
+        setIsShiftModalOpen(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [setIsPaused, setSimSpeed, setWeatherMode]);
 
   // Apply Custom Shift Configuration
   const handleApplyShiftConfig = (b1: number, b2: number, catA: number, vehicles: number) => {
@@ -78,6 +135,35 @@ export function App() {
       submitTask(pendingSlaTask);
       setPendingSlaTask(null);
     }
+  };
+
+  // Quick Dispatch from Radial Menu
+  const handleRadialQuickLaunch = (defectId: string) => {
+    if (!radialMenu) return;
+    const defect = DEFECT_TYPES.find(d => d.id === defectId) || DEFECT_TYPES[0];
+    const catLabel = defect.categoryCode === 'B1' ? 'B1 (Двигатели / Планер)' : defect.categoryCode === 'B2' ? 'B2 (Авионика / Приборы)' : 'Cat A (Осмотр)';
+    const newTask: OtoTask = {
+      id: `TASK-${Date.now().toString().slice(-4)}`,
+      standId: radialMenu.stand.id,
+      standLabel: radialMenu.stand.label,
+      aircraftType: radialMenu.stand.aircraftType || 'Airbus A320',
+      categoryCode: defect.categoryCode,
+      categoryLabel: catLabel,
+      defectLabel: defect.name,
+      priority: defect.categoryCode === 'B1' ? 'URGENT' : 'ROUTINE',
+      status: 'QUEUED',
+      requiredCrew: defect.requiredCrew,
+      crew: [],
+      arrivedCount: 0,
+      maxEtaMinutes: 0,
+      slaLimitMinutes: 15,
+      withinSla: true,
+      createdAt: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+      elapsedWorkSec: 0,
+      targetWorkSec: 120
+    };
+    submitTask(newTask);
+    showNotification(`🚀 Экспресс-вызов ${defect.name} на стоянку ${radialMenu.stand.label}!`);
   };
 
   const queuedTasks = React.useMemo(() => {
@@ -130,6 +216,36 @@ export function App() {
         theme={theme}
       />
 
+      {/* Gantt Chart Timeline Modal */}
+      <TimelineModal
+        isOpen={isTimelineOpen}
+        onClose={() => setIsTimelineOpen(false)}
+        tasks={tasks}
+        archivedTasks={allHistoricalTasks}
+        workers={workers}
+        theme={theme}
+      />
+
+      {/* Stand Context / Radial Menu */}
+      {radialMenu && (
+        <StandRadialMenu
+          stand={radialMenu.stand}
+          x={radialMenu.x}
+          y={radialMenu.y}
+          onClose={() => setRadialMenu(null)}
+          onQuickLaunch={handleRadialQuickLaunch}
+          onOpenPanel={() => {
+            setSelectedStandId(radialMenu.stand.id);
+            setRadialMenu(null);
+          }}
+          onFocusCamera={() => {
+            setSelectedStandId(radialMenu.stand.id);
+            setRadialMenu(null);
+          }}
+          theme={theme}
+        />
+      )}
+
       {/* FLOATING TOAST NOTIFICATION BANNER */}
       {notificationBanner && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none bg-emerald-600/95 text-white font-mono text-xs md:text-sm font-bold py-2.5 px-6 rounded-xl border border-emerald-400 shadow-2xl animate-bounce flex items-center justify-center space-x-2 backdrop-blur-md">
@@ -152,6 +268,7 @@ export function App() {
         weatherMode={weatherMode}
         onWeatherChange={setWeatherMode}
         onOpenAnalytics={() => setIsAnalyticsOpen(true)}
+        onOpenTimeline={() => setIsTimelineOpen(true)}
       />
 
       {/* 2. Main Fullscreen CAD Airport Map & Floating Drawer Overlays */}
@@ -161,11 +278,20 @@ export function App() {
           workersRef={workersRef}
           tasksRef={tasksRef}
           selectedStandId={selectedStandId}
-          onSelectStand={setSelectedStandId}
+          onSelectStand={(standId) => {
+            setSelectedStandId(standId);
+            const standObj = SVO_STANDS.find(s => s.id === standId);
+            if (standObj) {
+              const rect = document.body.getBoundingClientRect();
+              setRadialMenu({ stand: standObj, x: rect.width / 2, y: rect.height / 2 });
+            }
+          }}
           theme={theme}
           weatherMode={weatherMode}
           isDevMode={false}
           showMapSublayer={true}
+          trackedWorkerId={trackedWorkerId}
+          onStopTracking={() => setTrackedWorkerId(null)}
         />
 
         {/* Floating Collapsible Right Task Drawer */}
@@ -173,11 +299,22 @@ export function App() {
           selectedStandId={selectedStandId}
           onSelectStand={setSelectedStandId}
           workers={workers}
+          tasks={tasks}
           onLaunchTask={handleLaunchTaskSubmit}
           onTriggerSlaAlert={handleTriggerSlaAlert}
           onNotify={showNotification}
           activeTaskForStand={activeTaskForSelectedStand}
           theme={theme}
+          trackedWorkerId={trackedWorkerId}
+          activeScenarioName={activeScenarioName}
+          archivedTasks={archivedTasks}
+          onTrackWorker={(workerId) => {
+            setTrackedWorkerId(prev => prev === workerId ? null : workerId);
+            const workerObj = workers.find(w => w.id === workerId);
+            if (workerObj) {
+              showNotification(`🎯 Камера зафиксирована на юните ${workerObj.name}`);
+            }
+          }}
         />
 
         {/* Floating Collapsible Bottom Console & Status Bar */}
@@ -188,6 +325,14 @@ export function App() {
           onCancelTask={cancelTask}
           onSelectTask={(task) => setSelectedStandId(task.standId)}
           theme={theme}
+          trackedWorkerId={trackedWorkerId}
+          onTrackWorker={(workerId) => {
+            setTrackedWorkerId(prev => prev === workerId ? null : workerId);
+            const workerObj = workers.find(w => w.id === workerId);
+            if (workerObj) {
+              showNotification(`🎯 Активирован режим слежения за юнитом ${workerObj.name}`);
+            }
+          }}
         />
       </main>
     </div>

@@ -3,8 +3,12 @@
 @tailwind utilities;
 
 @layer base {
+  * {
+    font-family: 'Montserrat Alternates', 'JetBrains Mono', sans-serif !important;
+    font-weight: 500;
+  }
   body {
-    @apply bg-[#0d1117] text-gray-100 font-sans overflow-hidden antialiased;
+    @apply bg-[#0d1117] text-gray-100 overflow-hidden antialiased;
   }
 }
 

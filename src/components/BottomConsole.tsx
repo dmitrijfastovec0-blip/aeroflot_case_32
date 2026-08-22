@@ -9,6 +9,8 @@ interface BottomConsoleProps {
   onCancelTask: (taskId: string) => void;
   onSelectTask: (task: OtoTask) => void;
   theme: ThemeMode;
+  trackedWorkerId?: string | null;
+  onTrackWorker?: (workerId: string) => void;
 }
 
 export const BottomConsole = React.memo<BottomConsoleProps>(({
@@ -17,7 +19,9 @@ export const BottomConsole = React.memo<BottomConsoleProps>(({
   workers,
   onCancelTask,
   onSelectTask,
-  theme
+  theme,
+  trackedWorkerId,
+  onTrackWorker
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'QUEUED' | 'COMPLETED' | 'REGISTRY'>('ACTIVE');
@@ -34,7 +38,7 @@ export const BottomConsole = React.memo<BottomConsoleProps>(({
       isExpanded ? 'h-72' : 'h-11 min-h-[44px]'
     }`}>
       {/* 1. COLLAPSED COMPACT STATUS BAR HEADER */}
-      <div className="h-11 px-4 flex items-center justify-between border-b border-slate-200 dark:border-[#1e2a3a] font-mono text-xs cursor-pointer select-none">
+      <div className="h-11 px-4 flex items-center justify-between border-b border-slate-200 dark:border-[#1e2a3a] font-mono text-sm cursor-pointer select-none">
         {/* Left Live Indicators */}
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-1.5" onClick={() => { setIsExpanded(true); setActiveTab('ACTIVE'); }}>
@@ -172,7 +176,22 @@ export const BottomConsole = React.memo<BottomConsoleProps>(({
                             </div>
                           </td>
                           <td className="py-1.5 px-2 text-gray-400">
-                            {t.crew.map(c => `${c.workerName} (${c.categoryCode})`).join(', ')}
+                            <div className="flex flex-wrap gap-1">
+                              {t.crew.map(c => (
+                                <span key={c.workerId} className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-[10px]">
+                                  <span>{c.workerName} ({c.categoryCode})</span>
+                                  {onTrackWorker && (
+                                    <button
+                                      onClick={() => onTrackWorker(c.workerId)}
+                                      className="hover:text-sky-400 transition-colors cursor-pointer"
+                                      title="Следить за этим инженером"
+                                    >
+                                      🎯
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
                           </td>
                           <td className="py-1.5 px-2 text-right">
                             <button
@@ -257,18 +276,38 @@ export const BottomConsole = React.memo<BottomConsoleProps>(({
 
             {activeTab === 'REGISTRY' && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {workers.map(w => (
-                  <div key={w.id} className="p-2 rounded-lg border bg-slate-50 dark:bg-[#121820] border-slate-200 dark:border-[#263345] text-[11px] flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-slate-800 dark:text-gray-200">{w.name} ({w.categoryCode})</div>
-                      <div className="text-[10px] text-gray-500">{w.status}</div>
+                {workers.map(w => {
+                  const isTracked = trackedWorkerId === w.id;
+                  return (
+                    <div key={w.id} className="p-2 rounded-lg border bg-slate-50 dark:bg-[#121820] border-slate-200 dark:border-[#263345] text-[11px] flex justify-between items-center">
+                      <div>
+                        <div className="font-bold text-slate-800 dark:text-gray-200 flex items-center space-x-1">
+                          <span>{w.name} ({w.categoryCode})</span>
+                        </div>
+                        <div className="text-[10px] text-gray-500">{w.status}</div>
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        {onTrackWorker && (
+                          <button
+                            onClick={() => onTrackWorker(w.id)}
+                            className={`p-1 rounded text-xs transition-colors cursor-pointer ${
+                              isTracked
+                                ? 'bg-sky-500 text-white font-bold'
+                                : 'bg-slate-200 dark:bg-slate-800 hover:bg-sky-500/20 text-sky-400'
+                            }`}
+                            title={isTracked ? 'Отменить слежение' : 'Следить за юнитом'}
+                          >
+                            🎯
+                          </button>
+                        )}
+                        <span className={`w-2 h-2 rounded-full ${
+                          w.status === 'WORKING_ON_SITE' ? 'bg-red-400 animate-pulse' :
+                          w.status === 'IN_TRANSIT' ? 'bg-sky-400' : 'bg-emerald-400'
+                        }`} />
+                      </div>
                     </div>
-                    <span className={`w-2 h-2 rounded-full ${
-                      w.status === 'WORKING_ON_SITE' ? 'bg-red-400 animate-pulse' :
-                      w.status === 'IN_TRANSIT' ? 'bg-sky-400' : 'bg-emerald-400'
-                    }`} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

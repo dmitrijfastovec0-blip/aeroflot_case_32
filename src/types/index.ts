@@ -5,7 +5,7 @@ export type Complex = 'NORTH' | 'SOUTH' | 'REMOTE';
 export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE';
 
 export type ThemeMode = 'dark' | 'light';
-export type WeatherMode = 'CLEAR' | 'SNOW' | 'ICE' | 'NIGHT';
+export type WeatherMode = 'CLEAR' | 'RAIN' | 'BLIZZARD' | 'NIGHT';
 export type TaskPriority = 'AOG' | 'URGENT' | 'ROUTINE';
 
 // Регламентный состав бригады: сколько инженеров какой квалификации нужно

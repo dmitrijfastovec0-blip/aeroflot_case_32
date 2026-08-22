@@ -176,24 +176,35 @@ function buildClusterIndexes(workers: Worker[]): ClusterIndexes {
   return { baseSlotIndex, siteSlotIndex };
 }
 
-// Target render offset for a worker (percent units, added to worker.x/y)
+// Target render position for a worker (percent units, aligned with map nodes)
 function workerClusterPos(worker: Worker, hash: number, idx: ClusterIndexes) {
+  let anchorX = worker.x;
+  let anchorY = worker.y;
+
+  // Snap stationary duty workers precisely to their home facility if nearby
+  if (worker.status === 'FREE_STATIONARY' && worker.baseId) {
+    const fac = SVO_FACILITIES.find(f => f.id === worker.baseId);
+    if (fac && Math.hypot(worker.x - fac.x, worker.y - fac.y) < 6) {
+      anchorX = fac.x;
+      anchorY = fac.y;
+    }
+  }
+
   if (worker.status === 'FREE_STATIONARY') {
-    const s = ringSlot(idx.baseSlotIndex.get(worker.id) ?? 0, 2.1);
-    return { x: worker.x + s.x, y: worker.y + 5 + s.y };
+    const s = ringSlot(idx.baseSlotIndex.get(worker.id) ?? 0, 1.2);
+    return { x: anchorX + s.x, y: anchorY + s.y };
   }
   if (worker.status === 'WORKING_ON_SITE') {
-    const s = ringSlot(idx.siteSlotIndex.get(worker.id) ?? 0, 1.9);
-    return { x: worker.x + s.x, y: worker.y + 4 + s.y };
+    const s = ringSlot(idx.siteSlotIndex.get(worker.id) ?? 0, 1.2);
+    return { x: anchorX + s.x, y: anchorY + s.y };
   }
   if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
-    // Stable jitter on the road so overlapping workers in convoy remain distinct
     return {
-      x: worker.x + ((hash % 3) - 1) * 0.8,
-      y: worker.y + ((Math.floor(hash / 3) % 3) - 1) * 0.8
+      x: worker.x + ((hash % 3) - 1) * 0.4,
+      y: worker.y + ((Math.floor(hash / 3) % 3) - 1) * 0.4
     };
   }
-  return { x: worker.x, y: worker.y };
+  return { x: anchorX, y: anchorY };
 }
 
 interface UseCanvasEngineProps {
@@ -206,6 +217,8 @@ interface UseCanvasEngineProps {
   isDevMode: boolean;
   onDevPointClick?: (pctX: number, pctY: number) => void;
   showMapSublayer: boolean;
+  trackedWorkerId?: string | null;
+  onStopTracking?: () => void;
 }
 
 export function useCanvasEngine({
@@ -217,7 +230,9 @@ export function useCanvasEngine({
   weatherMode = 'CLEAR',
   isDevMode,
   onDevPointClick,
-  showMapSublayer
+  showMapSublayer,
+  trackedWorkerId,
+  onStopTracking
 }: UseCanvasEngineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -320,18 +335,8 @@ export function useCanvasEngine({
     lastFrameTimeRef.current = now;
     const dashOffset = -(now / 26) % 20; // time-based flowing dashes (no React state churn)
 
-    // Smoothly ease zoom/pan toward the target; snap while dragging for 1:1 control
-    if (isDragging) {
-      currentZoomRef.current = zoomScale;
-      currentPanRef.current = { x: panOffset.x, y: panOffset.y };
-    } else {
-      const k = 1 - Math.exp(-dtSec * 10);
-      currentZoomRef.current += (zoomScale - currentZoomRef.current) * k;
-      currentPanRef.current.x += (panOffset.x - currentPanRef.current.x) * k;
-      currentPanRef.current.y += (panOffset.y - currentPanRef.current.y) * k;
-    }
-    const zs = currentZoomRef.current;
-    const ps = currentPanRef.current;
+    const zs = zoomScale;
+    const ps = panOffset;
 
     ctx.save();
     ctx.translate(ps.x, ps.y);
@@ -340,12 +345,14 @@ export function useCanvasEngine({
     // RASTER BACKGROUND SUBLAYER (svo.png)
     if (showMapSublayer && mapImageRef.current && isMapImageLoaded) {
       ctx.save();
-      ctx.globalAlpha = theme === 'dark' ? 0.45 : 0.65;
+      ctx.globalAlpha = theme === 'dark' ? 0.18 : 0.28;
       ctx.drawImage(mapImageRef.current, 0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
       ctx.restore();
     }
 
-    // CAD Grid
+    // CAD Grid (Ultra subtle backdrop decor)
+    ctx.save();
+    ctx.globalAlpha = 0.25;
     ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 0.5;
     for (let x = 0; x <= LOGICAL_WIDTH; x += 50) {
@@ -360,8 +367,9 @@ export function useCanvasEngine({
       ctx.lineTo(LOGICAL_WIDTH, y);
       ctx.stroke();
     }
+    ctx.restore();
 
-    // SVO Buildings & Runways
+    // SVO Buildings & Runways (Faint, non-intrusive decor shapes)
     SVO_BUILDINGS.forEach(bld => {
       ctx.save();
       if (bld.type === 'ARC' && bld.center && bld.radius) {
@@ -370,7 +378,8 @@ export function useCanvasEngine({
 
         ctx.fillStyle = palette.terminalFill;
         ctx.strokeStyle = palette.terminalStroke;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 0.8;
+        ctx.globalAlpha = 0.35;
 
         ctx.beginPath();
         ctx.arc(centerPos.x, centerPos.y, radLogical, bld.startAngle, bld.endAngle);
@@ -378,8 +387,9 @@ export function useCanvasEngine({
         ctx.fill();
         ctx.stroke();
 
+        ctx.globalAlpha = 0.25;
         ctx.fillStyle = palette.textSubtle;
-        ctx.font = '600 12px "Inter", sans-serif';
+        ctx.font = '500 11px "Inter", sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(bld.name, centerPos.x, centerPos.y - radLogical * 0.3);
       } else if (bld.points && bld.points.length >= 2) {
@@ -394,10 +404,12 @@ export function useCanvasEngine({
           const ux = dx / len;
           const uy = dy / len;
 
-          // Runway pavement (rounded ends) + shoulder
+          ctx.globalAlpha = 0.2;
+
+          // Runway pavement (faint strip)
           ctx.strokeStyle = palette.runwayFill;
           ctx.lineCap = 'round';
-          ctx.lineWidth = 15;
+          ctx.lineWidth = 10;
           ctx.beginPath();
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
@@ -405,46 +417,18 @@ export function useCanvasEngine({
 
           // Centerline dashes
           ctx.strokeStyle = palette.runwayLine;
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([8, 8]);
+          ctx.lineWidth = 1.0;
+          ctx.setLineDash([6, 6]);
           ctx.beginPath();
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
           ctx.setLineDash([]);
-
-          // Threshold bars at both ends (perpendicular stripes)
-          ctx.strokeStyle = palette.runwayLine;
-          ctx.lineWidth = 1.2;
-          for (const end of [p1, p2]) {
-            for (let i = 1; i <= 3; i++) {
-              const t = i * 3.5;
-              const bx = end.x + ux * t;
-              const by = end.y + uy * t;
-              ctx.beginPath();
-              ctx.moveTo(bx - uy * 5.5, by + ux * 5.5);
-              ctx.lineTo(bx + uy * 5.5, by - ux * 5.5);
-              ctx.stroke();
-            }
-          }
-
-          // Runway designator label near each threshold
-          ctx.fillStyle = palette.textSubtle;
-          ctx.font = '600 9px "JetBrains Mono", monospace';
-          ctx.save();
-          ctx.translate(p1.x - ux * 16 - uy * 8, p1.y - uy * 16 + ux * 8);
-          ctx.rotate(Math.atan2(dy, dx));
-          ctx.fillText(bld.name, 0, 0);
-          ctx.restore();
-          ctx.save();
-          ctx.translate(p2.x + ux * 16 - uy * 8, p2.y + uy * 16 + ux * 8);
-          ctx.rotate(Math.atan2(dy, dx));
-          ctx.fillText(bld.name.split('/')[1] || bld.name, 0, 0);
-          ctx.restore();
         } else {
           ctx.fillStyle = palette.terminalFill;
           ctx.strokeStyle = palette.terminalStroke;
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 0.8;
+          ctx.globalAlpha = 0.35;
 
           ctx.beginPath();
           const logicalPts = bld.points.map(p => pctToLogical(p.x, p.y));
@@ -456,8 +440,9 @@ export function useCanvasEngine({
           const avgY = bld.points.reduce((acc, p) => acc + p.y, 0) / bld.points.length;
           const labelPos = pctToLogical(avgX, avgY);
 
+          ctx.globalAlpha = 0.25;
           ctx.fillStyle = palette.textSubtle;
-          ctx.font = '600 12px "Inter", sans-serif';
+          ctx.font = '500 11px "Inter", sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText(bld.name, labelPos.x, labelPos.y);
         }
@@ -465,12 +450,10 @@ export function useCanvasEngine({
       ctx.restore();
     });
 
-    // ROAD TOPOLOGY GRAPH — dual-layer lanes + slow flowing traffic dashes.
-    // Drawn as a single smoothed network: junctions get filleted corners.
+    // ROAD TOPOLOGY GRAPH — Clean, bright default road network
     const roadEdges = SVO_EDGES.filter(e => e.type !== 'TUNNEL');
     const cornerRadius = 7;
 
-    // Build the static path geometry once, reuse it for all three strokes
     if (!roadPathRef.current) {
       roadPathRef.current = buildRoadNetworkPath(roadEdges, getNodePos, cornerRadius);
     }
@@ -480,23 +463,23 @@ export function useCanvasEngine({
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Wide soft underlay (the "street")
+    // Clear bright street underlay
     ctx.strokeStyle = palette.roadLine;
-    ctx.globalAlpha = 0.9;
-    ctx.lineWidth = 3.6;
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = 3.2;
     ctx.stroke(roadPath);
 
     // Bright centerline
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = 0.65;
     ctx.strokeStyle = palette.grid;
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = 1.0;
     ctx.stroke(roadPath);
 
-    // Slow moving dashes to convey traffic flow
+    // Subtle moving traffic flow dashes
     ctx.strokeStyle = palette.textSubtle;
-    ctx.globalAlpha = theme === 'dark' ? 0.28 : 0.5;
-    ctx.lineWidth = 1.3;
-    ctx.setLineDash([3, 22]);
+    ctx.globalAlpha = theme === 'dark' ? 0.35 : 0.45;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 18]);
     ctx.lineDashOffset = dashOffset * 0.5;
     ctx.stroke(roadPath);
     ctx.setLineDash([]);
@@ -666,48 +649,82 @@ export function useCanvasEngine({
         ctx.fillStyle = '#22c55e';
         ctx.font = '700 9px "JetBrains Mono", monospace';
         ctx.fillText(`🔧 ${pctInt}%`, pos.x, barY + barH + 9);
-      } else if (activeTask && activeTask.status === 'DISPATCHED' && (activeTask.arrivedCount || 0) > 0) {
-        // Gathering Crew Badge
-        const barY = boxY + boxH + 3;
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = '700 9px "JetBrains Mono", monospace';
-        ctx.fillText(`⏳ Сбор (${activeTask.arrivedCount}/${activeTask.crew.length})`, pos.x, barY + 9);
-      } else if (recentCompletedTask) {
-        // Brief Completion Badge
-        const barY = boxY + boxH + 3;
-        ctx.fillStyle = '#22c55e';
-        ctx.font = '700 9px "JetBrains Mono", monospace';
-        ctx.fillText(`✅ ТО Выполнено!`, pos.x, barY + 9);
       }
-
+      
+      // Remove cluttered text badges under stand boxes to keep CAD map ultra-clean
       ctx.restore();
     });
 
-    // NEON ROUTE OVERLAYS FOR ACTIVE TASKS
-    tasks.forEach(task => {
-      task.crew.forEach((member: TaskCrewMember) => {
-        if (member.waypoints && member.waypoints.length > 1) {
-          ctx.save();
-          ctx.strokeStyle = '#0284c7';
-          ctx.lineWidth = 2.5;
-          ctx.setLineDash([6, 6]);
-          ctx.lineDashOffset = dashOffset;
+    // ELEGANT & INTUITIVE ROUTE OVERLAYS FOR ALL IN-TRANSIT WORKERS
+    workers.forEach(w => {
+      if (w.status !== 'IN_TRANSIT' || !w.pathWaypoints || w.pathWaypoints.length < 2) return;
 
-          ctx.shadowColor = '#38bdf8';
-          ctx.shadowBlur = 6;
+      const isAog = w.isEmergency || false;
+      const routeColor = isAog ? '#ef4444' : '#38bdf8';
+      const routeGlow = isAog ? 'rgba(239, 68, 68, 0.25)' : 'rgba(56, 189, 248, 0.25)';
 
-          ctx.beginPath();
-          const start = pctToLogical(member.waypoints[0].x, member.waypoints[0].y);
-          ctx.moveTo(start.x, start.y);
+      const pts = w.pathWaypoints.map(pt => pctToLogical(pt.x, pt.y));
 
-          for (let i = 1; i < member.waypoints.length; i++) {
-            const pt = pctToLogical(member.waypoints[i].x, member.waypoints[i].y);
-            ctx.lineTo(pt.x, pt.y);
-          }
-          ctx.stroke();
-          ctx.restore();
-        }
-      });
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // 1. Soft Translucent Glow Track Corridor
+      ctx.strokeStyle = routeGlow;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.stroke();
+
+      // 2. Solid Main Route Line
+      ctx.strokeStyle = routeColor;
+      ctx.lineWidth = 2.8;
+      ctx.shadowColor = routeColor;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // 3. Flowing Direction Dashes / Pulse Dots moving toward destination
+      ctx.strokeStyle = '#ffffff';
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([4, 12]);
+      ctx.lineDashOffset = dashOffset * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 4. Waypoint Node Dots
+      ctx.fillStyle = routeColor;
+      for (let i = 0; i < pts.length; i++) {
+        ctx.beginPath();
+        ctx.arc(pts[i].x, pts[i].y, i === pts.length - 1 ? 4 : 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 5. Destination Target Pulsing Halo
+      const targetPt = pts[pts.length - 1];
+      const pulseR = 6 + Math.sin(now / 150) * 2;
+      ctx.strokeStyle = routeColor;
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(targetPt.x, targetPt.y, pulseR, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.restore();
     });
 
     // STABLE VISUALIZATION FOR ALL WORKERS
@@ -715,34 +732,20 @@ export function useCanvasEngine({
     // status change alters their offset) and packed into dense hex clusters.
     const clusterIdx = buildClusterIndexes(workers);
     const smoothK = 1 - Math.exp(-dtSec * 12);
-    if (workerSmoothRef.current.size > workers.length * 3) {
-      const alive = new Set(workers.map(w => w.id));
-      for (const id of [...workerSmoothRef.current.keys()]) {
-        if (!alive.has(id)) workerSmoothRef.current.delete(id);
-      }
-    }
     workers.forEach(worker => {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
       const renderPos = workerClusterPos(worker, hash, clusterIdx);
-      const renderX = renderPos.x;
-      const renderY = renderPos.y;
+      const pos = pctToLogical(renderPos.x, renderPos.y);
 
-      // Exponential smoothing toward the target position → buttery glide
-      let smoothPos = workerSmoothRef.current.get(worker.id);
-      if (!smoothPos) {
-        smoothPos = { x: renderX, y: renderY };
-        workerSmoothRef.current.set(worker.id, smoothPos);
-      }
-      smoothPos.x += (renderX - smoothPos.x) * smoothK;
-      smoothPos.y += (renderY - smoothPos.y) * smoothK;
+      const isAogEmergency = worker.isEmergency || tasksRef.current.some(t => t.priority === 'AOG' && (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.crew.some(m => m.workerId === worker.id));
 
-      const pos = pctToLogical(smoothPos.x, smoothPos.y);
+      ctx.save(); // CRITICAL: must match ctx.restore() at end of loop body
 
-      ctx.save();
       let statusColor = '#238636'; // FREE = Green
       if (worker.status === 'IN_TRANSIT') statusColor = '#38bdf8'; // IN_TRANSIT = Blue
       if (worker.status === 'RETURNING_TO_BASE') statusColor = '#f59e0b'; // RETURNING = Amber
       if (worker.status === 'WORKING_ON_SITE') statusColor = '#da3633'; // WORKING = Red
+      if (isAogEmergency) statusColor = '#f43f5e'; // AOG = Crimson Rose
 
       // Soft glow halo behind every worker
       ctx.shadowColor = statusColor;
@@ -768,25 +771,23 @@ export function useCanvasEngine({
         ctx.globalAlpha = 1;
       }
 
-      // AOG URGENT EMERGENCY BEACON SIREN LIGHTS (Feature 4)
-      const isAogEmergency = worker.isEmergency || tasksRef.current.some(t => t.priority === 'AOG' && (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.crew.some(m => m.workerId === worker.id));
+      // AOG SINGLE SOLID COLOR PULSE (Single solid rose glow, no blue/red alternating sirens)
       if (isAogEmergency && (worker.status === 'IN_TRANSIT' || worker.status === 'WORKING_ON_SITE')) {
-        const isRed = Math.floor(now / 120) % 2 === 0;
-        const sirenColor = isRed ? '#ef4444' : '#3b82f6';
+        const sirenColor = '#f43f5e';
         ctx.save();
         ctx.shadowColor = sirenColor;
-        ctx.shadowBlur = 24;
+        ctx.shadowBlur = 20;
         ctx.strokeStyle = sirenColor;
-        ctx.lineWidth = 3;
-        const pulseR = 18 + Math.sin(now / 60) * 5;
+        ctx.lineWidth = 2.5;
+        const pulseR = 18 + Math.sin(now / 90) * 4;
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, pulseR, 0, Math.PI * 2);
         ctx.stroke();
 
         ctx.fillStyle = sirenColor;
-        ctx.font = '800 8px "JetBrains Mono", monospace';
+        ctx.font = '800 9px "Montserrat Alternates", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('🚨 AOG', pos.x, pos.y - pulseR - 4);
+        ctx.fillText('AOG', pos.x, pos.y - pulseR - 4);
         ctx.restore();
       }
 
@@ -815,30 +816,112 @@ export function useCanvasEngine({
       ctx.restore();
     });
 
-    // WEATHER EFFECTS OVERLAY (Feature 2: SNOW / NIGHT)
-    if (weatherMode === 'SNOW') {
-      ctx.save();
-      ctx.fillStyle = '#ffffff';
-      ctx.globalAlpha = 0.85;
-      for (let i = 0; i < 90; i++) {
-        const flakeX = (Math.sin(now / 1000 + i * 17) * 0.5 + 0.5) * canvas.width;
-        const flakeY = ((now * 0.05 + i * 23) % canvas.height);
-        const flakeR = 1.5 + (i % 3) * 0.8;
-        ctx.beginPath();
-        ctx.arc(flakeX, flakeY, flakeR, 0, Math.PI * 2);
-        ctx.fill();
+    // UNIT TRACKING CAMERA AUTO-CENTERING & AUTO-ZOOM
+    if (trackedWorkerId && containerRef.current && !isDragging) {
+      const trackedWorker = workersRef.current.find(w => w.id === trackedWorkerId);
+      if (trackedWorker) {
+        const clusterIdxTrack = buildClusterIndexes(workersRef.current);
+        const hashTrack = parseInt(trackedWorker.id.replace(/\D/g, '')) || 0;
+        const renderPos = workerClusterPos(trackedWorker, hashTrack, clusterIdxTrack);
+        const smoothPos = workerSmoothRef.current.get(trackedWorker.id) || renderPos;
+        const pos = pctToLogical(smoothPos.x, smoothPos.y);
+
+        const containerW = containerRef.current.clientWidth;
+        const containerH = containerRef.current.clientHeight;
+
+        // Auto-zoom in on tracked worker (1.8x magnification)
+        const targetZoom = 1.8;
+        const targetPanX = containerW / 2 - pos.x * targetZoom;
+        const targetPanY = containerH / 2 - pos.y * targetZoom;
+
+        setPanOffset({ x: targetPanX, y: targetPanY });
+        setZoomScale(targetZoom);
       }
-      ctx.restore();
-    } else if (weatherMode === 'NIGHT') {
+    }
+
+    // UNCONSTRAINED FULL-VIEWPORT WEATHER EFFECTS OVERLAY
+    if (weatherMode && weatherMode !== 'CLEAR') {
       ctx.save();
-      ctx.fillStyle = 'rgba(3, 7, 18, 0.4)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const w = canvas.width;
+      const h = canvas.height;
+
+      if (weatherMode === 'BLIZZARD') {
+        ctx.fillStyle = '#ffffff';
+        const particleCount = 180;
+        const windOffset = (now * 0.15) % w;
+        
+        ctx.globalAlpha = 0.75;
+        for (let i = 0; i < particleCount; i++) {
+          const flakeX = ((Math.sin(now / 800 + i * 17) * 0.5 + 0.5) * w + windOffset + i * 20) % w;
+          const flakeY = ((now * 0.12 + i * 23) % h);
+          const flakeR = 1.0 + (i % 3) * 0.8;
+          ctx.beginPath();
+          ctx.arc(flakeX, flakeY, flakeR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = 'rgba(224, 242, 254, 0.08)';
+        ctx.fillRect(0, 0, w, h);
+      } else if (weatherMode === 'RAIN') {
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.2;
+        ctx.globalAlpha = 0.6;
+        const dropCount = 80;
+        
+        for (let i = 0; i < dropCount; i++) {
+          const rx = (i * 37 + now * 0.2) % w;
+          const ry = (i * 53 + now * 0.6) % h;
+          const len = 12 + (i % 5) * 4;
+          ctx.beginPath();
+          ctx.moveTo(rx, ry);
+          ctx.lineTo(rx - 3, ry + len);
+          ctx.stroke();
+        }
+      } else if (weatherMode === 'NIGHT') {
+        const gradient = ctx.createRadialGradient(
+          w / 2, h / 2, Math.min(w, h) * 0.3,
+          w / 2, h / 2, Math.max(w, h) * 0.7
+        );
+        gradient.addColorStop(0, 'rgba(3, 7, 18, 0.35)');
+        gradient.addColorStop(1, 'rgba(2, 6, 23, 0.75)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, w, h);
+      }
       ctx.restore();
     }
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded, trackedWorkerId]);
+
+  // NATIVE NON-PASSIVE WHEEL LISTENER (Fixes "Unable to preventDefault inside passive event listener invocation")
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onNativeWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+
+      setZoomScale(prevScale => {
+        const newScale = Math.max(0.5, Math.min(4.0, prevScale * zoomFactor));
+        if (containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+
+          setPanOffset(prevPan => ({
+            x: mouseX - (mouseX - prevPan.x) * (newScale / prevScale),
+            y: mouseY - (mouseY - prevPan.y) * (newScale / prevScale)
+          }));
+        }
+        return newScale;
+      });
+    };
+
+    el.addEventListener('wheel', onNativeWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onNativeWheel);
+  }, []);
 
   // CONTINUOUS 60 FPS ANIMATION RENDER LOOP!
   useEffect(() => {
@@ -875,26 +958,11 @@ export function useCanvasEngine({
     }
   };
 
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
-    const newScale = Math.max(0.5, Math.min(4.0, zoomScale * zoomFactor));
-
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      const newPanX = mouseX - (mouseX - panOffset.x) * (newScale / zoomScale);
-      const newPanY = mouseY - (mouseY - panOffset.y) * (newScale / zoomScale);
-
-      setZoomScale(newScale);
-      setPanOffset({ x: newPanX, y: newPanY });
-    }
-  };
-
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button === 0) {
+      if (trackedWorkerId && onStopTracking) {
+        onStopTracking();
+      }
       setIsDragging(true);
       setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
     }
@@ -929,20 +997,42 @@ export function useCanvasEngine({
       const pos = pctToLogical(renderPos.x, renderPos.y);
 
       if (Math.hypot(lx - pos.x, ly - pos.y) <= 12) {
-        let taskLabel = 'Ожидание';
+        const getStatusRu = (st: string) => {
+          if (st === 'FREE_STATIONARY' || st === 'FREE_PATROLLING') return '🟢 Свободен (Дежурство)';
+          if (st === 'IN_TRANSIT') return '🚘 В пути на вызов';
+          if (st === 'WORKING_ON_SITE') return '🔧 На объекте (Ремонт)';
+          return st;
+        };
+
+        const getCategoryRu = (cat: string) => {
+          if (cat === 'B1') return 'B1 (Планер и Двигатели)';
+          if (cat === 'B2') return 'B2 (Авионика и Системы)';
+          if (cat === 'A') return 'A (Техник перронного ТО)';
+          return cat;
+        };
+
+        const getBaseRu = (base?: string) => {
+          if (base === 'PTO_NORTH') return 'ПТО-1 (Север B/C)';
+          if (base === 'PTO_SOUTH') return 'ПТО-2 (Юг D/E/F)';
+          if (base === 'HANGAR_BASE') return 'Ангарный комплекс SVO';
+          return base || 'База ПТО';
+        };
+
+        let taskLabel = 'Нет активных задач';
         if (worker.currentTaskId) {
           const task = tasksRef.current.find(t => t.id === worker.currentTaskId);
-          if (task) taskLabel = `Задача ${task.id} (${task.standLabel})`;
+          if (task) taskLabel = `${task.standLabel.replace(/^Стоянка\s*/i, '')} (${task.defectLabel || task.categoryLabel})`;
         }
 
         foundHit = {
           type: 'WORKER',
-          title: `👷 ${worker.name} (${worker.categoryCode})`,
-          subtitle: `${worker.vehicle === 'APRON_VEHICLE' ? '🚘 Спецтранспорт' : '🚶 Пешком'} • ${worker.status}`,
+          title: `👷 ${worker.name}`,
+          subtitle: getCategoryRu(worker.categoryCode),
           details: [
-            { label: '• Статус:', value: worker.status },
-            { label: '• База приписки:', value: worker.baseId },
-            { label: '• Текущая задача:', value: taskLabel }
+            { label: 'Статус:', value: getStatusRu(worker.status) },
+            { label: 'База приписки:', value: getBaseRu(worker.baseId) },
+            { label: 'Транспорт:', value: worker.vehicle === 'APRON_VEHICLE' ? '🚘 Спецавто (25 км/ч)' : '🚶 Пешком (4.5 км/ч)' },
+            { label: 'Текущий вызов:', value: taskLabel }
           ],
           x: e.clientX,
           y: e.clientY
@@ -1029,7 +1119,6 @@ export function useCanvasEngine({
     containerRef,
     canvasRef,
     hoverTooltip,
-    handleWheel,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,

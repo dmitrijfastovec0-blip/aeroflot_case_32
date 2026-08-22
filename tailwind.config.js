@@ -34,8 +34,8 @@ export default {
         }
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Consolas', 'Courier New', 'monospace'],
-        sans: ['Inter', 'system-ui', 'sans-serif']
+        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['JetBrains Mono', 'Inter', 'monospace']
       }
     },
   },
