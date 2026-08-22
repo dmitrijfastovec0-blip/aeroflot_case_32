@@ -11,6 +11,8 @@ import { ShiftConfigModal } from './components/ShiftConfigModal';
 import { AnalyticsModal } from './components/AnalyticsModal';
 import { StandRadialMenu } from './components/StandRadialMenu';
 import { TimelineModal } from './components/TimelineModal';
+import { WorkerEditModal } from './components/WorkerEditModal';
+import { Worker } from './types/index';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
@@ -26,6 +28,9 @@ export function App() {
 
   // Tracked Worker Unit State
   const [trackedWorkerId, setTrackedWorkerId] = useState<string | null>(null);
+
+  // Worker Edit Modal State
+  const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
 
   // Stand Radial Menu State
   const [radialMenu, setRadialMenu] = useState<{ stand: Stand; x: number; y: number } | null>(null);
@@ -63,6 +68,7 @@ export function App() {
     submitTask,
     cancelTask,
     applyShiftConfig,
+    updateWorker,
     dispatchStats,
     roiMetrics,
     weatherMode,
@@ -333,6 +339,15 @@ export function App() {
               showNotification(`🎯 Активирован режим слежения за юнитом ${workerObj.name}`);
             }
           }}
+        />
+
+        {/* Worker Parameter Editor Modal */}
+        <WorkerEditModal
+          worker={editingWorker}
+          isOpen={!!editingWorker}
+          onClose={() => setEditingWorker(null)}
+          onSaveWorker={updateWorker}
+          theme={theme}
         />
       </main>
     </div>

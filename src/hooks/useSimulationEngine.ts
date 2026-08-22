@@ -1002,6 +1002,15 @@ export function useSimulationEngine() {
     return results;
   }, []);
 
+  const updateWorker = useCallback((workerId: string, updates: Partial<Worker>) => {
+    setWorkers(prev => {
+      const next = prev.map(w => w.id === workerId ? { ...w, ...updates } : w);
+      workersRef.current = next;
+      return next;
+    });
+    showNotification(`Параметры специалиста ${workerId} сохранены.`);
+  }, [showNotification]);
+
   return {
     workers,
     tasks,
@@ -1020,6 +1029,7 @@ export function useSimulationEngine() {
     promoteTaskToAog,
     triggerStressTest,
     applyShiftConfig,
+    updateWorker,
     dispatchStats,
     roiMetrics,
     simClockSec,
