@@ -933,6 +933,21 @@ export function useSimulationEngine() {
         showNotification(`🚨 CRITICAL_SLA_ALERT: B2-вызов на стоянку D24, ближайший B2 — на Севере (АК-4), превышение SLA +8.5 мин!`);
         break;
       }
+      case 'hellish': {
+        // Hellish scenario: 66 simultaneous calls across all SVO stands!
+        const defects = ['ATA24', 'ATA32', 'ATA34', 'ATA49', 'ATA72'];
+        const categories: CategoryCode[] = ['B1', 'B2', 'A'];
+
+        for (let i = 0; i < 66; i++) {
+          const stand = SVO_STANDS[i % SVO_STANDS.length];
+          const defect = defects[i % defects.length];
+          const priority: TaskPriority = i < 10 ? 'AOG' : i < 30 ? 'URGENT' : 'ROUTINE';
+          const cat = categories[i % categories.length];
+          enqueueAutoTask(stand.id, cat, priority, defect);
+        }
+        showNotification(`🔥 АДСКИЙ СЦЕНАРИЙ (66 ВЫЗОВОВ): 10 AOG, 20 URGENT, 36 ROUTINE по всем стоянкам SVO!`);
+        break;
+      }
       case 'reset': {
         // Reset all workers to FREE_STATIONARY at home bases, clear everything
         resetShiftToOptimal(true);

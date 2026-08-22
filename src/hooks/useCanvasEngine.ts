@@ -794,74 +794,65 @@ export function useCanvasEngine({
       }
 
       // ----------------------------------------------------------------------
-      // PHYSICAL VEHICLE & UNIT CANVAS GRAPHICS RENDERER
+      // PHYSICAL VEHICLE & UNIT CANVAS GRAPHICS RENDERER (CARPOOLING & MULTI-PASSENGER)
       // ----------------------------------------------------------------------
       const isVehicleUnit = worker.vehicle === 'APRON_VEHICLE' && (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'BOARDING_VEHICLE');
 
       if (isVehicleUnit) {
-        // --- 1. PHYSICAL SPECIAL VEHICLE (СПЕЦАВТОМОБИЛЬ ОТО SVO) ---
+        // --- 1. SLEEK COMPACT SPECIAL VEHICLE (СПЕЦАВТОМОБИЛЬ ОТО SVO) ---
         ctx.save();
-        const vW = 38;
-        const vH = 20;
+        const vW = 28;
+        const vH = 15;
         const vX = pos.x - vW / 2;
         const vY = pos.y - vH / 2;
 
-        // Vehicle Wheels (4 tyres at corners)
-        ctx.fillStyle = '#0f172a';
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 1;
-        // Top-left tyre
-        ctx.fillRect(vX + 3, vY - 3, 7, 4);
-        // Top-right tyre
-        ctx.fillRect(vX + vW - 10, vY - 3, 7, 4);
-        // Bottom-left tyre
-        ctx.fillRect(vX + 3, vY + vH - 1, 7, 4);
-        // Bottom-right tyre
-        ctx.fillRect(vX + vW - 10, vY + vH - 1, 7, 4);
+        // Calculate multi-passenger crew carpooling count
+        const taskWorkers = worker.currentTaskId
+          ? workers.filter(w => w.currentTaskId === worker.currentTaskId && w.vehicle === 'APRON_VEHICLE' && (w.status === 'IN_TRANSIT' || w.status === 'BOARDING_VEHICLE'))
+          : [worker];
+        const crewCount = taskWorkers.length;
+        const crewCodes = Array.from(new Set(taskWorkers.map(w => w.categoryCode))).join('+');
 
         // Soft vehicle glow halo
         ctx.shadowColor = statusColor;
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 10;
 
-        // Vehicle Body Chassis
+        // Sleeker Vehicle Body Chassis
         ctx.fillStyle = theme === 'dark' ? '#0b131f' : '#ffffff';
         ctx.strokeStyle = statusColor;
-        ctx.lineWidth = isAogEmergency ? 2.5 : 1.8;
+        ctx.lineWidth = isAogEmergency ? 2.2 : 1.5;
         ctx.beginPath();
-        ctx.roundRect(vX, vY, vW, vH, 5);
+        ctx.roundRect(vX, vY, vW, vH, 4);
         ctx.fill();
         ctx.stroke();
 
         ctx.shadowBlur = 0;
 
-        // Front Windshield
-        ctx.fillStyle = '#38bdf840';
-        ctx.strokeStyle = '#38bdf888';
-        ctx.lineWidth = 1;
+        // Front Windshield Glass
+        ctx.fillStyle = '#38bdf850';
         ctx.beginPath();
-        ctx.roundRect(vX + vW - 11, vY + 3, 7, vH - 6, 2);
+        ctx.roundRect(vX + vW - 8, vY + 2, 5, vH - 4, 1.5);
         ctx.fill();
-        ctx.stroke();
 
-        // Flashing Amber/Rose Roof Beacon (Проблесковый маячок спецтехники)
+        // Flashing Amber/Rose Roof Beacon LED (Проблесковый маячок спецтехники)
         const beaconColor = isAogEmergency ? '#f43f5e' : '#f59e0b';
         const beaconPulse = Math.sin(now / 80) * 0.5 + 0.5;
         ctx.fillStyle = beaconColor;
         ctx.shadowColor = beaconColor;
-        ctx.shadowBlur = 10 * beaconPulse;
+        ctx.shadowBlur = 8 * beaconPulse;
         ctx.beginPath();
-        ctx.arc(pos.x - 3, pos.y, 3 + beaconPulse * 1.5, 0, Math.PI * 2);
+        ctx.arc(pos.x - 3, pos.y, 2.5 + beaconPulse * 1.2, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        // Vehicle Identification Text: 🚘 B1 / 🚘 B2
+        // Vehicle Identification Text inside chassis: 🚘 B1 / 🚘 👥3
         ctx.fillStyle = statusColor;
-        ctx.font = '800 10px "JetBrains Mono", monospace';
+        ctx.font = '800 9px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`🚘 ${worker.categoryCode}`, pos.x - 3, pos.y);
+        ctx.fillText(crewCount > 1 ? `👥${crewCount}` : worker.categoryCode, pos.x - 2, pos.y);
 
-        // Top Floating Vehicle Plate Label
+        // Top Floating Vehicle Plate Badge with Multi-Passenger Info
         const vehIndex = (hash % 12) + 1;
         const vehLabel = `АВТО-${vehIndex < 10 ? '0' : ''}${vehIndex}`;
 
@@ -869,12 +860,13 @@ export function useCanvasEngine({
           // Boarding prep badge
           const prepSec = Math.ceil(worker.boardingSecRemaining || 30);
           ctx.fillStyle = '#f59e0b';
-          ctx.font = '800 9px "Montserrat Alternates", sans-serif';
-          ctx.fillText(`📦 ПОГРУЗКА ИНСТРУМЕНТА (${prepSec}с)`, pos.x, vY - 8);
+          ctx.font = '800 8.5px "Montserrat Alternates", sans-serif';
+          ctx.fillText(`📦 ПОГРУЗКА ИНСТРУМЕНТА (${prepSec}с)`, pos.x, vY - 6);
         } else {
           ctx.fillStyle = statusColor;
-          ctx.font = '700 9px "JetBrains Mono", monospace';
-          ctx.fillText(`🚘 ${vehLabel} (${worker.categoryCode})`, pos.x, vY - 8);
+          ctx.font = '700 8.5px "JetBrains Mono", monospace';
+          const passengerBadge = crewCount > 1 ? `🚘 ${vehLabel} (👥${crewCount} ${crewCodes})` : `🚘 ${vehLabel} (${worker.categoryCode})`;
+          ctx.fillText(passengerBadge, pos.x, vY - 6);
         }
 
         ctx.restore();
