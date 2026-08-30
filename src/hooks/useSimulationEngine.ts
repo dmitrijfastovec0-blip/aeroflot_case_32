@@ -15,7 +15,7 @@ import {
   resetWeatherOverrides,
   getWeatherSpeeds
 } from '../services/dijkstra';
-import { computeDispatchPlan } from '../core/dispatcher';
+import { computeDispatchPlan, pathSpeedFor } from '../core/dispatcher';
 import { formatSimClock } from '../utils/time';
 
 // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
@@ -1088,6 +1088,40 @@ export function useSimulationEngine() {
     showNotification(`Параметры специалиста ${workerId} сохранены.`);
   }, [showNotification]);
 
+  const manuallyAssignTask = useCallback((taskId: string, workerId: string) => {
+    const task = tasksRef.current.find(t => t.id === taskId);
+    const worker = workersRef.current.find(w => w.id === workerId);
+    const stand = task ? STAND_BY_ID.get(task.standId) : undefined;
+    if (!task || !worker || !stand || task.status !== 'QUEUED') return;
+    if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') return;
+
+    const member = calculateWorkerToStandEta(worker, stand);
+    const nextWorker = {
+      ...worker,
+      status: 'IN_TRANSIT' as const,
+      currentTaskId: task.id,
+      pathWaypoints: member.waypoints,
+      pathSpeedPctPerSimSec: pathSpeedFor(member),
+      currentSegmentIndex: 0,
+      dispatchedCount: (worker.dispatchedCount || 0) + 1
+    };
+    const nextTask = {
+      ...task,
+      status: 'DISPATCHED' as const,
+      crew: [member],
+      arrivedCount: 0,
+      maxEtaMinutes: member.etaMinutes,
+      waitingReason: undefined,
+      startedAtSimSec: task.startedAtSimSec ?? simClockRef.current
+    };
+
+    workersRef.current = workersRef.current.map(w => w.id === workerId ? nextWorker : w);
+    tasksRef.current = tasksRef.current.map(t => t.id === taskId ? nextTask : t);
+    setWorkers([...workersRef.current]);
+    setTasks([...tasksRef.current]);
+    showNotification(`Ручное назначение: ${worker.name} направлен на ${task.standLabel}.`);
+  }, [showNotification]);
+
   return {
     workers,
     tasks,
@@ -1107,6 +1141,7 @@ export function useSimulationEngine() {
     triggerStressTest,
     applyShiftConfig,
     updateWorker,
+    manuallyAssignTask,
     dispatchStats,
     roiMetrics,
     simClockSec,

@@ -4,7 +4,7 @@ import { SVO_STANDS, DEFECT_TYPES } from '../constants/index';
 import { CrewRequirement } from '../constants/index';
 import { findNearestFreeWorkerOfExactCategory } from '../services/dijkstra';
 import { calculateTaskTransitProgressPct, formatCompletedTaskDuration } from '../utils/progress';
-import { Wrench, Rocket, MapPin, Users, ChevronRight, ChevronLeft, Zap, Target, CheckCircle2, ChevronDown, Activity, Clock, Archive } from 'lucide-react';
+import { Wrench, Rocket, MapPin, Users, ChevronRight, ChevronLeft, Zap, Target, CheckCircle2, ChevronDown, Activity, Clock, Archive, UserRoundCheck } from 'lucide-react';
 
 interface RightPanelProps {
   selectedStandId: string | null;
@@ -12,6 +12,7 @@ interface RightPanelProps {
   workers: Worker[];
   tasks: OtoTask[];
   onLaunchTask: (task: OtoTask) => void;
+  onManualAssign?: (taskId: string, workerId: string) => void;
   onTriggerSlaAlert: (task: OtoTask) => void;
   onNotify: (msg: string) => void;
   activeTaskForStand?: OtoTask | null;
@@ -30,6 +31,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
   workers,
   tasks,
   onLaunchTask,
+  onManualAssign,
   onTriggerSlaAlert,
   onNotify,
   activeTaskForStand,
@@ -43,6 +45,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
   const [panelMode, setPanelMode] = useState<'SCENARIO_MONITOR' | 'ARCHIVE' | 'CREATE'>('SCENARIO_MONITOR');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [manualWorkerByTask, setManualWorkerByTask] = useState<Record<string, string>>({});
 
   // Auto-open panel when a scenario is launched or tasks are active
   useEffect(() => {
@@ -266,8 +269,13 @@ export const RightPanel = React.memo<RightPanelProps>(({
               <div className="space-y-2">
                 {tasks.map((task) => {
                   const isExpanded = expandedTaskId === task.id;
-                  const isAog = task.priority === 'AOG';
-                  const isCompleted = task.status === 'COMPLETED';
+                   const isAog = task.priority === 'AOG';
+                   const isCompleted = task.status === 'COMPLETED';
+                   const slaRemaining = Math.round((SLA_LIMIT - (task.elapsedQueueSec || 0) / 60 - (task.maxEtaMinutes || 0)) * 10) / 10;
+                   const slaState = slaRemaining <= 0 ? 'breach' : slaRemaining <= 5 ? 'warning' : 'ok';
+                   const manualCandidates = task.status === 'QUEUED' && (task.requiredCrew?.reduce((sum, r) => sum + r.count, 0) || 1) === 1
+                     ? workers.filter(w => (w.categoryCode === task.categoryCode || task.categoryCode === 'A') && (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING'))
+                     : [];
 
                   // 1. Smooth Physical Transit Progress (Путь)
                   const transitPct = calculateTaskTransitProgressPct(task, workers);
@@ -320,9 +328,16 @@ export const RightPanel = React.memo<RightPanelProps>(({
                           </div>
                         </div>
 
-                        <div className={`text-[11px] font-semibold line-clamp-1 ${isCompleted ? 'text-emerald-100' : 'text-slate-600 dark:text-gray-300'}`}>
-                          🔧 {task.defectLabel || task.categoryLabel}
-                        </div>
+                         <div className={`text-[11px] font-semibold line-clamp-1 ${isCompleted ? 'text-emerald-100' : 'text-slate-600 dark:text-gray-300'}`}>
+                           🔧 {task.defectLabel || task.categoryLabel}
+                         </div>
+
+                         {!isCompleted && (
+                           <div className={`flex items-center justify-between text-[10px] font-bold ${slaState === 'breach' ? 'text-red-400' : slaState === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                             <span>SLA</span>
+                             <span>{slaState === 'breach' ? `нарушен на ${Math.abs(slaRemaining).toFixed(1)} мин` : `${slaRemaining.toFixed(1)} мин запаса`}</span>
+                           </div>
+                         )}
 
                         {/* LIVE SMOOTH MINIMAL PROGRESS BARS (NO CLUTTERING TEXT ABOVE) */}
                         {!isCompleted ? (
@@ -399,7 +414,33 @@ export const RightPanel = React.memo<RightPanelProps>(({
                             })()}
                           </div>
 
-                          {/* Crew Workers as Action Buttons with Camera Fix */}
+                           {manualCandidates.length > 0 && onManualAssign && (
+                             <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 space-y-2">
+                               <div className="text-[10px] font-bold uppercase text-amber-400 flex items-center gap-1">
+                                 <UserRoundCheck className="w-3 h-3" /> Ручное назначение
+                               </div>
+                               <div className="flex gap-2">
+                                 <select
+                                   value={manualWorkerByTask[task.id] || ''}
+                                   onChange={e => setManualWorkerByTask(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                   onClick={e => e.stopPropagation()}
+                                   className="min-w-0 flex-1 rounded-lg border border-slate-300 dark:border-[#263345] bg-white dark:bg-[#121820] px-2 py-1.5 text-[10px] font-bold"
+                                 >
+                                   <option value="">Выбрать специалиста</option>
+                                   {manualCandidates.map(w => <option key={w.id} value={w.id}>{w.name} · {w.categoryCode}</option>)}
+                                 </select>
+                                 <button
+                                   disabled={!manualWorkerByTask[task.id]}
+                                   onClick={e => { e.stopPropagation(); onManualAssign(task.id, manualWorkerByTask[task.id]); }}
+                                   className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-extrabold text-slate-950 disabled:opacity-40"
+                                 >
+                                   Назначить
+                                 </button>
+                               </div>
+                             </div>
+                           )}
+
+                           {/* Crew Workers as Action Buttons with Camera Fix */}
                           <div className="space-y-1">
                             <div className={`text-[10px] font-bold uppercase flex items-center gap-1 ${
                               isCompleted ? 'text-emerald-200' : 'text-gray-400'

@@ -21,8 +21,6 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
   theme,
   simClockSec = 0
 }) => {
-  if (!isOpen) return null;
-
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const currentSimMin = Math.floor(simClockSec / 60);
 
@@ -107,6 +105,8 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
       tableContainerRef.current.scrollLeft += e.deltaY;
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-md animate-fadeIn font-mono">

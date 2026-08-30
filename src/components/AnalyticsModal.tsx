@@ -140,8 +140,6 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   roiMetrics,
   theme
 }) => {
-  if (!isOpen) return null;
-
   const [selectedAlgoId, setSelectedAlgoId] = useState<DispatchAlgorithm>('HUNGARIAN_MINCOST');
   const selectedAlgo = ALGORITHMS.find(a => a.id === selectedAlgoId) || ALGORITHMS[0];
 
@@ -154,6 +152,8 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   const modalBg = theme === 'dark'
     ? 'bg-[#070a0e]/95 border-[#1e2a3a] text-gray-100 backdrop-blur-2xl shadow-2xl'
     : 'bg-white/95 border-slate-200 text-slate-900 backdrop-blur-2xl shadow-2xl';
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md select-none animate-fadeIn font-mono text-sm">

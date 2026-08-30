@@ -212,6 +212,7 @@ interface UseCanvasEngineProps {
   tasksRef: React.MutableRefObject<OtoTask[]>;
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
+  onOpenStandContext?: (standId: string) => void;
   theme: ThemeMode;
   weatherMode?: WeatherMode;
   isDevMode: boolean;
@@ -227,6 +228,7 @@ export function useCanvasEngine({
   tasksRef,
   selectedStandId,
   onSelectStand,
+  onOpenStandContext,
   theme,
   weatherMode = 'CLEAR',
   isDevMode,
@@ -370,6 +372,25 @@ export function useCanvasEngine({
       ctx.stroke();
     }
     ctx.restore();
+
+    // Keep the selected call readable without adding another permanent map layer.
+    const selectedTask = tasks.find(t => t.standId === selectedStandId && t.status !== 'COMPLETED');
+    const selectedRoute = selectedTask?.crew.flatMap(member => member.waypoints).filter(Boolean) || [];
+    if (selectedRoute.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = selectedTask?.priority === 'AOG' ? '#fb7185' : '#38bdf8';
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      selectedRoute.forEach((point, index) => {
+        const pos = pctToLogical(point.x, point.y);
+        if (index === 0) ctx.moveTo(pos.x, pos.y);
+        else ctx.lineTo(pos.x, pos.y);
+      });
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // SVO Buildings & Runways (Faint, non-intrusive decor shapes)
     SVO_BUILDINGS.forEach(bld => {
@@ -1034,7 +1055,7 @@ export function useCanvasEngine({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, showMapSublayer, isMapImageLoaded, trackedWorkerId]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, isMapImageLoaded, trackedWorkerId]);
 
   // NATIVE NON-PASSIVE WHEEL LISTENER (Fixes "Unable to preventDefault inside passive event listener invocation")
   useEffect(() => {
@@ -1272,6 +1293,7 @@ export function useCanvasEngine({
       const pos = pctToLogical(stand.x, stand.y);
       if (Math.abs(lx - pos.x) <= 28 && Math.abs(ly - pos.y) <= 18) {
         onSelectStand(stand.id);
+        onOpenStandContext?.(stand.id);
         break;
       }
     }

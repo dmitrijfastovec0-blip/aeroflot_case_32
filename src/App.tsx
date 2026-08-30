@@ -69,6 +69,7 @@ export function App() {
     cancelTask,
     applyShiftConfig,
     updateWorker,
+    manuallyAssignTask,
     dispatchStats,
     roiMetrics,
     weatherMode,
@@ -283,11 +284,13 @@ export function App() {
         <CanvasMap
           workersRef={workersRef}
           tasksRef={tasksRef}
-          selectedStandId={selectedStandId}
-          onSelectStand={(standId) => {
-            setSelectedStandId(standId);
-            const standObj = SVO_STANDS.find(s => s.id === standId);
-            if (standObj) {
+           selectedStandId={selectedStandId}
+           onSelectStand={(standId) => {
+             setSelectedStandId(standId);
+           }}
+           onOpenStandContext={(standId) => {
+             const standObj = SVO_STANDS.find(s => s.id === standId);
+             if (standObj) {
               const rect = document.body.getBoundingClientRect();
               setRadialMenu({ stand: standObj, x: rect.width / 2, y: rect.height / 2 });
             }
@@ -307,7 +310,8 @@ export function App() {
           onSelectStand={setSelectedStandId}
           workers={workers}
           tasks={tasks}
-          onLaunchTask={handleLaunchTaskSubmit}
+           onLaunchTask={handleLaunchTaskSubmit}
+           onManualAssign={manuallyAssignTask}
           onTriggerSlaAlert={handleTriggerSlaAlert}
           onNotify={showNotification}
           activeTaskForStand={activeTaskForSelectedStand}

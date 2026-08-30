@@ -7,6 +7,7 @@ interface CanvasMapProps {
   tasksRef: React.MutableRefObject<OtoTask[]>;
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
+  onOpenStandContext?: (standId: string) => void;
   theme: ThemeMode;
   weatherMode?: WeatherMode;
   isDevMode: boolean;
