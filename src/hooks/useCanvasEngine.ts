@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Worker, OtoTask, HoverTooltipData, ThemeMode, WeatherMode, TaskCrewMember } from '../types/index';
+import { Worker, OtoTask, HoverTooltipData, ThemeMode, WeatherMode, TaskCrewMember, AirportElement } from '../types/index';
 import { SVO_BUILDINGS, SVO_FACILITIES, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
 
 // Polyfill for CanvasRenderingContext2D.roundRect (missing in older Safari/Firefox)
@@ -213,6 +213,7 @@ interface UseCanvasEngineProps {
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   onOpenStandContext?: (standId: string) => void;
+  customElements?: AirportElement[];
   theme: ThemeMode;
   weatherMode?: WeatherMode;
   isDevMode: boolean;
@@ -229,6 +230,7 @@ export function useCanvasEngine({
   selectedStandId,
   onSelectStand,
   onOpenStandContext,
+  customElements = [],
   theme,
   weatherMode = 'CLEAR',
   isDevMode,
@@ -245,19 +247,6 @@ export function useCanvasEngine({
   // coords), stroked 3×/frame with different styles + dash offsets. Avoids
   // rebuilding Map/Set/sort topology on every animation frame (GC churn).
   const roadPathRef = useRef<Path2D | null>(null);
-
-  // Raster Image Sublayer Ref (svo.png)
-  const mapImageRef = useRef<HTMLImageElement | null>(null);
-  const [isMapImageLoaded, setIsMapImageLoaded] = useState<boolean>(false);
-
-  useEffect(() => {
-    const img = new Image();
-    img.src = '/svo.png';
-    img.onload = () => {
-      mapImageRef.current = img;
-      setIsMapImageLoaded(true);
-    };
-  }, []);
 
   // Pan & Zoom Matrix
   const [zoomScale, setZoomScale] = useState<number>(1.0);
@@ -345,14 +334,6 @@ export function useCanvasEngine({
     ctx.save();
     ctx.translate(ps.x, ps.y);
     ctx.scale(zs, zs);
-
-    // RASTER BACKGROUND SUBLAYER (svo.png)
-    if (showMapSublayer && mapImageRef.current && isMapImageLoaded) {
-      ctx.save();
-      ctx.globalAlpha = theme === 'dark' ? 0.18 : 0.28;
-      ctx.drawImage(mapImageRef.current, 0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
-      ctx.restore();
-    }
 
     // CAD Grid (Ultra subtle backdrop decor)
     ctx.save();
@@ -470,6 +451,26 @@ export function useCanvasEngine({
           ctx.fillText(bld.name, labelPos.x, labelPos.y);
         }
       }
+      ctx.restore();
+    });
+
+    customElements.forEach(element => {
+      const pos = pctToLogical(element.x, element.y);
+      const width = (element.width || 8) / 100 * LOGICAL_WIDTH;
+      const height = (element.height || 5) / 100 * LOGICAL_HEIGHT;
+      ctx.save();
+      ctx.fillStyle = element.kind === 'RUNWAY' ? 'rgba(148,163,184,.28)' : 'rgba(56,189,248,.16)';
+      ctx.strokeStyle = element.kind === 'RUNWAY' ? '#94a3b8' : '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.translate(pos.x, pos.y);
+      ctx.rotate(element.kind === 'RUNWAY' ? -0.08 : 0);
+      ctx.fillRect(-width / 2, -height / 2, width, height);
+      ctx.strokeRect(-width / 2, -height / 2, width, height);
+      ctx.rotate(element.kind === 'RUNWAY' ? 0.08 : 0);
+      ctx.fillStyle = '#bae6fd';
+      ctx.font = '600 10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(element.label, 0, height / 2 + 13);
       ctx.restore();
     });
 
@@ -1055,7 +1056,7 @@ export function useCanvasEngine({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, isMapImageLoaded, trackedWorkerId]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, trackedWorkerId, customElements]);
 
   // NATIVE NON-PASSIVE WHEEL LISTENER (Fixes "Unable to preventDefault inside passive event listener invocation")
   useEffect(() => {

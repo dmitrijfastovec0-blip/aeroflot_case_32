@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { OtoTask, ThemeMode, Stand, WeatherMode } from './types/index';
+import { OtoTask, ThemeMode, Stand, WeatherMode, AirportElement } from './types/index';
 import { SVO_STANDS, DEFECT_TYPES } from './constants/index';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { Header } from './components/Header';
@@ -13,6 +13,7 @@ import { StandRadialMenu } from './components/StandRadialMenu';
 import { TimelineModal } from './components/TimelineModal';
 import { WorkerEditModal } from './components/WorkerEditModal';
 import { Worker } from './types/index';
+import { LocationBuilderModal } from './components/LocationBuilderModal';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
@@ -40,6 +41,8 @@ export function App() {
 
   // Shift Personnel Config Modal State
   const [isShiftModalOpen, setIsShiftModalOpen] = useState<boolean>(false);
+  const [isLocationBuilderOpen, setIsLocationBuilderOpen] = useState(false);
+  const [customElements, setCustomElements] = useState<AirportElement[]>([]);
   const [shiftCounts, setShiftCounts] = useState({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
   // Sync theme with HTML root class
@@ -214,6 +217,18 @@ export function App() {
         theme={theme}
       />
 
+      <LocationBuilderModal
+        isOpen={isLocationBuilderOpen}
+        onClose={() => setIsLocationBuilderOpen(false)}
+        elements={customElements}
+        onSave={setCustomElements}
+        onOpenShift={() => {
+          setIsLocationBuilderOpen(false);
+          setIsShiftModalOpen(true);
+        }}
+        theme={theme}
+      />
+
       {/* Comparative Analytics Dashboard Modal */}
       <AnalyticsModal
         isOpen={isAnalyticsOpen}
@@ -269,7 +284,7 @@ export function App() {
         onTogglePause={() => setIsPaused(prev => !prev)}
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-        onOpenShiftConfig={() => setIsShiftModalOpen(true)}
+         onOpenShiftConfig={() => setIsLocationBuilderOpen(true)}
         roiMetrics={roiMetrics}
         onRunScenario={runScenario}
         weatherMode={weatherMode}
@@ -294,11 +309,12 @@ export function App() {
               const rect = document.body.getBoundingClientRect();
               setRadialMenu({ stand: standObj, x: rect.width / 2, y: rect.height / 2 });
             }
-          }}
+           }}
+           customElements={customElements}
           theme={theme}
           weatherMode={weatherMode}
           isDevMode={false}
-          showMapSublayer={true}
+           showMapSublayer={false}
           trackedWorkerId={trackedWorkerId}
           onStopTracking={() => setTrackedWorkerId(null)}
           onSelectWorker={(w) => setEditingWorker(w)}

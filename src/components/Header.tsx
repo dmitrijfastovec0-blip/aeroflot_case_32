@@ -246,10 +246,10 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={onOpenShiftConfig}
           className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-[#263345] text-sm font-mono font-bold text-slate-800 dark:text-gray-200 transition-colors cursor-pointer"
-          title="Настройка состава смены"
+           title="Открыть конструктор локации"
         >
           <Settings2 className="w-4 h-4 text-emerald-400" />
-          <span>Смена</span>
+           <span>Локация</span>
         </button>
       </div>
     </header>

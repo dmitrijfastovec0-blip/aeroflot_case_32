@@ -414,7 +414,18 @@ export const RightPanel = React.memo<RightPanelProps>(({
                             })()}
                           </div>
 
-                           {manualCandidates.length > 0 && onManualAssign && (
+                          <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2.5 text-[11px]">
+                            <div className="mb-1 text-[10px] font-bold uppercase text-sky-400">Почему принято это решение</div>
+                            <p className="leading-relaxed text-slate-600 dark:text-gray-300">
+                              {task.waitingReason
+                                ? task.waitingReason
+                                : task.crew.length > 0
+                                  ? `Назначены ${task.crew.map(member => `${member.workerName} (${member.categoryCode})`).join(', ')}: минимальный маршрут до стоянки с учётом квалификации и SLA.`
+                                  : 'Система подбирает полный состав бригады по регламенту задачи.'}
+                            </p>
+                          </div>
+
+                          {manualCandidates.length > 0 && onManualAssign && (
                              <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 space-y-2">
                                <div className="text-[10px] font-bold uppercase text-amber-400 flex items-center gap-1">
                                  <UserRoundCheck className="w-3 h-3" /> Ручное назначение

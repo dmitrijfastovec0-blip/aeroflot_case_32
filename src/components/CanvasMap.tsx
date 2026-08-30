@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Worker, OtoTask, ThemeMode, WeatherMode } from '../types/index';
+import { Worker, OtoTask, ThemeMode, WeatherMode, AirportElement } from '../types/index';
 import { useCanvasEngine } from '../hooks/useCanvasEngine';
 
 interface CanvasMapProps {
@@ -8,6 +8,7 @@ interface CanvasMapProps {
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   onOpenStandContext?: (standId: string) => void;
+  customElements?: AirportElement[];
   theme: ThemeMode;
   weatherMode?: WeatherMode;
   isDevMode: boolean;

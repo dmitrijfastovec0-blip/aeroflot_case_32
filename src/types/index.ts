@@ -37,6 +37,18 @@ export interface Stand {
   status?: 'IDLE' | 'HAS_TASK';
 }
 
+export type AirportElementKind = 'TERMINAL' | 'HANGAR' | 'PARKING' | 'RUNWAY' | 'STAND' | 'DUTY_STATION';
+
+export interface AirportElement {
+  id: string;
+  kind: AirportElementKind;
+  label: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+}
+
 export type WorkerStatus =
   | 'FREE_STATIONARY'    // 🟢 Свободен на базе
   | 'FREE_PATROLLING'     // 🟢 Свободен, патрулирует перрон
