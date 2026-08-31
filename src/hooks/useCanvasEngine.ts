@@ -1003,6 +1003,10 @@ export function useCanvasEngine({
       const routeGlow = isAog ? 'rgba(239, 68, 68, 0.25)' : 'rgba(56, 189, 248, 0.25)';
 
       const pts = w.pathWaypoints.map(pt => pctToLogical(pt.x, pt.y));
+      const currIdx = w.currentSegmentIndex || 0;
+      const livePt = pctToLogical(w.x, w.y);
+      const remainingPts = [livePt, ...pts.slice(currIdx + 1)];
+      if (remainingPts.length < 2) return;
 
       ctx.save();
       ctx.lineCap = 'round';
@@ -1012,9 +1016,9 @@ export function useCanvasEngine({
       ctx.strokeStyle = routeGlow;
       ctx.lineWidth = 7;
       ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.moveTo(remainingPts[0].x, remainingPts[0].y);
+      for (let i = 1; i < remainingPts.length; i++) {
+        ctx.lineTo(remainingPts[i].x, remainingPts[i].y);
       }
       ctx.stroke();
 
@@ -1024,9 +1028,9 @@ export function useCanvasEngine({
       ctx.shadowColor = routeColor;
       ctx.shadowBlur = 8;
       ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.moveTo(remainingPts[0].x, remainingPts[0].y);
+      for (let i = 1; i < remainingPts.length; i++) {
+        ctx.lineTo(remainingPts[i].x, remainingPts[i].y);
       }
       ctx.stroke();
       ctx.shadowBlur = 0;
@@ -1038,18 +1042,18 @@ export function useCanvasEngine({
       ctx.setLineDash([4, 12]);
       ctx.lineDashOffset = dashOffset * 1.2;
       ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.moveTo(remainingPts[0].x, remainingPts[0].y);
+      for (let i = 1; i < remainingPts.length; i++) {
+        ctx.lineTo(remainingPts[i].x, remainingPts[i].y);
       }
       ctx.stroke();
       ctx.setLineDash([]);
 
       // 4. Waypoint Node Dots
       ctx.fillStyle = routeColor;
-      for (let i = 0; i < pts.length; i++) {
+      for (let i = 1; i < remainingPts.length; i++) {
         ctx.beginPath();
-        ctx.arc(pts[i].x, pts[i].y, i === pts.length - 1 ? 4 : 2.5, 0, Math.PI * 2);
+        ctx.arc(remainingPts[i].x, remainingPts[i].y, i === remainingPts.length - 1 ? 4 : 2.5, 0, Math.PI * 2);
         ctx.fill();
       }
 
