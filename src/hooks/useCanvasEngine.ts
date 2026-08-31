@@ -380,7 +380,7 @@ export function useCanvasEngine({
       });
     }
 
-    const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
+    const isCustomMode = airfieldMode === 'CUSTOM';
 
     if (isCustomMode) {
       // 1. CUSTOM CONNECTIONS (Drawn under elements)
@@ -1321,7 +1321,7 @@ export function useCanvasEngine({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, trackedWorkerId, customElements, customConnections]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, trackedWorkerId, customElements, customConnections, airfieldMode]);
 
   // NATIVE NON-PASSIVE WHEEL LISTENER (Fixes "Unable to preventDefault inside passive event listener invocation")
   useEffect(() => {
@@ -1414,7 +1414,7 @@ export function useCanvasEngine({
     const lx = (rawX - panOffset.x) / zoomScale;
     const ly = (rawY - panOffset.y) / zoomScale;
 
-    const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
+    const isCustomMode = airfieldMode === 'CUSTOM';
 
     // Hit Testing for Hover
     let foundNodeId: string | null = null;
@@ -1575,7 +1575,7 @@ export function useCanvasEngine({
     const lx = (rawX - panOffset.x) / zoomScale;
     const ly = (rawY - panOffset.y) / zoomScale;
 
-    const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
+    const isCustomMode = airfieldMode === 'CUSTOM';
 
     const pctX = Math.round((lx / LOGICAL_WIDTH) * 1000) / 10;
     const pctY = Math.round((ly / LOGICAL_HEIGHT) * 1000) / 10;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { OtoTask, ThemeMode, Stand, WeatherMode, AirportElement, AirportConnection, AirfieldMode, Worker } from './types/index';
-import { SVO_STANDS, DEFECT_TYPES } from './constants/index';
+import { SVO_STANDS, DEFECT_TYPES, DEFAULT_CUSTOM_ELEMENTS, DEFAULT_CUSTOM_CONNECTIONS } from './constants/index';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { Header } from './components/Header';
 import { CanvasMap } from './components/CanvasMap';
@@ -42,8 +42,8 @@ export function App() {
   const [isShiftModalOpen, setIsShiftModalOpen] = useState<boolean>(false);
   const [isLocationBuilderOpen, setIsLocationBuilderOpen] = useState(false);
   const [airfieldMode, setAirfieldMode] = useState<AirfieldMode>('SVO');
-  const [customElements, setCustomElements] = useState<AirportElement[]>([]);
-  const [customConnections, setCustomConnections] = useState<AirportConnection[]>([]);
+  const [customElements, setCustomElements] = useState<AirportElement[]>(DEFAULT_CUSTOM_ELEMENTS);
+  const [customConnections, setCustomConnections] = useState<AirportConnection[]>(DEFAULT_CUSTOM_CONNECTIONS);
   const [shiftCounts, setShiftCounts] = useState({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
   // Sync theme with HTML root class
@@ -84,6 +84,16 @@ export function App() {
     activeFacilities,
     simClockSec
   } = useSimulationEngine(customElements, customConnections, airfieldMode);
+
+  // Keep selected stand valid across airfield modes (SVO <-> CUSTOM)
+  useEffect(() => {
+    if (activeStands.length > 0) {
+      const exists = activeStands.some(s => s.id === selectedStandId);
+      if (!exists) {
+        setSelectedStandId(activeStands[0].id);
+      }
+    }
+  }, [activeStands, selectedStandId]);
 
   // GLOBAL KEYBOARD SHORTCUTS HANDLER
   useEffect(() => {

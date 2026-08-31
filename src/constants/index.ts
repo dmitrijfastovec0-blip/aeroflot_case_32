@@ -267,3 +267,31 @@ export const DEFECT_TYPES: DefectType[] = [
 // Справочная стоимость простоя ВС (₽/мин) для экономического обоснования
 // Значение настраиваемое — команда подставляет обоснованную оценку для ПАО «Аэрофлот».
 export const AIRCRAFT_DOWNTIME_COST_PER_MIN = 13500;
+
+export const DEFAULT_CUSTOM_ELEMENTS = [
+  { id: 'CUST-RWY-1', kind: 'RUNWAY' as const, label: 'ВПП 06L/24R', x: 50, y: 12, width: 76, height: 4 },
+  { id: 'CUST-TERM-1', kind: 'TERMINAL' as const, label: 'Терминал А', x: 50, y: 26, width: 28, height: 8 },
+  { id: 'CUST-PTO-1', kind: 'DUTY_STATION' as const, label: 'ПТО-1', x: 28, y: 64, width: 8, height: 6 },
+  { id: 'CUST-PARK-1', kind: 'PARKING' as const, label: 'Автопарк спецтехники', x: 50, y: 68, width: 12, height: 6 },
+  { id: 'CUST-HANG-1', kind: 'HANGAR' as const, label: 'Ангар ТОиР', x: 72, y: 64, width: 14, height: 7 },
+  { id: 'CUST-ST-1', kind: 'STAND' as const, label: '101', aircraftType: 'Airbus A320-200', x: 18, y: 38, width: 7, height: 5 },
+  { id: 'CUST-ST-2', kind: 'STAND' as const, label: '102', aircraftType: 'Boeing 737-800', x: 28, y: 38, width: 7, height: 5 },
+  { id: 'CUST-ST-3', kind: 'STAND' as const, label: '103', aircraftType: 'МС-21-300', x: 40, y: 38, width: 7, height: 5 },
+  { id: 'CUST-ST-4', kind: 'STAND' as const, label: '104', aircraftType: 'SSJ-100', x: 60, y: 38, width: 7, height: 5 },
+  { id: 'CUST-ST-5', kind: 'STAND' as const, label: '105', aircraftType: 'Boeing 777-300ER', x: 72, y: 38, width: 7, height: 5 },
+  { id: 'CUST-ST-6', kind: 'STAND' as const, label: '106', aircraftType: 'Airbus A320-200', x: 82, y: 38, width: 7, height: 5 }
+];
+
+export const DEFAULT_CUSTOM_CONNECTIONS = [
+  { id: 'L-1', from: 'CUST-ST-1', to: 'CUST-ST-2', kind: 'ROAD' as const },
+  { id: 'L-2', from: 'CUST-ST-2', to: 'CUST-ST-3', kind: 'ROAD' as const },
+  { id: 'L-3', from: 'CUST-ST-3', to: 'CUST-ST-4', kind: 'ROAD' as const },
+  { id: 'L-4', from: 'CUST-ST-4', to: 'CUST-ST-5', kind: 'ROAD' as const },
+  { id: 'L-5', from: 'CUST-ST-5', to: 'CUST-ST-6', kind: 'ROAD' as const },
+  { id: 'L-6', from: 'CUST-ST-2', to: 'CUST-PTO-1', kind: 'ROAD' as const },
+  { id: 'L-7', from: 'CUST-ST-3', to: 'CUST-PARK-1', kind: 'ROAD' as const },
+  { id: 'L-8', from: 'CUST-ST-4', to: 'CUST-PARK-1', kind: 'ROAD' as const },
+  { id: 'L-9', from: 'CUST-ST-5', to: 'CUST-HANG-1', kind: 'ROAD' as const },
+  { id: 'L-10', from: 'CUST-PTO-1', to: 'CUST-PARK-1', kind: 'ROAD' as const },
+  { id: 'L-11', from: 'CUST-PARK-1', to: 'CUST-HANG-1', kind: 'ROAD' as const }
+];
