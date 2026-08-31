@@ -112,7 +112,7 @@ export function App() {
       } else if (e.key === '2') {
         setSimSpeed(10);
       } else if (e.key === '3') {
-        setSimSpeed(100);
+        setSimSpeed(50);
       } else if (e.key === 'Escape' || e.code === 'Escape') {
         // Clear tracking, modals, radial menu
         setTrackedWorkerId(null);

@@ -69,21 +69,21 @@ export const Header: React.FC<HeaderProps> = ({
   const fmtMin = (n: number) => n.toFixed(1);
 
   return (
-    <header className="h-14 min-h-[56px] px-4 flex items-center justify-between z-30 select-none transition-colors border-b backdrop-blur-md bg-opacity-90 dark:bg-[#070a0e]/95 bg-white/95 border-[#1e293b] dark:border-[#1e293b] border-slate-200">
+    <header className="h-14 min-h-[56px] max-h-[56px] px-4 flex items-center justify-between z-30 select-none transition-colors border-b backdrop-blur-md bg-opacity-90 dark:bg-[#070a0e]/95 bg-white/95 border-[#1e293b] dark:border-[#1e293b] border-slate-200 shrink-0 overflow-hidden">
       <div className="flex items-center space-x-3 shrink-0 font-mono">
         <button
           onClick={onToggleTheme}
-          className="p-2.5 rounded-xl border border-slate-300 dark:border-[#263345] bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 text-amber-500 dark:text-sky-400 transition-all cursor-pointer shadow-sm"
+          className="p-2 rounded-xl border border-slate-300 dark:border-[#263345] bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 text-amber-500 dark:text-sky-400 transition-all cursor-pointer shadow-sm"
           title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
         >
-          {theme === 'dark' ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-sky-600" />}
+          {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-sky-600" />}
         </button>
 
-        <div className="flex items-center space-x-2.5">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-500 to-blue-700 flex items-center justify-center text-white shadow-lg shadow-sky-500/20 font-black text-lg">
+        <div className="flex items-center space-x-2">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-500 to-blue-700 flex items-center justify-center text-white shadow-lg shadow-sky-500/20 font-black text-base">
             ✈️
           </div>
-          <span className="font-extrabold text-base tracking-wider text-slate-900 dark:text-white uppercase">
+          <span className="font-extrabold text-sm tracking-wider text-slate-900 dark:text-white uppercase whitespace-nowrap">
             АЭРОФЛОТ
           </span>
         </div>
@@ -91,7 +91,7 @@ export const Header: React.FC<HeaderProps> = ({
         {onToggleAirfieldMode && (
           <button
             onClick={onToggleAirfieldMode}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               airfieldMode === 'CUSTOM'
                 ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-md'
                 : 'bg-sky-500/10 border-sky-500/30 text-sky-300 hover:bg-sky-500/20'
@@ -104,12 +104,12 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </div>
 
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-2 shrink-0">
         <button
           onClick={onTogglePause}
           className={`p-2 rounded-lg border transition-all cursor-pointer shadow-sm ${
             isPaused
-              ? 'bg-amber-500/20 border-amber-500 text-amber-400 animate-pulse'
+              ? 'bg-amber-500/20 border-amber-500 text-amber-400'
               : 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
           }`}
           title={isPaused ? 'Возобновить симуляцию' : 'Пауза симуляции'}
@@ -118,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <div className="flex items-center bg-slate-100 dark:bg-[#121820] p-1 rounded-lg border border-slate-300 dark:border-[#263345]">
-          {[1, 10, 100].map(speed => (
+          {[1, 10, 50].map(speed => (
             <button
               key={speed}
               onClick={() => onSimSpeedChange(speed)}
@@ -136,7 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="relative">
           <button
             onClick={() => setIsScenarioOpen(!isScenarioOpen)}
-            className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-[#263345] text-sm font-mono font-bold text-slate-800 dark:text-gray-200 transition-colors cursor-pointer"
+            className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-[#263345] text-sm font-mono font-bold text-slate-800 dark:text-gray-200 transition-colors cursor-pointer whitespace-nowrap"
           >
             <Rocket className="w-4 h-4 text-sky-400" />
             <span>Сценарии</span>
@@ -168,8 +168,8 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => setIsRoiOpen(!isRoiOpen)}
             className="flex items-center space-x-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-sm font-mono cursor-pointer transition-all"
           >
-            <Wallet className="w-4 h-4 text-emerald-400" />
-            <span className="font-bold text-emerald-400">{fmtRub(preventedLossRub)} ₽</span>
+            <Wallet className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-bold text-emerald-400 tabular-nums">{fmtRub(preventedLossRub)} ₽</span>
             <span className="text-gray-400 text-xs hidden lg:inline">(Экономия)</span>
           </button>
           {isRoiOpen && (

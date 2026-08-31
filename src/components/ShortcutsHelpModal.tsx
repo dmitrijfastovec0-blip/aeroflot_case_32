@@ -17,7 +17,7 @@ export const ShortcutsHelpModal: React.FC<ShortcutsHelpModalProps> = ({
 
   const shortcuts = [
     { key: 'Space', desc: 'Пауза / Возобновление симуляции', icon: <Play className="w-3.5 h-3.5 text-amber-400" /> },
-    { key: '1 / 2 / 3', desc: 'Скорость симуляции (1x, 10x, 100x)', icon: <FastForward className="w-3.5 h-3.5 text-sky-400" /> },
+    { key: '1 / 2 / 3', desc: 'Скорость симуляции (1x, 10x, 50x)', icon: <FastForward className="w-3.5 h-3.5 text-sky-400" /> },
     { key: 'W', desc: 'Сменить погодный режим (Ясно / Снег / Гололед / Ночь)', icon: <Navigation className="w-3.5 h-3.5 text-cyan-400" /> },
     { key: 'A', desc: 'Открыть сводную аналитику эффективности', icon: <Eye className="w-3.5 h-3.5 text-emerald-400" /> },
     { key: 'S', desc: 'Открыть конфигуратор состава смены', icon: <Search className="w-3.5 h-3.5 text-indigo-400" /> },

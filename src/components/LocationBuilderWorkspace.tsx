@@ -3,22 +3,22 @@ import { AirportConnection, AirportConnectionKind, AirportElement, AirportElemen
 import {
   Box,
   Building2,
-  CarFront,
   CircleDot,
   ParkingCircle,
   GitBranch,
   Map as MapIcon,
   MousePointer2,
-  Plus,
   Play,
   Trash2,
   X,
   Sparkles,
   Plane,
-  RotateCcw,
   Sliders,
   Layers,
-  Wrench
+  Wrench,
+  Link,
+  Split,
+  Undo2
 } from 'lucide-react';
 
 interface Props {
@@ -32,19 +32,19 @@ interface Props {
   onRunSimulation: (elements: AirportElement[], connections: AirportConnection[]) => void;
 }
 
-const TOOLS: { kind: AirportElementKind; label: string; icon: React.ReactNode }[] = [
-  { kind: 'STAND', label: 'Стоянка ВС', icon: <Plane className="h-4 w-4 text-sky-400" /> },
-  { kind: 'DUTY_STATION', label: 'Пункт ПТО', icon: <Wrench className="h-4 w-4 text-amber-400" /> },
-  { kind: 'PARKING', label: 'Автопарк', icon: <ParkingCircle className="h-4 w-4 text-yellow-400" /> },
-  { kind: 'TERMINAL', label: 'Терминал', icon: <Building2 className="h-4 w-4 text-blue-400" /> },
-  { kind: 'HANGAR', label: 'Ангар', icon: <Box className="h-4 w-4 text-indigo-400" /> },
-  { kind: 'RUNWAY', label: 'ВПП', icon: <MapIcon className="h-4 w-4 text-emerald-400" /> },
-  { kind: 'WAYPOINT', label: 'Узел графа', icon: <CircleDot className="h-4 w-4 text-cyan-400" /> }
+const TOOLS: { kind: AirportElementKind; label: string; shortcut: string; icon: React.ReactNode }[] = [
+  { kind: 'STAND', label: 'Стоянка ВС', shortcut: '1', icon: <Plane className="h-4 w-4 text-sky-400" /> },
+  { kind: 'DUTY_STATION', label: 'Пункт ПТО', shortcut: '2', icon: <Wrench className="h-4 w-4 text-amber-400" /> },
+  { kind: 'PARKING', label: 'Автопарк', shortcut: '3', icon: <ParkingCircle className="h-4 w-4 text-yellow-400" /> },
+  { kind: 'TERMINAL', label: 'Терминал', shortcut: '4', icon: <Building2 className="h-4 w-4 text-blue-400" /> },
+  { kind: 'HANGAR', label: 'Ангар ТОиР', shortcut: '5', icon: <Box className="h-4 w-4 text-indigo-400" /> },
+  { kind: 'RUNWAY', label: 'ВПП', shortcut: '6', icon: <MapIcon className="h-4 w-4 text-emerald-400" /> },
+  { kind: 'WAYPOINT', label: 'Узел поворота', shortcut: '7', icon: <CircleDot className="h-4 w-4 text-cyan-400" /> }
 ];
 
-const CONNECTIONS: { kind: AirportConnectionKind; label: string; color: string }[] = [
-  { kind: 'ROAD', label: 'Автодорога', color: '#38bdf8' },
-  { kind: 'TUNNEL', label: 'Тоннель', color: '#f59e0b' }
+const CONNECTIONS: { kind: AirportConnectionKind; label: string; color: string; shortcut: string }[] = [
+  { kind: 'ROAD', label: 'Автодорога', color: '#38bdf8', shortcut: 'R' },
+  { kind: 'TUNNEL', label: 'Тоннель', color: '#f59e0b', shortcut: 'T' }
 ];
 
 const AIRCRAFT_TYPES = [
@@ -65,32 +65,38 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
   onOpenShift,
   onRunSimulation
 }) => {
-  // Local editing state: keeps the simulation engine from respawning workers
-  // on every tiny drag/update. Changes are flushed to the app only when the
-  // user explicitly runs the polygon.
   const [elements, setElements] = useState<AirportElement[]>(initialElements);
   const [connections, setConnections] = useState<AirportConnection[]>(initialConnections);
 
   useEffect(() => {
-    setElements(initialElements);
+    if (initialElements.length > 0) {
+      setElements(initialElements);
+    }
   }, [initialElements]);
 
   useEffect(() => {
-    setConnections(initialConnections);
+    if (initialConnections.length > 0) {
+      setConnections(initialConnections);
+    }
   }, [initialConnections]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(elements[0]?.id || null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<AirportConnectionKind | null>(null);
-  const [tool, setTool] = useState<'SELECT' | 'PLACE' | 'ROUTE'>('SELECT');
+  
+  // Tools: 'SELECT' | 'PLACE' | 'ROAD' | 'TUNNEL'
+  const [tool, setTool] = useState<'SELECT' | 'PLACE' | 'ROAD' | 'TUNNEL'>('SELECT');
   const [placementKind, setPlacementKind] = useState<AirportElementKind | null>(null);
-  const [routePoints, setRoutePoints] = useState<{ x: number; y: number }[]>([]);
+  
+  // Chained connection drawing
   const [routeStartId, setRouteStartId] = useState<string | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
   const [autoConnect, setAutoConnect] = useState(false);
-  const [brushActive, setBrushActive] = useState(false);
-  const lastBrushPoint = useRef<{ x: number; y: number } | null>(null);
 
   const selected = elements.find(item => item.id === selectedId);
+  const selectedConnection = connections.find(c => c.id === selectedConnectionId);
+  const routeStartElement = elements.find(item => item.id === routeStartId);
+
   const panel = theme === 'dark' ? 'bg-[#0b131f]/95 border-[#263345] text-gray-100' : 'bg-white/95 border-slate-200 text-slate-900';
 
   const flushToApp = useCallback(() => {
@@ -261,7 +267,6 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
         { id: 'CRL-15', from: 'CR-HANG', to: 'CR-PTO-S', kind: 'ROAD' }
       ];
     } else {
-      // MRO_CARGO
       newElements = [
         { id: 'MRO-RWY', kind: 'RUNWAY', label: 'ВПП 06/24 Грузовая', x: 50, y: 10, width: 80, height: 4 },
         { id: 'MRO-HANG-1', kind: 'HANGAR', label: 'Ангар ТОиР №1 (Heavy)', x: 25, y: 44, width: 14, height: 8 },
@@ -297,12 +302,13 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
 
     setElements(newElements);
     setConnections(newConnections);
-    setSelectedId(newElements[0]?.id || null);
+    setSelectedId(null);
+    setSelectedConnectionId(null);
+    setRouteStartId(null);
   };
 
-  // Drop the user straight into a working example on first open.
   useEffect(() => {
-    if (initialElements.length === 0) {
+    if (elements.length === 0) {
       applyPreset('TYPICAL');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -310,13 +316,11 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
 
   const canRun = elements.some(e => e.kind === 'STAND') && connections.length > 0;
 
-  // --- 100% GUARANTEED FULLY CONNECTED ROAD NETWORK (Kruskal's MST + 2-NN Loops) ---
+  // --- AUTOMATIC KRUSKAL MST ROAD CONNECTOR ---
   const handleAutoConnectAll = () => {
-    // Only connect road-relevant facilities and stands (exclude unattached runways)
     const roadNodes = elements.filter(e => e.kind !== 'RUNWAY');
     if (roadNodes.length < 2) return;
 
-    // Disjoint Set Union (DSU) for Kruskal's MST
     const parent = new Map<string, string>();
     roadNodes.forEach(e => parent.set(e.id, e.id));
     const findRoot = (id: string): string => {
@@ -338,7 +342,6 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
       return true;
     };
 
-    // Calculate all pairwise candidate edges
     const candidateEdges: { from: AirportElement; to: AirportElement; dist: number }[] = [];
     for (let i = 0; i < roadNodes.length; i++) {
       for (let j = i + 1; j < roadNodes.length; j++) {
@@ -354,7 +357,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
     const connectedPairs = new Set<string>();
     const makePairKey = (id1: string, id2: string) => id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
 
-    // 1. Kruskal's Minimum Spanning Tree (Guarantees all elements in ONE connected component)
+    // 1. Kruskal's Minimum Spanning Tree
     candidateEdges.forEach(edge => {
       if (unionRoots(edge.from.id, edge.to.id)) {
         const pairKey = makePairKey(edge.from.id, edge.to.id);
@@ -369,7 +372,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
       }
     });
 
-    // 2. Add 2nd nearest neighbors for loop connectivity and shortest bypasses
+    // 2. Add 2-NN loops for shortcut loops
     roadNodes.forEach(node => {
       const sortedNeighbors = roadNodes
         .filter(other => other.id !== node.id)
@@ -394,37 +397,40 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
     setConnections(newLinks);
   };
 
-  const addElement = (kind: AirportElementKind, x = 50, y = 50) => {
-    const tool = TOOLS.find(item => item.kind === kind)!;
+  const addElement = (kind: AirportElementKind, x = 50, y = 50): AirportElement => {
+    const toolObj = TOOLS.find(item => item.kind === kind);
     const count = elements.filter(item => item.kind === kind).length + 1;
     const item: AirportElement = {
       id: `CUSTOM-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       kind,
-      label: kind === 'STAND' ? `Стоянка ${count}` : `${tool.label} ${count}`,
+      label: kind === 'STAND' ? `${100 + count}` : `${toolObj?.label || 'Объект'} ${count}`,
       aircraftType: kind === 'STAND' ? 'Airbus A320-200' : undefined,
-      x,
-      y,
-      width: kind === 'RUNWAY' ? 26 : kind === 'TERMINAL' ? 16 : kind === 'HANGAR' ? 12 : 8,
-      height: kind === 'RUNWAY' ? 3 : kind === 'TERMINAL' ? 8 : kind === 'HANGAR' ? 6 : 5
+      x: Number(x.toFixed(1)),
+      y: Number(y.toFixed(1)),
+      width: kind === 'RUNWAY' ? 26 : kind === 'TERMINAL' ? 16 : kind === 'HANGAR' ? 12 : kind === 'WAYPOINT' ? 4 : 8,
+      height: kind === 'RUNWAY' ? 3 : kind === 'TERMINAL' ? 8 : kind === 'HANGAR' ? 6 : kind === 'WAYPOINT' ? 4 : 5
     };
-    setElements([...elements, item]);
+    
+    let nextConnections = [...connections];
     if (autoConnect && elements.length > 0) {
       const nearest = elements.reduce(
         (best, current) => (Math.hypot(current.x - x, current.y - y) < Math.hypot(best.x - x, best.y - y) ? current : best),
         elements[0]
       );
-      setConnections([
-        ...connections,
-        {
-          id: `LINK-${Date.now()}`,
-          from: nearest.id,
-          to: item.id,
-          kind: 'ROAD',
-          points: [{ x: nearest.x, y: nearest.y }, { x, y }]
-        }
-      ]);
+      nextConnections.push({
+        id: `LINK-${Date.now()}`,
+        from: nearest.id,
+        to: item.id,
+        kind: 'ROAD',
+        points: [{ x: nearest.x, y: nearest.y }, { x: item.x, y: item.y }]
+      });
     }
+
+    setElements([...elements, item]);
+    setConnections(nextConnections);
     setSelectedId(item.id);
+    setSelectedConnectionId(null);
+    return item;
   };
 
   const updateSelected = (updates: Partial<AirportElement>) => {
@@ -432,144 +438,212 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
     setElements(elements.map(item => (item.id === selectedId ? { ...item, ...updates } : item)));
   };
 
+  const removeSelected = () => {
+    if (selectedId) {
+      setElements(elements.filter(item => item.id !== selectedId));
+      setConnections(connections.filter(link => link.from !== selectedId && link.to !== selectedId));
+      setSelectedId(null);
+      if (routeStartId === selectedId) setRouteStartId(null);
+    } else if (selectedConnectionId) {
+      setConnections(connections.filter(c => c.id !== selectedConnectionId));
+      setSelectedConnectionId(null);
+    }
+  };
+
+  // --- FAST CHAINED ROAD / TUNNEL CONNECTION CREATOR ---
+  const connectElements = (fromId: string, toId: string, kind: AirportConnectionKind) => {
+    if (fromId === toId) return;
+    const exists = connections.some(c => (c.from === fromId && c.to === toId) || (c.from === toId && c.to === fromId));
+    if (exists) return;
+
+    const fromEl = elements.find(e => e.id === fromId);
+    const toEl = elements.find(e => e.id === toId);
+    if (!fromEl || !toEl) return;
+
+    const newConnection: AirportConnection = {
+      id: `LINK-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      from: fromId,
+      to: toId,
+      kind,
+      points: [{ x: fromEl.x, y: fromEl.y }, { x: toEl.x, y: toEl.y }]
+    };
+
+    setConnections(prev => [...prev, newConnection]);
+  };
+
+  // GLOBAL KEYBOARD SHORTCUTS: ESCAPE, DELETE, BACKSPACE
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+
+      if (e.key === 'Escape' || e.code === 'Escape') {
+        e.preventDefault();
+        if (routeStartId) {
+          setRouteStartId(null);
+        } else if (selectedId || selectedConnectionId) {
+          setSelectedId(null);
+          setSelectedConnectionId(null);
+        } else {
+          setTool('SELECT');
+          setPlacementKind(null);
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedId || selectedConnectionId) {
+          e.preventDefault();
+          removeSelected();
+        }
+      } else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') {
+        setTool('ROAD');
+        setPlacementKind(null);
+      } else if (e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е') {
+        setTool('TUNNEL');
+        setPlacementKind(null);
+      } else if (e.key === 'v' || e.key === 'V' || e.key === 'м' || e.key === 'М') {
+        setTool('SELECT');
+        setPlacementKind(null);
+        setRouteStartId(null);
+      } else if (['1', '2', '3', '4', '5', '6', '7'].includes(e.key)) {
+        const idx = parseInt(e.key) - 1;
+        if (TOOLS[idx]) {
+          setTool('PLACE');
+          setPlacementKind(TOOLS[idx].kind);
+          setRouteStartId(null);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedId, selectedConnectionId, routeStartId, elements, connections]);
+
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragId) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
     const y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100));
-    setElements(elements.map(item => (item.id === dragId ? { ...item, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) } : item)));
+    setMousePos({ x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) });
+
+    if (dragId && tool === 'SELECT') {
+      setElements(elements.map(item => (item.id === dragId ? { ...item, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) } : item)));
+    }
   };
 
   const handleMapPointerDown = (event: React.PointerEvent<SVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    const point = {
-      x: Number(Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)).toFixed(1)),
-      y: Number(Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)).toFixed(1))
-    };
+    const x = Number(Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)).toFixed(1));
+    const y = Number(Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)).toFixed(1));
+
     if (tool === 'PLACE' && placementKind) {
-      addElement(placementKind, point.x, point.y);
-      setBrushActive(true);
-      lastBrushPoint.current = point;
-    }
-    if (tool === 'ROUTE' && routeStartId) {
-      setRoutePoints(points => [...points, point]);
-    }
-  };
-
-  const brushMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!brushActive || tool !== 'PLACE' || !placementKind || !(event.target instanceof SVGElement)) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const point = {
-      x: Number(Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)).toFixed(1)),
-      y: Number(Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)).toFixed(1))
-    };
-    const previous = lastBrushPoint.current;
-    if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) > 4) {
-      addElement(placementKind, point.x, point.y);
-      lastBrushPoint.current = point;
+      addElement(placementKind, x, y);
+    } else if ((tool === 'ROAD' || tool === 'TUNNEL') && routeStartId) {
+      // Clicking empty space while drawing road creates an instant WAYPOINT and continues chain
+      const newWp = addElement('WAYPOINT', x, y);
+      connectElements(routeStartId, newWp.id, tool === 'TUNNEL' ? 'TUNNEL' : 'ROAD');
+      setRouteStartId(newWp.id);
+    } else {
+      setSelectedId(null);
+      setSelectedConnectionId(null);
+      setRouteStartId(null);
     }
   };
 
-  const finishRoute = () => {
-    if (!connectionMode || !routeStartId || !selectedId || routeStartId === selectedId) return;
-    const start = elements.find(item => item.id === routeStartId);
-    const end = elements.find(item => item.id === selectedId);
-    if (!start || !end) return;
-    setConnections([
-      ...connections,
-      {
-        id: `LINK-${Date.now()}`,
-        from: start.id,
-        to: end.id,
-        kind: connectionMode,
-        points: [{ x: start.x, y: start.y }, ...routePoints, { x: end.x, y: end.y }]
+  const handleElementClick = (e: React.PointerEvent<SVGGElement>, item: AirportElement) => {
+    e.stopPropagation();
+    setSelectedConnectionId(null);
+
+    if (tool === 'ROAD' || tool === 'TUNNEL') {
+      const connKind = tool === 'TUNNEL' ? 'TUNNEL' : 'ROAD';
+      if (!routeStartId) {
+        // Step 1: select start of chain
+        setRouteStartId(item.id);
+      } else if (routeStartId === item.id) {
+        // Clicking same element finishes current chain
+        setRouteStartId(null);
+      } else {
+        // Step 2+: instant connection creation & continue chain from target!
+        connectElements(routeStartId, item.id, connKind);
+        setRouteStartId(item.id); // Chained: next click connects from this item!
       }
-    ]);
-    setRoutePoints([]);
-    setRouteStartId(null);
-    setConnectionMode(null);
-    setTool('SELECT');
-  };
-
-  const removeSelected = () => {
-    if (!selectedId) return;
-    setElements(elements.filter(item => item.id !== selectedId));
-    setConnections(connections.filter(link => link.from !== selectedId && link.to !== selectedId));
-    setSelectedId(null);
-  };
-
-  const handleElementPointerDown = (event: React.PointerEvent<SVGGElement>, id: string) => {
-    event.stopPropagation();
-    if (tool === 'ROUTE') {
-      if (!routeStartId) setRouteStartId(id);
-      else if (routeStartId !== id) setSelectedId(id);
-      return;
+      setSelectedId(item.id);
+    } else {
+      setSelectedId(item.id);
+      if (tool === 'SELECT') {
+        setDragId(item.id);
+      }
     }
-    if (tool === 'SELECT') setDragId(id);
-    setSelectedId(id);
   };
 
   return (
     <div
-      className="absolute inset-0 z-40 overflow-hidden bg-[#070b10]"
-      onPointerMove={event => {
-        onPointerMove(event);
-        brushMove(event);
-      }}
-      onPointerUp={() => {
-        setDragId(null);
-        setBrushActive(false);
-        lastBrushPoint.current = null;
-      }}
-      onKeyDown={event => {
-        if (event.key === 'Escape') {
-          setTool('SELECT');
-          setPlacementKind(null);
-          setConnectionMode(null);
-          setRoutePoints([]);
-          setAutoConnect(false);
-        }
-      }}
-      tabIndex={0}
+      className="absolute inset-0 z-40 overflow-hidden bg-[#070b10] select-none"
+      onPointerMove={onPointerMove}
+      onPointerUp={() => setDragId(null)}
     >
       {/* Background SVG Canvas */}
       <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         {/* Subtle CAD Grid */}
         <defs>
           <pattern id="builder-grid" width="5" height="5" patternUnits="userSpaceOnUse">
-            <path d="M 5 0 L 0 0 0 5" fill="none" stroke="rgba(56,189,248,0.06)" strokeWidth="0.1" />
+            <path d="M 5 0 L 0 0 0 5" fill="none" stroke="rgba(56,189,248,0.08)" strokeWidth="0.1" />
           </pattern>
         </defs>
         <rect width="100" height="100" fill="url(#builder-grid)" onPointerDown={handleMapPointerDown} />
 
-        {/* Connections Group */}
-        <g opacity=".85" pointerEvents="none">
+        {/* Connections Layer */}
+        <g>
           {connections.map(link => {
             const style = CONNECTIONS.find(item => item.kind === link.kind) || CONNECTIONS[0];
-            const points =
-              link.points ||
-              [elements.find(item => item.id === link.from), elements.find(item => item.id === link.to)]
-                .filter(Boolean)
-                .map(item => ({ x: item!.x, y: item!.y }));
-            if (points.length < 2) return null;
+            const fromEl = elements.find(item => item.id === link.from);
+            const toEl = elements.find(item => item.id === link.to);
+            if (!fromEl || !toEl) return null;
+
+            const isSelected = selectedConnectionId === link.id;
+
             return (
-              <polyline
-                key={link.id}
-                points={points.map(point => `${point.x},${point.y}`).join(' ')}
-                fill="none"
-                stroke={style.color}
-                strokeWidth="0.8"
-                strokeDasharray={link.kind === 'TUNNEL' ? '2 1' : link.kind === 'SERVICE' ? '1 1' : 'none'}
-              />
+              <g key={link.id} onClick={(e) => {
+                e.stopPropagation();
+                setSelectedConnectionId(link.id);
+                setSelectedId(null);
+              }} className="cursor-pointer group">
+                {/* Thick invisible stroke for easy clicking / hover */}
+                <line
+                  x1={fromEl.x}
+                  y1={fromEl.y}
+                  x2={toEl.x}
+                  y2={toEl.y}
+                  stroke="transparent"
+                  strokeWidth="3.5"
+                />
+                {/* Visible connection line */}
+                <line
+                  x1={fromEl.x}
+                  y1={fromEl.y}
+                  x2={toEl.x}
+                  y2={toEl.y}
+                  stroke={isSelected ? '#fbbf24' : style.color}
+                  strokeWidth={isSelected ? '1.4' : '0.9'}
+                  strokeDasharray={link.kind === 'TUNNEL' ? '2 1' : 'none'}
+                  strokeLinecap="round"
+                  className="transition-all group-hover:stroke-white"
+                />
+              </g>
             );
           })}
-          {routePoints.length > 1 && (
-            <polyline
-              points={routePoints.map(point => `${point.x},${point.y}`).join(' ')}
-              fill="none"
-              stroke="#fbbf24"
-              strokeWidth="1.1"
-              strokeDasharray="1.5 1"
+
+          {/* Dynamic Chained Route Guide Line following mouse */}
+          {routeStartElement && (tool === 'ROAD' || tool === 'TUNNEL') && (
+            <line
+              x1={routeStartElement.x}
+              y1={routeStartElement.y}
+              x2={mousePos.x}
+              y2={mousePos.y}
+              stroke={tool === 'TUNNEL' ? '#f59e0b' : '#38bdf8'}
+              strokeWidth="0.9"
+              strokeDasharray="1.5 1.5"
+              strokeLinecap="round"
+              pointerEvents="none"
             />
           )}
         </g>
@@ -577,120 +651,154 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
         {/* Airport Elements Group */}
         {elements.map(item => {
           const isSel = selectedId === item.id;
-          const isStart = routeStartId === item.id;
-          const w = item.width || (item.kind === 'RUNWAY' ? 24 : item.kind === 'TERMINAL' ? 16 : 8);
-          const h = item.height || (item.kind === 'RUNWAY' ? 3 : item.kind === 'TERMINAL' ? 8 : 5);
+          const isRouteStart = routeStartId === item.id;
+          const w = item.width || (item.kind === 'RUNWAY' ? 24 : item.kind === 'TERMINAL' ? 16 : item.kind === 'WAYPOINT' ? 4 : 8);
+          const h = item.height || (item.kind === 'RUNWAY' ? 3 : item.kind === 'TERMINAL' ? 8 : item.kind === 'WAYPOINT' ? 4 : 5);
 
-          let fillCol = isStart ? '#34d39966' : isSel ? '#38bdf855' : 'rgba(30, 41, 59, 0.6)';
-          let strokeCol = isStart ? '#34d399' : isSel ? '#38bdf8' : '#64748b';
+          let fillCol = isRouteStart ? '#34d39966' : isSel ? '#38bdf855' : 'rgba(30, 41, 59, 0.7)';
+          let strokeCol = isRouteStart ? '#34d399' : isSel ? '#38bdf8' : '#64748b';
 
           if (item.kind === 'STAND') {
-            strokeCol = isSel ? '#38bdf8' : '#0284c7';
-            fillCol = isSel ? 'rgba(56, 189, 248, 0.3)' : 'rgba(2, 132, 199, 0.15)';
+            strokeCol = isRouteStart ? '#34d399' : isSel ? '#38bdf8' : '#0284c7';
+            fillCol = isRouteStart ? '#34d39955' : isSel ? 'rgba(56, 189, 248, 0.35)' : 'rgba(2, 132, 199, 0.2)';
           } else if (item.kind === 'DUTY_STATION') {
-            strokeCol = isSel ? '#fbbf24' : '#d97706';
-            fillCol = isSel ? 'rgba(251, 191, 36, 0.3)' : 'rgba(217, 119, 6, 0.15)';
+            strokeCol = isRouteStart ? '#34d399' : isSel ? '#fbbf24' : '#d97706';
+            fillCol = isRouteStart ? '#34d39955' : isSel ? 'rgba(251, 191, 36, 0.35)' : 'rgba(217, 119, 6, 0.2)';
           } else if (item.kind === 'PARKING') {
-            strokeCol = isSel ? '#fbbf24' : '#eab308';
-            fillCol = isSel ? 'rgba(250, 204, 21, 0.3)' : 'rgba(234, 179, 8, 0.15)';
+            strokeCol = isRouteStart ? '#34d399' : isSel ? '#fbbf24' : '#eab308';
+            fillCol = isRouteStart ? '#34d39955' : isSel ? 'rgba(250, 204, 21, 0.35)' : 'rgba(234, 179, 8, 0.2)';
           } else if (item.kind === 'RUNWAY') {
             strokeCol = isSel ? '#e2e8f0' : '#475569';
-            fillCol = 'rgba(30, 41, 59, 0.8)';
+            fillCol = 'rgba(30, 41, 59, 0.85)';
+          } else if (item.kind === 'WAYPOINT') {
+            strokeCol = isRouteStart ? '#34d399' : isSel ? '#38bdf8' : '#38bdf8aa';
+            fillCol = isRouteStart ? '#34d399' : isSel ? '#38bdf8' : '#0284c788';
           }
 
           return (
             <g
               key={item.id}
               transform={`translate(${item.x} ${item.y})`}
-              onPointerDown={event => handleElementPointerDown(event, item.id)}
-              className={tool === 'SELECT' ? 'cursor-move' : 'cursor-crosshair'}
+              onPointerDown={event => handleElementClick(event, item)}
+              className={tool === 'SELECT' ? 'cursor-move' : 'cursor-pointer'}
             >
-              <rect
-                x={-w / 2}
-                y={-h / 2}
-                width={w}
-                height={h}
-                rx="0.8"
-                fill={fillCol}
-                stroke={strokeCol}
-                strokeWidth={isSel ? '0.6' : '0.4'}
-              />
-              <text textAnchor="middle" y={h / 2 + 2.5} fill="#f1f5f9" fontSize="2.0" fontWeight="700">
-                {item.label}
-              </text>
+              {item.kind === 'WAYPOINT' ? (
+                <circle
+                  r="1.8"
+                  fill={fillCol}
+                  stroke={strokeCol}
+                  strokeWidth={isSel || isRouteStart ? '0.8' : '0.4'}
+                />
+              ) : (
+                <rect
+                  x={-w / 2}
+                  y={-h / 2}
+                  width={w}
+                  height={h}
+                  rx="0.8"
+                  fill={fillCol}
+                  stroke={strokeCol}
+                  strokeWidth={isSel || isRouteStart ? '0.7' : '0.4'}
+                />
+              )}
+              
+              {isRouteStart && (
+                <circle
+                  r={Math.max(w, h) / 2 + 1.5}
+                  fill="none"
+                  stroke="#34d399"
+                  strokeWidth="0.5"
+                  strokeDasharray="1 1"
+                  className="animate-pulse"
+                />
+              )}
+
+              {item.kind !== 'WAYPOINT' && (
+                <text textAnchor="middle" y={h / 2 + 2.4} fill="#f1f5f9" fontSize="1.9" fontWeight="700">
+                  {item.label}
+                </text>
+              )}
               {item.aircraftType && (
-                <text textAnchor="middle" y={h / 2 + 4.2} fill="#94a3b8" fontSize="1.5" fontWeight="500">
+                <text textAnchor="middle" y={h / 2 + 4.0} fill="#94a3b8" fontSize="1.4" fontWeight="500">
                   {item.aircraftType}
                 </text>
               )}
             </g>
           );
         })}
+
+        {/* Ghost placement cursor preview */}
+        {tool === 'PLACE' && placementKind && (
+          <g transform={`translate(${mousePos.x} ${mousePos.y})`} pointerEvents="none" opacity="0.6">
+            <circle r="3" fill="none" stroke="#38bdf8" strokeWidth="0.4" strokeDasharray="1 1" />
+            <rect x="-3" y="-2" width="6" height="4" fill="#38bdf840" stroke="#38bdf8" strokeWidth="0.4" rx="0.5" />
+          </g>
+        )}
       </svg>
 
       {/* Top Header Bar */}
-      <div className={`absolute left-4 right-4 top-4 flex items-center justify-between rounded-xl border px-4 py-2.5 shadow-2xl backdrop-blur-md ${panel}`}>
+      <div className={`absolute left-4 right-4 top-3 flex items-center justify-between rounded-xl border px-4 py-2.5 shadow-2xl backdrop-blur-md ${panel}`}>
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/20 text-sky-400">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/20 text-sky-400 font-bold">
             <Sliders className="h-4 w-4" />
           </div>
           <div>
             <div className="text-[10px] font-bold uppercase tracking-widest text-sky-400">Конструктор испытательного полигона</div>
             <div className="text-xs font-bold text-gray-200">
-              {tool === 'ROUTE'
+              {tool === 'ROAD' || tool === 'TUNNEL'
                 ? routeStartId
-                  ? 'Кликните точки на карте и выберите конечный объект для связи'
-                  : 'Выберите начальный объект'
+                  ? `Соединение от [${routeStartElement?.label || '...'}] → кликните следующий объект для мгновенной связи`
+                  : `Инструмент «${tool === 'TUNNEL' ? 'Тоннель' : 'Автодорога'}»: кликните первый объект для начала цепочки`
                 : tool === 'PLACE'
-                ? 'Кликните на карту или проведите мышью для размещения'
-                : 'Кликните объект для редактирования или перетаскивайте мышью'}
+                ? `Размещение «${TOOLS.find(t => t.kind === placementKind)?.label}»: кликайте по карте для создания (Esc — отмена)`
+                : 'Кликните объект для редактирования или перетаскивайте мышью (Esc — сброс выделения)'}
             </div>
           </div>
         </div>
 
-        {/* Preset Templates Generator */}
+        {/* Preset Templates */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/60 p-1">
             <span className="px-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Шаблоны:</span>
             <button
               onClick={() => applyPreset('TYPICAL')}
-              className="flex items-center gap-1 rounded-md bg-sky-500/20 px-2 py-1 text-xs font-bold text-sky-300 hover:bg-sky-500/30 transition-all"
-              title="Типовой региональный полигон с 6 стоянками"
+              className="flex items-center gap-1 rounded-md bg-sky-500/20 px-2 py-1 text-xs font-bold text-sky-300 hover:bg-sky-500/30 transition-all cursor-pointer"
+              title="Типовой полигон: 6 стоянок, ВПП, ПТО, Ангар и парковка"
             >
               <Sparkles className="h-3 w-3" /> Типовой
             </button>
             <button
               onClick={() => applyPreset('HUB')}
-              className="flex items-center gap-1 rounded-md bg-indigo-500/20 px-2 py-1 text-xs font-bold text-indigo-300 hover:bg-indigo-500/30 transition-all"
-              title="Международный хаб (Север-Юг) с межтерминальным тоннелем"
+              className="flex items-center gap-1 rounded-md bg-indigo-500/20 px-2 py-1 text-xs font-bold text-indigo-300 hover:bg-indigo-500/30 transition-all cursor-pointer"
+              title="Хаб Север-Юг с тоннелем"
             >
               <Plane className="h-3 w-3" /> Хаб С-Ю
             </button>
             <button
               onClick={() => applyPreset('LINEAR')}
-              className="flex items-center gap-1 rounded-md bg-cyan-500/20 px-2 py-1 text-xs font-bold text-cyan-300 hover:bg-cyan-500/30 transition-all"
-              title="Линейный магистральный перрон с 8 стоянками и 2 ПТО"
+              className="flex items-center gap-1 rounded-md bg-cyan-500/20 px-2 py-1 text-xs font-bold text-cyan-300 hover:bg-cyan-500/30 transition-all cursor-pointer"
+              title="Линейный перрон: 8 стоянок"
             >
               <GitBranch className="h-3 w-3" /> Линейный
             </button>
             <button
               onClick={() => applyPreset('CROSS_HUB')}
-              className="flex items-center gap-1 rounded-md bg-purple-500/20 px-2 py-1 text-xs font-bold text-purple-300 hover:bg-purple-500/30 transition-all"
-              title="Крестообразный X-хаб со скоростным тоннелем"
+              className="flex items-center gap-1 rounded-md bg-purple-500/20 px-2 py-1 text-xs font-bold text-purple-300 hover:bg-purple-500/30 transition-all cursor-pointer"
+              title="Крестообразный X-хаб"
             >
               <CircleDot className="h-3 w-3" /> Х-Хаб
             </button>
             <button
               onClick={() => applyPreset('MRO_CARGO')}
-              className="flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-1 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-all"
-              title="Грузовой терминал и база ТОиР тяжелых самолетов"
+              className="flex items-center gap-1 rounded-md bg-amber-500/20 px-2 py-1 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-all cursor-pointer"
+              title="ТОиР и грузовой терминал"
             >
-              <Wrench className="h-3 w-3" /> ТОиР / Карго
+              <Wrench className="h-3 w-3" /> ТОиР
             </button>
             <button
               onClick={() => applyPreset('COMPACT')}
-              className="flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-300 hover:bg-emerald-500/30 transition-all"
-              title="Компактный аэродром"
+              className="flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-300 hover:bg-emerald-500/30 transition-all cursor-pointer"
+              title="Компактная схема"
             >
               <Layers className="h-3 w-3" /> Компакт
             </button>
@@ -698,7 +806,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
 
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-gray-400 hover:bg-slate-800 hover:text-white transition-all"
+            className="rounded-lg p-2 text-gray-400 hover:bg-slate-800 hover:text-white transition-all cursor-pointer"
             title="Закрыть конструктор"
           >
             <X className="h-4 w-4" />
@@ -706,91 +814,103 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Left Sidebar: Toolbox */}
-      <aside className={`absolute bottom-4 left-4 top-20 w-56 overflow-y-auto rounded-xl border p-3 shadow-2xl backdrop-blur-md ${panel}`}>
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Режимы редактирования</div>
-        <button
-          onClick={() => {
-            setTool('SELECT');
-            setPlacementKind(null);
-            setConnectionMode(null);
-            setRoutePoints([]);
-          }}
-          className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs font-bold ${
-            tool === 'SELECT' ? 'border-sky-400 bg-sky-400/10 text-sky-300' : 'border-slate-300/20 text-gray-300'
-          }`}
-        >
-          <MousePointer2 className="h-4 w-4" /> Выбор / перемещение
-        </button>
-
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Добавить объект</div>
-        <div className="space-y-1">
-          {TOOLS.map(item => {
-            const isPlacing = tool === 'PLACE' && placementKind === item.kind;
-            return (
+      {/* Left Sidebar: Fast Toolbox */}
+      <aside className={`absolute bottom-4 left-4 top-18 w-56 overflow-y-auto rounded-xl border p-3 shadow-2xl backdrop-blur-md flex flex-col justify-between ${panel}`}>
+        <div className="space-y-3">
+          {/* Main Editing Modes */}
+          <div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Режимы</div>
+            <div className="space-y-1">
               <button
-                key={item.kind}
                 onClick={() => {
-                  setTool(isPlacing ? 'SELECT' : 'PLACE');
-                  setPlacementKind(isPlacing ? null : item.kind);
-                  setConnectionMode(null);
-                  setRoutePoints([]);
+                  setTool('SELECT');
+                  setPlacementKind(null);
+                  setRouteStartId(null);
                 }}
-                className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs font-bold transition-all ${
-                  isPlacing ? 'border-amber-400 bg-amber-400/20 text-amber-300' : 'border-slate-300/10 text-gray-300 hover:bg-slate-800/40'
+                className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                  tool === 'SELECT' ? 'border-sky-400 bg-sky-400/20 text-sky-300 shadow-sm' : 'border-slate-700/40 text-gray-300 hover:bg-slate-800/40'
                 }`}
               >
-                {item.icon}
-                {item.label}
+                <div className="flex items-center gap-2">
+                  <MousePointer2 className="h-3.5 w-3.5" /> Выбор / Двиг
+                </div>
+                <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-gray-400">V</kbd>
               </button>
-            );
-          })}
-        </div>
-
-        {/* Graph Connections */}
-        <div className="mt-3 border-t border-slate-300/20 pt-3">
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Связи и дороги</div>
-          <button
-            onClick={handleAutoConnectAll}
-            className="mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2 py-1.5 text-xs font-bold text-sky-300 hover:bg-sky-500/20"
-          >
-            <GitBranch className="h-3.5 w-3.5" /> 🔗 Автосвязи дорог
-          </button>
-          <div className="space-y-1">
-            {CONNECTIONS.map(link => {
-              const active = tool === 'ROUTE' && connectionMode === link.kind;
-              return (
-                <button
-                  key={link.kind}
-                  onClick={() => {
-                    setTool(active ? 'SELECT' : 'ROUTE');
-                    setConnectionMode(active ? null : link.kind);
-                    setRoutePoints([]);
-                    setRouteStartId(null);
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[11px] font-bold transition-all ${
-                    active ? 'border-amber-400 bg-amber-400/20 text-amber-300' : 'border-slate-300/10 text-gray-300 hover:bg-slate-800/40'
-                  }`}
-                >
-                  <GitBranch className="h-3.5 w-3.5" style={{ color: link.color }} />
-                  {link.label}
-                </button>
-              );
-            })}
+            </div>
           </div>
-          {tool === 'ROUTE' && (
-            <button
-              disabled={!routeStartId || !selectedId || routeStartId === selectedId}
-              onClick={finishRoute}
-              className="mt-2 w-full rounded-lg bg-amber-500 px-2.5 py-2 text-[10px] font-extrabold text-slate-950 disabled:opacity-40"
-            >
-              Завершить связь ({routePoints.length} точек)
-            </button>
-          )}
+
+          {/* Instant Road / Connection Drawing Tools */}
+          <div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center justify-between">
+              <span>Связи и дороги</span>
+              <span className="text-[9px] text-amber-400">1-клик цепочки</span>
+            </div>
+            <div className="space-y-1">
+              {CONNECTIONS.map(link => {
+                const active = tool === link.kind;
+                return (
+                  <button
+                    key={link.kind}
+                    onClick={() => {
+                      setTool(active ? 'SELECT' : link.kind as any);
+                      setPlacementKind(null);
+                      setRouteStartId(null);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                      active ? 'border-amber-400 bg-amber-400/20 text-amber-300 shadow-md' : 'border-slate-700/40 text-gray-300 hover:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-3.5 w-3.5" style={{ color: link.color }} />
+                      {link.label}
+                    </div>
+                    <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-gray-400">{link.shortcut}</kbd>
+                  </button>
+                );
+              })}
+              
+              <button
+                onClick={handleAutoConnectAll}
+                className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2 py-1.5 text-xs font-bold text-sky-300 hover:bg-sky-500/20 transition-all cursor-pointer"
+                title="Автоматически соединить все стоянки и пункты кратчайшими дорогами (Kruskal MST)"
+              >
+                <GitBranch className="h-3.5 w-3.5" /> 🔗 Связать всё (MST)
+              </button>
+            </div>
+          </div>
+
+          {/* Placeable Objects */}
+          <div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Объекты аэродрома</div>
+            <div className="space-y-1">
+              {TOOLS.map(item => {
+                const isPlacing = tool === 'PLACE' && placementKind === item.kind;
+                return (
+                  <button
+                    key={item.kind}
+                    onClick={() => {
+                      setTool('PLACE');
+                      setPlacementKind(item.kind);
+                      setRouteStartId(null);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                      isPlacing ? 'border-amber-400 bg-amber-400/20 text-amber-300 shadow-md' : 'border-slate-700/40 text-gray-300 hover:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {item.icon}
+                      {item.label}
+                    </div>
+                    <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-gray-400">{item.shortcut}</kbd>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        {/* Actions */}
-        <div className="mt-4 border-t border-slate-300/20 pt-3 space-y-2">
+        {/* Action Buttons */}
+        <div className="border-t border-slate-700/40 pt-3 space-y-2">
           <button
             disabled={!canRun}
             onClick={() => {
@@ -798,99 +918,171 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
               onRunSimulation(elements, connections);
             }}
             title={canRun ? 'Сохранить полигон и запустить симуляцию' : 'Нужна хотя бы одна стоянка и одна связь'}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 px-3 py-2 text-xs font-bold text-white shadow-lg hover:from-emerald-500 hover:to-teal-500 active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 px-3 py-2 text-xs font-bold text-white shadow-lg hover:from-emerald-500 hover:to-teal-500 active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <Play className="h-4 w-4" /> Запустить полигон
           </button>
+          
           <button
             onClick={onOpenShift}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20"
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 transition-all cursor-pointer"
           >
             Настроить смену
           </button>
+
           <button
             onClick={() => {
               setElements([]);
               setConnections([]);
               setSelectedId(null);
+              setSelectedConnectionId(null);
+              setRouteStartId(null);
             }}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 px-3 py-1 text-xs font-bold text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
           >
-            <Trash2 className="h-3.5 w-3.5" /> Очистить полигон
+            <Trash2 className="h-3.5 w-3.5" /> Очистить
           </button>
         </div>
       </aside>
 
-      {/* Right Sidebar: Object Inspector */}
-      {selected && (
-        <aside className={`absolute bottom-4 right-4 top-20 w-64 rounded-xl border p-4 shadow-2xl backdrop-blur-md ${panel}`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Инспектор объекта</div>
-            <span className="rounded bg-sky-500/20 px-2 py-0.5 text-[9px] font-bold text-sky-300">{selected.kind}</span>
-          </div>
-
-          <div className="space-y-3">
+      {/* Right Sidebar: Object & Connection Inspector */}
+      {(selected || selectedConnection) && (
+        <aside className={`absolute bottom-4 right-4 top-18 w-64 rounded-xl border p-4 shadow-2xl backdrop-blur-md ${panel}`}>
+          {selected && (
             <div>
-              <label className="text-[10px] font-bold text-gray-400">Название / Код:</label>
-              <input
-                value={selected.label}
-                onChange={event => updateSelected({ label: event.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white focus:border-sky-400 focus:outline-none"
-              />
-            </div>
-
-            {selected.kind === 'STAND' && (
-              <div>
-                <label className="text-[10px] font-bold text-gray-400">Тип воздушного судна:</label>
-                <select
-                  value={selected.aircraftType || AIRCRAFT_TYPES[0]}
-                  onChange={event => updateSelected({ aircraftType: event.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs font-bold text-white focus:border-sky-400 focus:outline-none"
-                >
-                  {AIRCRAFT_TYPES.map(type => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center justify-between mb-3 border-b border-slate-700 pb-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Инспектор объекта</div>
+                <span className="rounded bg-sky-500/20 px-2 py-0.5 text-[9px] font-bold text-sky-300">{selected.kind}</span>
               </div>
-            )}
 
-            <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400">
-              <label>
-                Позиция X (%)
-                <input
-                  type="number"
-                  value={selected.x}
-                  onChange={event => updateSelected({ x: Number(event.target.value) })}
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-white font-mono"
-                />
-              </label>
-              <label>
-                Позиция Y (%)
-                <input
-                  type="number"
-                  value={selected.y}
-                  onChange={event => updateSelected({ y: Number(event.target.value) })}
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-white font-mono"
-                />
-              </label>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400">Название / Номер стоянки:</label>
+                  <input
+                    value={selected.label}
+                    onChange={event => updateSelected({ label: event.target.value })}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white focus:border-sky-400 focus:outline-none"
+                  />
+                </div>
+
+                {selected.kind === 'STAND' && (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400">Тип воздушного судна:</label>
+                    <select
+                      value={selected.aircraftType || AIRCRAFT_TYPES[0]}
+                      onChange={event => updateSelected({ aircraftType: event.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs font-bold text-white focus:border-sky-400 focus:outline-none"
+                    >
+                      {AIRCRAFT_TYPES.map(type => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400">
+                  <label>
+                    Координата X (%)
+                    <input
+                      type="number"
+                      value={selected.x}
+                      onChange={event => updateSelected({ x: Number(event.target.value) })}
+                      className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-white font-mono"
+                    />
+                  </label>
+                  <label>
+                    Координата Y (%)
+                    <input
+                      type="number"
+                      value={selected.y}
+                      onChange={event => updateSelected({ y: Number(event.target.value) })}
+                      className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-white font-mono"
+                    />
+                  </label>
+                </div>
+
+                <div className="pt-2 flex flex-col gap-2">
+                  <button
+                    onClick={() => {
+                      setTool('ROAD');
+                      setRouteStartId(selected.id);
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-500/15 px-3 py-1.5 text-xs font-bold text-sky-300 hover:bg-sky-500/25 transition-all cursor-pointer"
+                  >
+                    <Link className="h-3.5 w-3.5" /> Провести дорогу отсюда
+                  </button>
+
+                  <button
+                    onClick={removeSelected}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 transition-all cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Удалить объект (Del)
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
 
-            <button
-              onClick={removeSelected}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Удалить объект
-            </button>
-          </div>
+          {selectedConnection && (
+            <div>
+              <div className="flex items-center justify-between mb-3 border-b border-slate-700 pb-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Связь графа</div>
+                <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[9px] font-bold text-amber-300">{selectedConnection.kind}</span>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <span className="text-gray-400">Соединяет:</span>
+                  <div className="font-bold text-white mt-1">
+                    {elements.find(e => e.id === selectedConnection.from)?.label || selectedConnection.from} ➔{' '}
+                    {elements.find(e => e.id === selectedConnection.to)?.label || selectedConnection.to}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400">Тип соединения:</label>
+                  <div className="grid grid-cols-2 gap-1.5 mt-1">
+                    <button
+                      onClick={() => setConnections(connections.map(c => c.id === selectedConnection.id ? { ...c, kind: 'ROAD' } : c))}
+                      className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                        selectedConnection.kind === 'ROAD' ? 'bg-sky-500/20 border-sky-400 text-sky-300' : 'border-slate-700 text-gray-400'
+                      }`}
+                    >
+                      Автодорога
+                    </button>
+                    <button
+                      onClick={() => setConnections(connections.map(c => c.id === selectedConnection.id ? { ...c, kind: 'TUNNEL' } : c))}
+                      className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                        selectedConnection.kind === 'TUNNEL' ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'border-slate-700 text-gray-400'
+                      }`}
+                    >
+                      Тоннель
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={removeSelected}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 transition-all cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Удалить связь (Del)
+                </button>
+              </div>
+            </div>
+          )}
         </aside>
       )}
 
-      {/* Bottom Status Pill */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-sky-400/30 bg-[#0b131f]/90 px-4 py-1.5 text-[11px] font-bold text-sky-200 shadow-xl backdrop-blur-md">
-        {elements.length} объектов · {connections.length} связей · {elements.filter(e => e.kind === 'STAND').length} стоянок ВС
+      {/* Bottom Status & Hotkeys Pill */}
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-sky-400/30 bg-[#0b131f]/95 px-5 py-1.5 text-[11px] font-bold text-sky-200 shadow-2xl backdrop-blur-md flex items-center gap-4">
+        <span>📍 {elements.length} объектов · {connections.length} связей ({elements.filter(e => e.kind === 'STAND').length} стоянок ВС)</span>
+        <span className="text-gray-500">|</span>
+        <span className="text-gray-400 text-[10px]">Esc: сброс выделения · Del: удалить · 1-7: объекты · R/T: дороги</span>
       </div>
     </div>
   );
 };
+
+export default LocationBuilderWorkspace;
