@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember, CategoryCode, DispatchStat, WeatherMode } from '../types/index';
-import { SVO_STANDS, SVO_FACILITIES, SVO_NODES, DEFECT_TYPES, AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Worker, OtoTask, WorkerStatus, TaskPriority, TaskCrewMember, CategoryCode, DispatchStat, WeatherMode, AirportElement, AirportConnection, AirfieldMode, Stand, Facility } from '../types/index';
+import { SVO_STANDS, REAL_SVO_FACILITIES, SVO_FACILITIES, SVO_NODES, DEFECT_TYPES, AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import {
   getClosestNodeId,
+  getClosestSectorNodeId,
   findDijkstraShortestPath,
   getWaypointsForNodePath,
   calculateWorkerToStandEta,
@@ -13,8 +14,20 @@ import {
   pickPatrolTargetId,
   applyWeatherOverrides,
   resetWeatherOverrides,
-  getWeatherSpeeds
+  getWeatherSpeeds,
+  configureCustomAirport,
+  getCustomAirportStands,
+  getCustomAirportFacilities
 } from '../services/dijkstra';
+import {
+  extractCustomStands,
+  extractCustomFacilities,
+  calculateModularWorkerEta,
+  findNearestFreeCustomWorker,
+  getCustomPatrolWaypoints,
+  getCustomReturnToBaseWaypoints
+} from '../services/airfieldGraph';
+import { spawnAirfieldShift } from '../services/shiftSpawner';
 import { computeDispatchPlan, pathSpeedFor } from '../core/dispatcher';
 import { formatSimClock } from '../utils/time';
 
@@ -27,21 +40,102 @@ export interface ControlTestResult {
   ms: number;
 }
 
-// Static O(1) stand index for the drain loop
-const STAND_BY_ID = new Map(SVO_STANDS.map(s => [s.id, s]));
+export function useSimulationEngine(
+  customElements: AirportElement[] = [],
+  customConnections: AirportConnection[] = [],
+  airfieldMode: AirfieldMode = 'SVO'
+) {
+  const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
 
-export function useSimulationEngine() {
-  // State for Workers and Tasks
-  const [workers, setWorkers] = useState<Worker[]>(() =>
-    generateShiftWorkersWithCustomCounts(22, 12, 6, 20)
-  );
-  const [tasks, setTasks] = useState<OtoTask[]>([]);
-  const allHistoricalTasksRef = useRef<OtoTask[]>([]);
-  const [allHistoricalTasks, setAllHistoricalTasks] = useState<OtoTask[]>([]);
-  const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
+  const activeStands = useMemo(() => {
+    if (isCustomMode && customElements.length > 0) {
+      const cStands = extractCustomStands(customElements);
+      return cStands.length > 0 ? cStands : SVO_STANDS;
+    }
+    return SVO_STANDS;
+  }, [isCustomMode, customElements]);
 
+  const activeFacilities = useMemo(() => {
+    if (isCustomMode && customElements.length > 0) {
+      return extractCustomFacilities(customElements);
+    }
+    return REAL_SVO_FACILITIES;
+  }, [isCustomMode, customElements]);
+
+  const standById = useMemo(() => new Map(activeStands.map(s => [s.id, s])), [activeStands]);
+
+  // ALL REFS DECLARED AT THE VERY TOP OF THE HOOK TO PREVENT TDZ CRASHES
+  const shiftCountsRef = useRef({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
+  const simClockRef = useRef(0);
+  const isStressTestActiveRef = useRef<boolean>(false);
+  const lastStressSpawnSimSecRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(Date.now());
+  const lastRenderTimeRef = useRef<number>(Date.now());
   const scenarioCompletedFlagRef = useRef<boolean>(false);
   const autoPauseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const statsRef = useRef<DispatchStat[]>([]);
+  const roiMetricsRef = useRef({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+  const lastRoiCountRef = useRef(0);
+  const allHistoricalTasksRef = useRef<OtoTask[]>([]);
+
+  // State for Workers and Tasks
+  const [workers, setWorkers] = useState<Worker[]>(() =>
+    spawnAirfieldShift({
+      b1Count: 22,
+      b2Count: 12,
+      catACount: 6,
+      vehiclesCount: 20,
+      customElements,
+      customConnections,
+      customFacilities: activeFacilities,
+      customStands: activeStands,
+      isCustomMode
+    })
+  );
+
+  const [tasks, setTasks] = useState<OtoTask[]>([]);
+  const [archivedTasks, setArchivedTasks] = useState<OtoTask[]>([]);
+  const [allHistoricalTasks, setAllHistoricalTasks] = useState<OtoTask[]>([]);
+  const [notificationBanner, setNotificationBanner] = useState<string | null>(null);
+  const [activeScenarioName, setActiveScenarioName] = useState<string>('Оперативный план');
+  const [dispatchStats, setDispatchStats] = useState<DispatchStat[]>([]);
+  const [roiMetrics, setRoiMetrics] = useState({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+  const [simClockSec, setSimClockSec] = useState(0);
+  const [isStressTestActive, setIsStressTestActive] = useState<boolean>(false);
+
+  // Sync state refs
+  const workersRef = useRef<Worker[]>(workers);
+  const tasksRef = useRef<OtoTask[]>(tasks);
+
+  // Sync airfield changes with custom airport configuration and respawn workers
+  useEffect(() => {
+    configureCustomAirport(customElements, customConnections);
+    const { b1, b2, catA, vehicles } = shiftCountsRef.current;
+    const updated = spawnAirfieldShift({
+      b1Count: b1,
+      b2Count: b2,
+      catACount: catA,
+      vehiclesCount: vehicles,
+      customElements,
+      customConnections,
+      customFacilities: activeFacilities,
+      customStands: activeStands,
+      isCustomMode
+    });
+    workersRef.current = updated;
+    setWorkers(updated);
+    tasksRef.current = [];
+    setTasks([]);
+    allHistoricalTasksRef.current = [];
+    setAllHistoricalTasks([]);
+    statsRef.current = [];
+    setDispatchStats([]);
+    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 };
+    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+    simClockRef.current = 0;
+    setSimClockSec(0);
+  }, [airfieldMode, isCustomMode, customElements, customConnections, activeFacilities, activeStands]);
 
   const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
     setNotificationBanner(msg);
@@ -67,37 +161,10 @@ export function useSimulationEngine() {
       showNotification('Штатный режим (Ясно): идеальные сухие условия, спецавто 25 км/ч.');
     }
   }, [showNotification]);
+
   // Simulation Controls
   const [simSpeed, setSimSpeed] = useState<number>(5);
   const [isPaused, setIsPaused] = useState<boolean>(false);
-
-  // Refs for continuous 60FPS loop without stale closures
-  const workersRef = useRef<Worker[]>(workers);
-  const tasksRef = useRef<OtoTask[]>(tasks);
-
-  // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
-  const statsRef = useRef<DispatchStat[]>([]);
-  const [dispatchStats, setDispatchStats] = useState<DispatchStat[]>([]);
-
-  // Economic ROI metrics: completed call count + accumulated system AND naive
-  // (manual) arrival ETAs, so the top-bar widget can compute saved minutes &
-  // prevented loss LIVE against the simulated manual dispatcher.
-  const [roiMetrics, setRoiMetrics] = useState({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
-  const roiMetricsRef = useRef({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
-  const lastRoiCountRef = useRef(0);
-
-  // Simulation clock (HH:MM:SS) — the single source of task timestamps so the
-  // demo can show "когда задача началась / когда завершилась" in SIM time.
-  const [simClockSec, setSimClockSec] = useState(0);
-  const simClockRef = useRef(0);
-
-  // Continuous Dynamic Stress Generator Refs
-  const isStressTestActiveRef = useRef<boolean>(false);
-  const [isStressTestActive, setIsStressTestActive] = useState<boolean>(false);
-  const lastStressSpawnSimSecRef = useRef<number>(0);
-
-  // Current shift composition (tracked for "reset to optimal bases" presets)
-  const shiftCountsRef = useRef({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
   // Build busy-id set + per-worker active task load from current tasks
   const computeLoadMap = (tasksList: OtoTask[]) => {
@@ -114,30 +181,34 @@ export function useSimulationEngine() {
     return { busy, load };
   };
 
-  // We no longer sync refs from state, because refs ARE the source of truth
-  // and state is just a throttled snapshot for the UI.
-
   // -----------------------------------------------------------------
-  // DRAIN QUEUE ALGORITHM: GLOBAL GREEDY ASSIGNMENT (items 2+3)
+  // DRAIN QUEUE ALGORITHM: MODULAR GLOBAL GREEDY ASSIGNMENT
   // -----------------------------------------------------------------
-  // Pure dispatch logic lives in src/core/dispatcher.ts (unit-testable);
-  // the hook only applies the returned mutations to React state.
+  // In SVO mode, use precomputed all-pairs SVO graph (O(1) lookups).
+  // In CUSTOM mode, use Dijkstra over the custom airfield graph.
   const drainQueueWithFreeWorkers = useCallback(() => {
+    const calculateEta = isCustomMode
+      ? (w: Worker, s: Stand) => calculateModularWorkerEta(w, s, customElements, customConnections)
+      : (w: Worker, s: Stand) => calculateWorkerToStandEta(w, s);
+
+    const findNaiveNearest = isCustomMode
+      ? (cat: CategoryCode, s: Stand, wrks: Worker[], busy?: Set<string>) =>
+          findNearestFreeCustomWorker(cat, s, wrks, busy || new Set(), customElements, customConnections)
+      : (cat: CategoryCode, s: Stand, wrks: Worker[], busy?: Set<string>) =>
+          findNaiveNearestWorkerOfCategory(cat, s, wrks, busy);
+
     const plan = computeDispatchPlan({
       tasks: tasksRef.current,
       workers: workersRef.current,
-      standById: STAND_BY_ID,
-      calculateEta: calculateWorkerToStandEta,
-      findNaiveNearest: findNaiveNearestWorkerOfCategory
+      standById: standById,
+      calculateEta,
+      findNaiveNearest
     });
 
     if (!plan.changed && Object.keys(plan.waitingReasons).length === 0) return;
 
     plan.notifications.forEach(msg => showNotification(msg, 5000));
 
-    // Apply all dispatches in a single O(T + W) pass: mark the task as started
-    // the moment it turns DISPATCHED, clear a stale waiting reason, and attach
-    // the explainable "why is this still queued" reason for tasks that wait.
     const nextTasks = tasksRef.current.map(t => {
       const dt = plan.dispatchedTasks[t.id];
       if (dt) {
@@ -153,12 +224,11 @@ export function useSimulationEngine() {
       const wr = plan.waitingReasons[t.id];
       return wr ? { ...t, waitingReason: wr } : t;
     });
+
     const nextWorkers = workersRef.current.map(w => plan.dispatchedWorkers[w.id] || w);
 
     workersRef.current = nextWorkers;
     tasksRef.current = nextTasks;
-    // Note: setWorkers and setTasks are throttled in the main loop,
-    // but we force a UI update on dispatch to ensure immediate feedback.
     setWorkers(nextWorkers);
     setTasks(nextTasks);
 
@@ -166,14 +236,13 @@ export function useSimulationEngine() {
       statsRef.current = [...plan.stats, ...statsRef.current].slice(0, 100);
       setDispatchStats([...statsRef.current]);
     }
-  }, [showNotification]);
+  }, [isCustomMode, standById, customElements, customConnections, showNotification]);
+
+  const standCooldownsRef = useRef<Map<string, number>>(new Map());
 
   // -----------------------------------------------------------------
   // MAIN 60 FPS SIMULATION TICK LOOP
   // -----------------------------------------------------------------
-  const lastTimeRef = useRef<number>(Date.now());
-  const lastRenderTimeRef = useRef<number>(Date.now());
-
   useEffect(() => {
     let animFrameId: number;
 
@@ -186,15 +255,21 @@ export function useSimulationEngine() {
         // 0. ADVANCE SIMULATION CLOCK (single source of task timestamps)
         simClockRef.current += dtSec * simSpeed;
 
-        // 0b. DYNAMIC CONTINUOUS STRESS-TEST GENERATOR (Maintains 3-5 tasks in queue)
-        if (isStressTestActiveRef.current && simClockRef.current - lastStressSpawnSimSecRef.current >= 3.5) {
+        // 0b. DYNAMIC CONTINUOUS STRESS-TEST GENERATOR (Maintains 2-4 active tasks with realistic intervals)
+        if (isStressTestActiveRef.current && simClockRef.current - lastStressSpawnSimSecRef.current >= 8.0) {
           const queuedTasks = tasksRef.current.filter(t => t.status === 'QUEUED');
-          if (queuedTasks.length < 4) {
+          if (queuedTasks.length < 3) {
             lastStressSpawnSimSecRef.current = simClockRef.current;
             const activeStandIds = new Set(tasksRef.current.filter(t => t.status !== 'COMPLETED').map(t => t.standId));
-            const availableStands = SVO_STANDS.filter(s => !activeStandIds.has(s.id));
-            if (availableStands.length > 0) {
-              const stand = availableStands[Math.floor(Math.random() * availableStands.length)];
+            const availableStands = activeStands.filter(s => {
+              if (activeStandIds.has(s.id)) return false;
+              const lastDone = standCooldownsRef.current.get(s.id) || 0;
+              // Realistic airport gap: at least 45 sim seconds after previous task on the same stand
+              return (simClockRef.current - lastDone) >= 45;
+            });
+            const candidates = availableStands.length > 0 ? availableStands : activeStands.filter(s => !activeStandIds.has(s.id));
+            if (candidates.length > 0) {
+              const stand = candidates[Math.floor(Math.random() * candidates.length)];
               const defect = DEFECT_TYPES[Math.floor(Math.random() * DEFECT_TYPES.length)];
               const pList: TaskPriority[] = ['AOG', 'URGENT', 'ROUTINE', 'ROUTINE'];
               const priority = pList[Math.floor(Math.random() * pList.length)];
@@ -261,23 +336,6 @@ export function useSimulationEngine() {
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            // Distance snap threshold (1.2% distance threshold for robust arrival)
-            if (distPct < 1.2) {
-              const nextIdx = currIdx + 1;
-              if (nextIdx >= worker.pathWaypoints.length - 1) {
-                const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
-                return {
-                  ...worker,
-                  x: targetPt.x,
-                  y: targetPt.y,
-                  status: finalStatus,
-                  pathWaypoints: undefined,
-                  currentSegmentIndex: undefined
-                };
-              }
-              return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
-            }
-
             // Realistic Vehicle Acceleration & Braking Distance Kinematics
             const etaSpeedPct = worker.pathSpeedPctPerSimSec;
             const ws = getWeatherSpeeds();
@@ -299,6 +357,24 @@ export function useSimulationEngine() {
               : ((fallbackSpeedKmH * 1000 / 3600) / 4000) * 100
             ) * accelFactor * simSpeed;
             const moveDistPct = pctPerSec * dtSec;
+
+            // Distance snap threshold (or completion of segment during high speed 10x-100x)
+            if (distPct < 1.2 || moveDistPct >= distPct) {
+              const nextIdx = currIdx + 1;
+              if (nextIdx >= worker.pathWaypoints.length - 1) {
+                const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
+                return {
+                  ...worker,
+                  x: targetPt.x,
+                  y: targetPt.y,
+                  status: finalStatus,
+                  pathWaypoints: undefined,
+                  currentSegmentIndex: undefined
+                };
+              }
+              return { ...worker, x: targetPt.x, y: targetPt.y, currentSegmentIndex: nextIdx };
+            }
+
             const ratio = Math.min(1, moveDistPct / distPct);
 
             return {
@@ -308,13 +384,23 @@ export function useSimulationEngine() {
             };
           }
 
-          // Patrolling workers logic
+          // Continuous local patrolling workers logic (walk/drive strictly along road graph in their own sector)
           if (worker.status === 'FREE_PATROLLING') {
             if (!worker.pathWaypoints || worker.pathWaypoints.length < 2 || (worker.currentSegmentIndex || 0) >= worker.pathWaypoints.length - 1) {
-              const currentNodeId = getClosestNodeId(worker.x, worker.y);
-              const randomTargetId = pickPatrolTargetId(worker.baseId);
-              const nodePath = findDijkstraShortestPath(currentNodeId, randomTargetId);
-              const waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
+              let waypoints: { x: number; y: number }[];
+              if (isCustomMode && customElements.length > 0) {
+                waypoints = getCustomPatrolWaypoints(worker, customElements, customConnections);
+              } else {
+                const isNorth = worker.baseId === 'PTO_1' || worker.baseId === 'PARKING_1' || worker.baseId === 'AK_4';
+                const sectorNodes = isNorth
+                  ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
+                  : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
+                
+                const currentNodeId = getClosestSectorNodeId(worker.x, worker.y, sectorNodes);
+                const localTargetId = pickPatrolTargetId(worker.baseId);
+                const nodePath = findDijkstraShortestPath(currentNodeId, localTargetId);
+                waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
+              }
 
               return {
                 ...worker,
@@ -329,7 +415,12 @@ export function useSimulationEngine() {
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
 
-            if (distPct < 1.2) {
+            const wsPatrol = getWeatherSpeeds();
+            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? wsPatrol.vehicleKmH / 3.6 : wsPatrol.pedestrianKmH / 3.6;
+            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed;
+            const moveDistPct = pctPerSec * dtSec;
+
+            if (distPct < 1.2 || moveDistPct >= distPct) {
               return {
                 ...worker,
                 x: targetPt.x,
@@ -338,10 +429,6 @@ export function useSimulationEngine() {
               };
             }
 
-            const wsPatrol = getWeatherSpeeds();
-            const speedMetersPerSec = worker.vehicle === 'APRON_VEHICLE' ? wsPatrol.vehicleKmH / 3.6 : wsPatrol.pedestrianKmH / 3.6;
-            const pctPerSec = (speedMetersPerSec / 4000) * 100 * simSpeed;
-            const moveDistPct = pctPerSec * dtSec;
             const ratio = Math.min(1, moveDistPct / distPct);
 
             return {
@@ -368,41 +455,38 @@ export function useSimulationEngine() {
             if (task.status === 'COMPLETED') {
               return task;
             }
-            if (task.status === 'QUEUED') {
-              return {
-                ...task,
-                elapsedQueueSec: (task.elapsedQueueSec || 0) + dtSec * simSpeed
-              };
-            }
 
-            // Count arrived workers for this task
-            const arrivedCount = task.crew.filter(member => {
-              const w = workerIdx.get(member.workerId);
-              return w?.status === 'WORKING_ON_SITE';
+            const currentTransitSec = task.elapsedTransitSec || 0;
+            const currentWorkSec = task.elapsedWorkSec || 0;
+
+            const isAllArrived = task.crew.length > 0 && task.crew.every(m => {
+              const w = workerIdx.get(m.workerId);
+              return w && w.status === 'WORKING_ON_SITE';
+            });
+
+            const arrivedCount = task.crew.filter(m => {
+              const w = workerIdx.get(m.workerId);
+              return w && w.status === 'WORKING_ON_SITE';
             }).length;
 
-            // Robust arrival check: if task has crew and arrivedCount === crew.length
-            const isAllArrived = task.crew.length > 0 && arrivedCount === task.crew.length;
-            let elapsedWorkSec = task.elapsedWorkSec || 0;
-            let status: OtoTask['status'] = task.status;
+            let status = task.status;
+            let elapsedWorkSec = currentWorkSec;
 
-            if (isAllArrived) {
+            if (task.status === 'DISPATCHED' && isAllArrived) {
               status = 'WORKING';
+              task.startedAtSimSec = simClockRef.current;
+            }
+
+            if (status === 'WORKING') {
               elapsedWorkSec += dtSec * simSpeed;
-              if (elapsedWorkSec >= (task.targetWorkSec || 40.0)) {
+              const durationSec = task.targetWorkSec || 40.0;
+              if (elapsedWorkSec >= durationSec) {
                 completedTaskIds.push(task.id);
               }
-            } else {
-              status = 'DISPATCHED';
-
-              // Track transit time for failsafe
-              const currentTransitSec = (task.elapsedTransitSec || 0) + dtSec * simSpeed;
-
-              // FAILSAFE DISPATCH TIMEOUT: generous ETA-based window so normal transit
-              // never teleports, but genuinely stuck workers are still force-arrived.
+            } else if (status === 'DISPATCHED') {
               const failsafeTransitSec = Math.max(60, (task.maxEtaMinutes || 10) * 60 * 1.5);
               if (currentTransitSec > failsafeTransitSec) {
-                const standObj = SVO_STANDS.find(s => s.id === task.standId);
+                const standObj = activeStands.find(s => s.id === task.standId);
                 const forcedArrivals = new Map<string, Worker>();
                 task.crew.forEach(member => {
                   const w = workerIdx.get(member.workerId);
@@ -422,10 +506,7 @@ export function useSimulationEngine() {
                 }
                 status = 'WORKING';
               }
-              
-              // We mutate elapsedTransitSec directly here to save allocating another property in mapping,
-              // or we just return it. We'll return it below.
-              task.elapsedTransitSec = currentTransitSec;
+              task.elapsedTransitSec = currentTransitSec + dtSec * simSpeed;
             }
 
             return {
@@ -453,6 +534,7 @@ export function useSimulationEngine() {
             completedTaskIds.forEach(cId => {
               const doneTask = tasksRef.current.find(t => t.id === cId);
               if (!doneTask) return;
+              standCooldownsRef.current.set(doneTask.standId, completedAtSim);
               const durMin = doneTask.startedAtSimSec != null
                 ? ((completedAtSim - doneTask.startedAtSimSec) / 60).toFixed(1)
                 : null;
@@ -467,20 +549,51 @@ export function useSimulationEngine() {
               });
             });
 
-            // Freed workers stay FREE at their CURRENT position (the moment they
-            // finish maintenance), so the global greedy drain below picks the
-            // NEAREST engineer for each queued call — not an arbitrary SLA pick.
-            // No forced chaining here: distance decides, queue order keeps SLA.
+            // Freed workers transition to RETURNING_TO_BASE or local FREE_PATROLLING
             const freedFree: Map<string, Worker> = new Map();
             freedWorkers.forEach(w => {
-              freedFree.set(w.id, {
-                ...w,
-                status: w.isPatrolPreference ? 'FREE_PATROLLING' as WorkerStatus : 'FREE_STATIONARY' as WorkerStatus,
-                currentTaskId: undefined,
-                pathWaypoints: undefined,
-                pathSpeedPctPerSimSec: undefined,
-                currentSegmentIndex: 0
-              });
+              if (w.isPatrolPreference) {
+                let patrolWaypoints: { x: number; y: number }[];
+                if (isCustomMode && customElements.length > 0) {
+                  patrolWaypoints = getCustomPatrolWaypoints(w, customElements, customConnections);
+                } else {
+                  const isNorth = w.baseId === 'PTO_1' || w.baseId === 'PARKING_1' || w.baseId === 'AK_4';
+                  const sectorNodes = isNorth
+                    ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
+                    : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
+                  const startNodeId = getClosestSectorNodeId(w.x, w.y, sectorNodes);
+                  const localTargetId = pickPatrolTargetId(w.baseId);
+                  const nodePath = findDijkstraShortestPath(startNodeId, localTargetId);
+                  patrolWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
+                }
+                freedFree.set(w.id, {
+                  ...w,
+                  status: 'FREE_PATROLLING',
+                  currentTaskId: undefined,
+                  pathWaypoints: patrolWaypoints,
+                  pathSpeedPctPerSimSec: undefined,
+                  currentSegmentIndex: 0
+                });
+              } else {
+                let returnWaypoints: { x: number; y: number }[];
+                if (isCustomMode && customElements.length > 0) {
+                  returnWaypoints = getCustomReturnToBaseWaypoints(w, customElements, customConnections);
+                } else {
+                  const closestNodeId = getClosestNodeId(w.x, w.y);
+                  const targetHomeId = w.dutyStandId || w.baseId;
+                  const nodePath = findDijkstraShortestPath(closestNodeId, targetHomeId);
+                  returnWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
+                }
+
+                freedFree.set(w.id, {
+                  ...w,
+                  status: 'RETURNING_TO_BASE',
+                  currentTaskId: undefined,
+                  pathWaypoints: returnWaypoints,
+                  pathSpeedPctPerSimSec: undefined,
+                  currentSegmentIndex: 0
+                });
+              }
             });
 
             workersRef.current = workersRef.current.map(w => freedFree.get(w.id) || w);
@@ -506,28 +619,6 @@ export function useSimulationEngine() {
             // Global greedy re-drain: nearest freed engineer wins each queued call.
             // Reservations are respected, but only while nobody closer is free.
             drainQueueWithFreeWorkers();
-
-            // Freed workers remain FREE_STATIONARY (green) at their current stand position
-            // so they are immediately available for nearby tasks in their sector!
-            const idleFinal = new Map<string, Worker>();
-            freedWorkers.forEach(w => {
-              const cur = workersRef.current.find(x => x.id === w.id);
-              if (!cur) return;
-              if (cur.status === 'IN_TRANSIT' || cur.status === 'WORKING_ON_SITE') return; // re-dispatched
-              idleFinal.set(cur.id, {
-                ...cur,
-                status: 'FREE_STATIONARY' as WorkerStatus,
-                currentTaskId: undefined,
-                pathWaypoints: undefined,
-                pathSpeedPctPerSimSec: undefined,
-                currentSegmentIndex: undefined
-              });
-            });
-            if (idleFinal.size > 0) {
-              workersRef.current = workersRef.current.map(w => idleFinal.get(w.id) || w);
-              setWorkers([...workersRef.current]);
-              lastRenderTimeRef.current = now;
-            }
           } else {
             // UNCONDITIONAL update to preserve fractional timer progress
             tasksRef.current = nextTasks;
@@ -621,10 +712,15 @@ export function useSimulationEngine() {
       // Only send back to base workers that are actually engaged on this task.
       // Queued-task crew members are still free (stationary/patrolling) — leave them as-is.
       if (wObj && (wObj.status === 'IN_TRANSIT' || wObj.status === 'WORKING_ON_SITE')) {
-        const closestNodeId = getClosestNodeId(wObj.x, wObj.y);
-        const homeBaseId = wObj.baseId;
-        const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
-        const returnWaypoints = getWaypointsForNodePath({ x: wObj.x, y: wObj.y }, nodePath);
+        let returnWaypoints: { x: number; y: number }[];
+        if (isCustomMode && customElements.length > 0) {
+          returnWaypoints = getCustomReturnToBaseWaypoints(wObj, customElements, customConnections);
+        } else {
+          const closestNodeId = getClosestNodeId(wObj.x, wObj.y);
+          const homeBaseId = wObj.baseId;
+          const nodePath = findDijkstraShortestPath(closestNodeId, homeBaseId);
+          returnWaypoints = getWaypointsForNodePath({ x: wObj.x, y: wObj.y }, nodePath);
+        }
 
         updatedWorkers = updatedWorkers.map(w => {
           if (w.id === wId) {
@@ -670,7 +766,7 @@ export function useSimulationEngine() {
   }, [drainQueueWithFreeWorkers, showNotification]);
 
   const triggerStressTest = useCallback(() => {
-    const standsSample = [...SVO_STANDS].sort(() => 0.5 - Math.random()).slice(0, 10);
+    const standsSample = [...activeStands].sort(() => 0.5 - Math.random()).slice(0, Math.min(10, activeStands.length));
     const priorities: TaskPriority[] = ['AOG', 'AOG', 'URGENT', 'URGENT', 'URGENT', 'ROUTINE', 'ROUTINE', 'ROUTINE', 'ROUTINE', 'ROUTINE'];
 
     const newTasks: OtoTask[] = [];
@@ -715,7 +811,12 @@ export function useSimulationEngine() {
 
   const applyShiftConfig = useCallback((b1: number, b2: number, catA: number, vehicles: number) => {
     shiftCountsRef.current = { b1, b2, catA, vehicles };
-    const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
+    const updatedWorkers = isCustomMode
+      ? spawnAirfieldShift({
+          b1Count: b1, b2Count: b2, catACount: catA, vehiclesCount: vehicles,
+          customElements, customConnections, customFacilities: activeFacilities, customStands: activeStands, isCustomMode: true
+        })
+      : generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles, activeFacilities, activeStands);
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
 
@@ -739,7 +840,7 @@ export function useSimulationEngine() {
     simClockRef.current = 0;
     setSimClockSec(0);
     showNotification(`🔄 Смена пересчитана! ${b1 + b2 + catA} инженеров и ${vehicles} авто распределены по базам ПТО.`);
-  }, [drainQueueWithFreeWorkers, showNotification]);
+  }, [isCustomMode, customElements, activeFacilities, activeStands, drainQueueWithFreeWorkers, showNotification]);
 
   const enqueueAutoTask = useCallback((
     standId: string,
@@ -747,7 +848,7 @@ export function useSimulationEngine() {
     priority: TaskPriority,
     defectId?: string
   ) => {
-    const stand = SVO_STANDS.find(s => s.id === standId);
+    const stand = activeStands.find(s => s.id === standId) || activeStands[0];
     if (!stand) return;
     const defect = DEFECT_TYPES.find(d => d.id === defectId);
     const taskId = `T-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 90 + 10)}`;
@@ -771,20 +872,25 @@ export function useSimulationEngine() {
       createdAtSimSec: simClockRef.current,
       elapsedQueueSec: 0,
       elapsedWorkSec: 0,
-      targetWorkSec: 120
+      targetWorkSec: 40
     };
     const combined = [task, ...tasksRef.current];
     tasksRef.current = combined;
     setTasks(combined);
     syncHistoricalTasks(combined);
     drainQueueWithFreeWorkers();
-  }, [drainQueueWithFreeWorkers]);
+  }, [drainQueueWithFreeWorkers, customElements]);
 
   // Reset the shift to its optimal base deployment (FREE at home bases),
   // clear all active/queued calls, analytics and ROI history.
   const resetShiftToOptimal = useCallback((showToast: boolean) => {
     const { b1, b2, catA, vehicles } = shiftCountsRef.current;
-    const updatedWorkers = generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles);
+    const updatedWorkers = isCustomMode
+      ? spawnAirfieldShift({
+          b1Count: b1, b2Count: b2, catACount: catA, vehiclesCount: vehicles,
+          customElements, customConnections, customFacilities: activeFacilities, customStands: activeStands, isCustomMode: true
+        })
+      : generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles, activeFacilities, activeStands);
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
 
@@ -801,9 +907,6 @@ export function useSimulationEngine() {
     resetWeatherOverrides();
     if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
   }, [showNotification]);
-
-  const [archivedTasks, setArchivedTasks] = useState<OtoTask[]>([]);
-  const [activeScenarioName, setActiveScenarioName] = useState<string>('Оперативный план');
 
   const syncHistoricalTasks = useCallback((tasksToSync: OtoTask[]) => {
     if (tasksToSync.length === 0) return;
@@ -858,17 +961,26 @@ export function useSimulationEngine() {
 
   const runScenario = useCallback((scenarioId: string) => {
     archiveCurrentTasks();
+    const getStandId = (idx: number, fallbackId: string) =>
+      activeStands.length > 0 ? activeStands[idx % activeStands.length].id : fallbackId;
+
     setActiveScenarioName(SCENARIO_NAMES[scenarioId] || 'Оперативный план');
     switch (scenarioId) {
+      case 'standard': {
+        resetShiftToOptimal(false);
+        const targetStand = activeStands[0];
+        setTimeout(() => enqueueAutoTask(targetStand ? targetStand.id : 'STAND_D18', 'B1', 'ROUTINE', 'ATA72'), 400);
+        showNotification(targetStand ? `Симуляция запущена на ${targetStand.label}.` : 'Стандартная симуляция запущена: вызов направлен на D18.');
+        break;
+      }
       case 'hellish': {
         isStressTestActiveRef.current = true;
         setIsStressTestActive(true);
 
-        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'ATA32');
-        enqueueAutoTask('STAND_C25', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_D18', 'B1', 'ROUTINE', 'ATA72');
-        enqueueAutoTask('STAND_F45', 'A', 'URGENT', 'ATA49');
-        showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает 3–5 задач в очереди!`);
+        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'AOG', 'ATA32');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_C25'), 'B2', 'URGENT', 'ATA24'), 2500);
+        setTimeout(() => enqueueAutoTask(getStandId(2, 'STAND_D18'), 'B1', 'ROUTINE', 'ATA72'), 5500);
+        showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает задачи в очереди с реалистичными интервалами!`);
         break;
       }
       case 'peak':
@@ -876,54 +988,50 @@ export function useSimulationEngine() {
         break;
       case 'deficit': {
         applyShiftConfig(3, 1, 0, 2);
-        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'ATA32');
-        enqueueAutoTask('STAND_D18', 'B2', 'AOG', 'ATA34');
-        enqueueAutoTask('STAND_F45', 'B1', 'URGENT', 'ATA72');
-        enqueueAutoTask('STAND_105', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_C25', 'A', 'URGENT', 'ATA49');
-        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'ATA32');
-        enqueueAutoTask('STAND_201', 'B2', 'ROUTINE', 'ATA34');
-        enqueueAutoTask('STAND_105', 'B1', 'ROUTINE', 'ATA32');
-        showNotification(`⚠️ Сценарий «Кадровый дефицит»: 4 инженера на 8 вызовов.`);
+        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'AOG', 'ATA32');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_D18'), 'B2', 'AOG', 'ATA34'), 2000);
+        setTimeout(() => enqueueAutoTask(getStandId(2, 'STAND_F45'), 'B1', 'URGENT', 'ATA72'), 4500);
+        setTimeout(() => enqueueAutoTask(getStandId(3, 'STAND_105'), 'B2', 'URGENT', 'ATA24'), 7000);
+        showNotification(`⚠️ Сценарий «Кадровый дефицит»: 4 инженера на волну вызовов.`);
         break;
       }
       case 'series': {
-        enqueueAutoTask('STAND_B12', 'B1', 'ROUTINE', 'ATA72');
-        setTimeout(() => enqueueAutoTask('STAND_B14', 'B1', 'ROUTINE', 'ATA32'), 1500);
-        setTimeout(() => enqueueAutoTask('STAND_C21', 'B2', 'ROUTINE', 'ATA24'), 3000);
-        setTimeout(() => enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'ATA34'), 4500);
-        showNotification(`📋 Сценарий «Серия вызовов»: 4 плановых вызова подряд.`);
+        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'ROUTINE', 'ATA72');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_B14'), 'B1', 'ROUTINE', 'ATA32'), 3000);
+        setTimeout(() => enqueueAutoTask(getStandId(2, 'STAND_C21'), 'B2', 'ROUTINE', 'ATA24'), 6000);
+        setTimeout(() => enqueueAutoTask(getStandId(3, 'STAND_C25'), 'B2', 'ROUTINE', 'ATA34'), 9000);
+        showNotification(`📋 Сценарий «Серия вызовов»: 4 плановых вызова с реалистичным интервалом.`);
         break;
       }
       case 'aog': {
-        enqueueAutoTask('STAND_C25', 'B2', 'ROUTINE', 'ATA34');
-        setTimeout(() => enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'ATA72'), 2000);
-        setTimeout(() => enqueueAutoTask('STAND_F45', 'A', 'AOG', 'ATA49'), 4000);
+        enqueueAutoTask(getStandId(0, 'STAND_C25'), 'B2', 'ROUTINE', 'ATA34');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_D18'), 'B1', 'AOG', 'ATA72'), 3500);
+        setTimeout(() => enqueueAutoTask(getStandId(2, 'STAND_F45'), 'A', 'AOG', 'ATA49'), 7000);
         showNotification(`⚡ Сценарий «AOG»: рутинный вызов + срочные AOG сверху.`);
         break;
       }
       case 'remote': {
-        enqueueAutoTask('STAND_105', 'B1', 'URGENT', 'ATA32');
-        enqueueAutoTask('STAND_201', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_204', 'B1', 'ROUTINE', 'ATA32');
-        showNotification(`🗺️ Сценарий «Удалённые стоянки»: вызовы в северные/южные зоны.`);
+        enqueueAutoTask(getStandId(activeStands.length - 1, 'STAND_105'), 'B1', 'URGENT', 'ATA32');
+        setTimeout(() => enqueueAutoTask(getStandId(activeStands.length - 2, 'STAND_201'), 'B2', 'URGENT', 'ATA24'), 3000);
+        setTimeout(() => enqueueAutoTask(getStandId(activeStands.length - 3, 'STAND_204'), 'B1', 'ROUTINE', 'ATA32'), 6000);
+        showNotification(`🗺️ Сценарий «Удалённые стоянки»: вызовы в дальние зоны.`);
         break;
       }
       case 'aogDefect': {
-        enqueueAutoTask('STAND_D18', 'B1', 'AOG', 'ATA32');
+        enqueueAutoTask(getStandId(0, 'STAND_D18'), 'B1', 'AOG', 'ATA32');
         showNotification(`🩸 Сценарий «AOG-дефект»: утечка гидравлики → квалификация B1.`);
         break;
       }
       case 'snow': {
         applyWeatherOverrides(3.5, 12.0);
-        enqueueAutoTask('STAND_C21', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_E38', 'B1', 'URGENT', 'ATA32');
+        enqueueAutoTask(getStandId(0, 'STAND_C21'), 'B2', 'URGENT', 'ATA24');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_E38'), 'B1', 'URGENT', 'ATA32'), 3000);
         showNotification(`❄️ Сценарий «Снегопад»: скорость пешком 3.5 км/ч, авто 12 км/ч. ETA вызовов выросли.`);
         break;
       }
       case 'slaBreach': {
-        enqueueAutoTask('STAND_D24', 'B2', 'AOG', 'ATA24');
-        showNotification(`🚨 CRITICAL_SLA_ALERT: B2-вызов на стоянку D24, ближайший B2 — на Севере (АК-4), превышение SLA +8.5 мин!`);
+        enqueueAutoTask(getStandId(activeStands.length - 1, 'STAND_D24'), 'B2', 'AOG', 'ATA24');
+        showNotification(`🚨 CRITICAL_SLA_ALERT: вызов на удаленную стоянку, превышение SLA!`);
         break;
       }
       case 'reset': {
@@ -933,42 +1041,41 @@ export function useSimulationEngine() {
       default:
         break;
     }
-  }, [triggerStressTest, applyShiftConfig, enqueueAutoTask, resetShiftToOptimal, applyWeatherOverrides, showNotification]);
+  }, [activeStands, triggerStressTest, applyShiftConfig, enqueueAutoTask, resetShiftToOptimal, applyWeatherOverrides, showNotification]);
 
   // Hackathon PRESET SCENARIOS (quick-action bar, one click each)
   const runPreset = useCallback((presetId: string) => {
     archiveCurrentTasks();
+    const getStandId = (idx: number, fallbackId: string) =>
+      activeStands.length > 0 ? activeStands[idx % activeStands.length].id : fallbackId;
+
     switch (presetId) {
       case 'standard': {
-        // Reset workers to optimal bases, then spawn a single ATA call on D18
         resetShiftToOptimal(true);
-        setTimeout(() => enqueueAutoTask('STAND_D18', 'B1', 'ROUTINE', 'ATA72'), 400);
-        showNotification(`🟢 Пресет «Стандартный»: смена на базах, вызов ATA 72 на стоянку D18.`);
+        setTimeout(() => enqueueAutoTask(getStandId(0, 'STAND_D18'), 'B1', 'ROUTINE', 'ATA72'), 400);
+        showNotification(`🟢 Пресет «Стандартный»: смена на базах, вызов ATA 72 на стоянку.`);
         break;
       }
       case 'rushhour': {
-        // 5 simultaneous ATA calls across North (B/C) and South (D/F)
-        enqueueAutoTask('STAND_B12', 'B1', 'URGENT', 'ATA32');
-        enqueueAutoTask('STAND_C25', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_D18', 'B2', 'URGENT', 'ATA34');
-        enqueueAutoTask('STAND_D24', 'B1', 'AOG', 'ATA72');
-        enqueueAutoTask('STAND_F45', 'B1', 'URGENT', 'ATA49');
-        showNotification(`🚦 Пресет «Час-Пик SVO»: 5 одновременных ATA-вызовов по Северу (B/C) и Югу (D/F).`);
+        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'URGENT', 'ATA32');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_C25'), 'B2', 'URGENT', 'ATA24'), 2500);
+        setTimeout(() => enqueueAutoTask(getStandId(2, 'STAND_D18'), 'B2', 'URGENT', 'ATA34'), 5000);
+        setTimeout(() => enqueueAutoTask(getStandId(3, 'STAND_D24'), 'B1', 'AOG', 'ATA72'), 7500);
+        setTimeout(() => enqueueAutoTask(getStandId(4, 'STAND_F45'), 'B1', 'URGENT', 'ATA49'), 10000);
+        showNotification(`🚦 Пресет «Час-Пик»: 5 ATA-вызовов с реалистичной очередью.`);
         break;
       }
       case 'snow': {
         // Weather factor: WALK 3.5 km/h, CAR 12 km/h
         applyWeatherOverrides(3.5, 12.0);
-        enqueueAutoTask('STAND_C21', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_E38', 'B1', 'URGENT', 'ATA32');
+        enqueueAutoTask(getStandId(0, 'STAND_C21'), 'B2', 'URGENT', 'ATA24');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_E38'), 'B1', 'URGENT', 'ATA32'), 3000);
         showNotification(`❄️ Пресет «Снегопад»: скорость пешком 3.5 км/ч, авто 12 км/ч. ETA вызовов выросли.`);
         break;
       }
       case 'slaBreach': {
-        // Forced SLA breach: B2 call on the far south stand D24 (D22 не в схеме —
-        // ближайший южный перрон), где ближайший B2 живёт на Севере (АК-4).
-        enqueueAutoTask('STAND_D24', 'B2', 'AOG', 'ATA24');
-        showNotification(`🚨 CRITICAL_SLA_ALERT: B2-вызов на стоянку D24, ближайший B2 — на Севере (АК-4), превышение SLA +8.5 мин!`);
+        enqueueAutoTask(getStandId(activeStands.length - 1, 'STAND_D24'), 'B2', 'AOG', 'ATA24');
+        showNotification(`🚨 CRITICAL_SLA_ALERT: B2-вызов на удаленную стоянку, превышение SLA!`);
         break;
       }
       case 'hellish': {
@@ -976,11 +1083,9 @@ export function useSimulationEngine() {
         isStressTestActiveRef.current = true;
         setIsStressTestActive(true);
 
-        enqueueAutoTask('STAND_B12', 'B1', 'AOG', 'ATA32');
-        enqueueAutoTask('STAND_C25', 'B2', 'URGENT', 'ATA24');
-        enqueueAutoTask('STAND_D18', 'B1', 'ROUTINE', 'ATA72');
-        enqueueAutoTask('STAND_F45', 'A', 'URGENT', 'ATA49');
-        showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает 3–5 задач в очереди!`);
+        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'AOG', 'ATA32');
+        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_C25'), 'B2', 'URGENT', 'ATA24'), 3000);
+        showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает задачи в очереди!`);
         break;
       }
       case 'reset': {
@@ -1006,7 +1111,7 @@ export function useSimulationEngine() {
     ];
     for (const sc of testScenarios) {
       const t0 = performance.now();
-      const stand = SVO_STANDS.find(s => s.id === sc.stand);
+      const stand = activeStands.find(s => s.id === sc.stand) || activeStands[0];
       if (!stand) continue;
       const picked = findNearestFreeWorkerOfCategory(sc.cat, stand, workersRef.current, new Set<string>());
       const available = getCategoryCandidates(sc.cat, stand, workersRef.current, busy, load).filter(c => c.isAvailable);
@@ -1041,10 +1146,10 @@ export function useSimulationEngine() {
     const massCount = 5000;
     let massDispatched = 0;
     const massBusy = new Set<string>();
-    const standIds = SVO_STANDS.map(s => s.id);
+    const standIds = activeStands.map(s => s.id);
     const cats: CategoryCode[] = ['B1', 'B2', 'A'];
     for (let i = 0; i < massCount; i++) {
-      const stand = STAND_BY_ID.get(standIds[i % standIds.length]);
+      const stand = standById.get(standIds[i % standIds.length]);
       if (!stand) continue;
       const picked = findNearestFreeWorkerOfCategory(cats[i % 3], stand, workersRef.current, massBusy);
       if (picked) {
@@ -1065,7 +1170,7 @@ export function useSimulationEngine() {
     const sweepCount = 50000;
     for (let i = 0; i < sweepCount; i++) {
       const w = workersRef.current[i % workersRef.current.length];
-      const stand = STAND_BY_ID.get(standIds[i % standIds.length]);
+      const stand = standById.get(standIds[i % standIds.length]);
       if (w && stand) calculateWorkerToStandEta(w, stand);
     }
     const sweepMs = Math.round((performance.now() - tSweep0) * 100) / 100;
@@ -1091,11 +1196,13 @@ export function useSimulationEngine() {
   const manuallyAssignTask = useCallback((taskId: string, workerId: string) => {
     const task = tasksRef.current.find(t => t.id === taskId);
     const worker = workersRef.current.find(w => w.id === workerId);
-    const stand = task ? STAND_BY_ID.get(task.standId) : undefined;
+    const stand = task ? standById.get(task.standId) : undefined;
     if (!task || !worker || !stand || task.status !== 'QUEUED') return;
     if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') return;
 
-    const member = calculateWorkerToStandEta(worker, stand);
+    const member = isCustomMode
+      ? calculateModularWorkerEta(worker, stand, customElements, customConnections)
+      : calculateWorkerToStandEta(worker, stand);
     const nextWorker = {
       ...worker,
       status: 'IN_TRANSIT' as const,
@@ -1150,6 +1257,8 @@ export function useSimulationEngine() {
     runScenario,
     activeScenarioName,
     runPreset,
-    runControlTests
+    runControlTests,
+    activeStands,
+    activeFacilities
   };
 }

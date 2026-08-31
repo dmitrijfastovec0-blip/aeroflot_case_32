@@ -5,11 +5,20 @@ import {
   calculateWorkerToStandEta,
   applyWeatherOverrides,
   resetWeatherOverrides,
-  findNaiveNearestWorkerOfCategory
+  findNaiveNearestWorkerOfCategory,
+  getCustomAirportStands,
+  getCustomAirportFacilities
 } from '../dijkstra';
+import {
+  extractCustomStands,
+  calculateModularWorkerEta,
+  getCustomPatrolWaypoints,
+  getCustomReturnToBaseWaypoints
+} from '../airfieldGraph';
+import { spawnAirfieldShift } from '../shiftSpawner';
 import { computeDispatchPlan } from '../../core/dispatcher';
 import { SVO_STANDS, DEFECT_TYPES } from '../../constants/index';
-import { OtoTask, Stand, Worker } from '../../types/index';
+import { OtoTask, Stand, Worker, AirportElement, AirportConnection } from '../../types/index';
 
 const standMap = new Map<string, Stand>(SVO_STANDS.map(s => [s.id, s]));
 
@@ -135,5 +144,176 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
 
     const plan = computeDispatchPlan(ctx);
     expect(plan).toBeDefined();
+  });
+
+  it('5. Supports Custom Airfield Testbed: extracts custom stands/facilities, generates custom shift and routes via Dijkstra', () => {
+    const customElements: AirportElement[] = [
+      { id: 'CUST-RWY', kind: 'RUNWAY', label: 'ВПП 01/19', x: 50, y: 15, width: 60, height: 4 },
+      { id: 'CUST-PTO', kind: 'DUTY_STATION', label: 'ПТО-1', x: 30, y: 50, width: 8, height: 6 },
+      { id: 'CUST-PARK', kind: 'PARKING', label: 'Автопарк', x: 70, y: 50, width: 10, height: 6 },
+      { id: 'CUST-ST-1', kind: 'STAND', label: '101', aircraftType: 'Airbus A320-200', x: 20, y: 35, width: 8, height: 6 },
+      { id: 'CUST-ST-2', kind: 'STAND', label: '102', aircraftType: 'Boeing 737-800', x: 80, y: 35, width: 8, height: 6 }
+    ];
+
+    const customConnections: AirportConnection[] = [
+      { id: 'LINK-1', from: 'CUST-PTO', to: 'CUST-ST-1', kind: 'ROAD' },
+      { id: 'LINK-2', from: 'CUST-PTO', to: 'CUST-PARK', kind: 'ROAD' },
+      { id: 'LINK-3', from: 'CUST-PARK', to: 'CUST-ST-2', kind: 'ROAD' }
+    ];
+
+    const stands = getCustomAirportStands(customElements);
+    const facilities = getCustomAirportFacilities(customElements);
+
+    expect(stands.length).toBe(2);
+    expect(stands[0].label).toBe('101');
+    expect(stands[0].aircraftType).toBe('Airbus A320-200');
+    expect(facilities.length).toBe(2);
+
+    const customWorkers = generateShiftWorkersWithCustomCounts(4, 2, 2, 4, facilities, stands);
+    expect(customWorkers.length).toBe(8);
+
+    // Verify workers are stationed at custom facilities or stands
+    const allowedBases = new Set(facilities.map(f => f.id));
+    customWorkers.forEach(w => {
+      expect(allowedBases.has(w.baseId)).toBe(true);
+    });
+
+    // Test ETA calculation on custom graph
+    const worker = customWorkers[0];
+    const targetStand = stands[0];
+    const etaMember = calculateWorkerToStandEta(worker, targetStand, customElements, customConnections);
+
+    expect(etaMember).toBeDefined();
+    expect(etaMember.etaMinutes).toBeGreaterThan(0);
+    expect(etaMember.etaMinutes).toBeLessThan(15.0);
+    expect(etaMember.waypoints.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('6. Successfully dispatches tasks on custom airfield with valid ETA within SLA limit', () => {
+    const customElements: AirportElement[] = [
+      { id: 'CUST-PTO', kind: 'DUTY_STATION', label: 'ПТО-1', x: 30, y: 50, width: 8, height: 6 },
+      { id: 'CUST-ST-1', kind: 'STAND', label: '101', aircraftType: 'Airbus A320-200', x: 20, y: 35, width: 8, height: 6 }
+    ];
+    const customConnections: AirportConnection[] = [
+      { id: 'LINK-1', from: 'CUST-PTO', to: 'CUST-ST-1', kind: 'ROAD' }
+    ];
+
+    const stands = getCustomAirportStands(customElements);
+    const facilities = getCustomAirportFacilities(customElements);
+    const customWorkers = generateShiftWorkersWithCustomCounts(6, 4, 2, 6, facilities, stands);
+
+    const standById = new Map<string, Stand>(stands.map(s => [s.id, s]));
+
+    const mockCustomTask: OtoTask = {
+      id: 'custom-task-1',
+      standId: stands[0].id,
+      standLabel: `Стоянка ${stands[0].label}`,
+      aircraftType: 'Airbus A320-200',
+      categoryCode: 'B1',
+      categoryLabel: 'ОТО (AOG)',
+      priority: 'AOG',
+      status: 'QUEUED',
+      createdAt: '15:00',
+      requiredCrew: [{ categoryCode: 'B1', count: 1 }],
+      crew: [],
+      arrivedCount: 0,
+      maxEtaMinutes: 12.0,
+      slaLimitMinutes: 15.0,
+      withinSla: true,
+      elapsedWorkSec: 0,
+      targetWorkSec: 40
+    };
+
+    const ctx = {
+      tasks: [mockCustomTask],
+      workers: customWorkers,
+      standById,
+      calculateEta: (w: Worker, s: Stand) => calculateWorkerToStandEta(w, s, customElements, customConnections),
+      findNaiveNearest: (cat: any, s: Stand, wrks: Worker[], busy?: Set<string>) =>
+        findNaiveNearestWorkerOfCategory(cat, s, wrks, busy || new Set())
+    };
+
+    const plan = computeDispatchPlan(ctx);
+    expect(plan.changed).toBe(true);
+    expect(Object.keys(plan.dispatchedTasks).length).toBe(1);
+    const dispatched = Object.values(plan.dispatchedTasks)[0];
+    expect(dispatched.crew.length).toBe(1);
+    expect(dispatched.crew[0].categoryCode).toBe('B1');
+    expect(dispatched.maxEtaMinutes).toBeLessThanOrEqual(15.0);
+  });
+
+  it('7. Modular airfieldGraph computes accurate Dijkstra routes, waypoints and modular ETA', () => {
+    const customElements: AirportElement[] = [
+      { id: 'CUST-PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 20, y: 40, width: 8, height: 6 },
+      { id: 'CUST-WP-1', kind: 'WAYPOINT', label: 'Узел 1', x: 40, y: 40 },
+      { id: 'CUST-ST-1', kind: 'STAND', label: '101', aircraftType: 'Airbus A320-200', x: 60, y: 40, width: 8, height: 6 }
+    ];
+    const customConnections: AirportConnection[] = [
+      { id: 'L1', from: 'CUST-PTO-1', to: 'CUST-WP-1', kind: 'ROAD' },
+      { id: 'L2', from: 'CUST-WP-1', to: 'CUST-ST-1', kind: 'ROAD' }
+    ];
+
+    const stands = extractCustomStands(customElements);
+    expect(stands.length).toBe(1);
+
+    const shift = spawnAirfieldShift({
+      b1Count: 2,
+      b2Count: 2,
+      catACount: 1,
+      vehiclesCount: 2,
+      customElements,
+      isCustomMode: true
+    });
+    expect(shift.length).toBe(5);
+
+    const worker = shift[0];
+    const eta = calculateModularWorkerEta(worker, stands[0], customElements, customConnections);
+    expect(eta.waypoints.length).toBeGreaterThanOrEqual(2);
+    expect(eta.distanceMeters).toBeGreaterThan(0);
+    expect(eta.etaMinutes).toBeLessThan(15.0);
+
+    const patrolPts = getCustomPatrolWaypoints(worker, customElements, customConnections);
+    expect(patrolPts.length).toBeGreaterThanOrEqual(2);
+
+    const returnPts = getCustomReturnToBaseWaypoints(worker, customElements, customConnections);
+    expect(returnPts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('8. Custom airfield workers follow curved roads and junctions strictly without straight line cutting', () => {
+    // Road with 90 degree turn: PTO at (20, 20) -> Corner at (20, 60) -> Stand at (80, 60)
+    const customElements: AirportElement[] = [
+      { id: 'PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 20, y: 20, width: 8, height: 6 },
+      { id: 'STAND-1', kind: 'STAND', label: '101', aircraftType: 'Airbus A320-200', x: 80, y: 60, width: 8, height: 6 }
+    ];
+    const customConnections: AirportConnection[] = [
+      {
+        id: 'L-CURVE',
+        from: 'PTO-1',
+        to: 'STAND-1',
+        kind: 'ROAD',
+        points: [
+          { x: 20, y: 20 },
+          { x: 20, y: 60 }, // Corner turn
+          { x: 80, y: 60 }
+        ]
+      }
+    ];
+
+    const stands = extractCustomStands(customElements);
+    const shift = spawnAirfieldShift({
+      b1Count: 1,
+      b2Count: 0,
+      catACount: 0,
+      vehiclesCount: 1,
+      customElements,
+      customConnections,
+      isCustomMode: true
+    });
+
+    const eta = calculateModularWorkerEta(shift[0], stands[0], customElements, customConnections);
+    // Waypoints must include the corner at (20, 60)
+    expect(eta.waypoints.length).toBeGreaterThanOrEqual(3);
+    const hasCorner = eta.waypoints.some(pt => Math.hypot(pt.x - 20, pt.y - 60) < 1.0);
+    expect(hasCorner).toBe(true);
   });
 });

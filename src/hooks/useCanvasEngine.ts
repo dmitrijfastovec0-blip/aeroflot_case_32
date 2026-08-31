@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Worker, OtoTask, HoverTooltipData, ThemeMode, WeatherMode, TaskCrewMember, AirportElement } from '../types/index';
-import { SVO_BUILDINGS, SVO_FACILITIES, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
+import { Worker, OtoTask, HoverTooltipData, ThemeMode, WeatherMode, TaskCrewMember, AirportElement, AirportConnection, AirfieldMode } from '../types/index';
+import { SVO_BUILDINGS, SVO_FACILITIES, SVO_STANDS, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
 
 // Polyfill for CanvasRenderingContext2D.roundRect (missing in older Safari/Firefox)
 if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
@@ -146,64 +146,64 @@ interface ClusterIndexes {
   siteSlotIndex: Map<string, number>;
 }
 
-// Build stable per-group slot indexes for duty workers (by base) and
-// on-site workers (by their task), sorted by id for deterministic packing.
+// Build stable per-group slot indexes by spatial proximity cell (2% grid)
+// so workers standing at the same location cluster neatly without jumping
 function buildClusterIndexes(workers: Worker[]): ClusterIndexes {
   const baseGroups = new Map<string, Worker[]>();
   const siteGroups = new Map<string, Worker[]>();
+
   for (const w of workers) {
+    const cellKey = `${Math.round(w.x / 1.5)}_${Math.round(w.y / 1.5)}`;
     if (w.status === 'FREE_STATIONARY') {
-      let g = baseGroups.get(w.baseId);
-      if (!g) { g = []; baseGroups.set(w.baseId, g); }
+      let g = baseGroups.get(cellKey);
+      if (!g) { g = []; baseGroups.set(cellKey, g); }
       g.push(w);
     } else if (w.status === 'WORKING_ON_SITE') {
-      const key = w.currentTaskId || w.baseId;
+      const key = w.currentTaskId || cellKey;
       let g = siteGroups.get(key);
       if (!g) { g = []; siteGroups.set(key, g); }
       g.push(w);
     }
   }
+
   const baseSlotIndex = new Map<string, number>();
   const siteSlotIndex = new Map<string, number>();
   for (const g of baseGroups.values()) {
-    g.sort((a, b) => a.id.localeCompare(b.id));
+    // Sort by qualification (B1, B2, A) then ID so they form neat, organized military units inside the base
+    g.sort((a, b) => a.categoryCode.localeCompare(b.categoryCode) || a.id.localeCompare(b.id));
     g.forEach((w, i) => baseSlotIndex.set(w.id, i));
   }
   for (const g of siteGroups.values()) {
-    g.sort((a, b) => a.id.localeCompare(b.id));
+    g.sort((a, b) => a.categoryCode.localeCompare(b.categoryCode) || a.id.localeCompare(b.id));
     g.forEach((w, i) => siteSlotIndex.set(w.id, i));
   }
   return { baseSlotIndex, siteSlotIndex };
 }
 
-// Target render position for a worker (percent units, aligned with map nodes)
-function workerClusterPos(worker: Worker, hash: number, idx: ClusterIndexes) {
-  let anchorX = worker.x;
-  let anchorY = worker.y;
-
-  // Snap stationary duty workers precisely to their home facility if nearby
-  if (worker.status === 'FREE_STATIONARY' && worker.baseId) {
-    const fac = SVO_FACILITIES.find(f => f.id === worker.baseId);
-    if (fac && Math.hypot(worker.x - fac.x, worker.y - fac.y) < 6) {
-      anchorX = fac.x;
-      anchorY = fac.y;
-    }
-  }
+// Target render position for a worker (percent units, strictly tracking live physical position)
+function workerClusterPos(worker: Worker, hash: number, idx: ClusterIndexes, _customElements: AirportElement[] = []) {
+  const anchorX = worker.x;
+  const anchorY = worker.y;
 
   if (worker.status === 'FREE_STATIONARY') {
-    const s = ringSlot(idx.baseSlotIndex.get(worker.id) ?? 0, 1.2);
+    const slot = idx.baseSlotIndex.get(worker.id) ?? 0;
+    const s = ringSlot(slot, 0.75);
     return { x: anchorX + s.x, y: anchorY + s.y };
   }
+
   if (worker.status === 'WORKING_ON_SITE') {
-    const s = ringSlot(idx.siteSlotIndex.get(worker.id) ?? 0, 1.2);
+    const slot = idx.siteSlotIndex.get(worker.id) ?? 0;
+    const s = ringSlot(slot, 0.65);
     return { x: anchorX + s.x, y: anchorY + s.y };
   }
+
   if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
     return {
-      x: worker.x + ((hash % 3) - 1) * 0.4,
-      y: worker.y + ((Math.floor(hash / 3) % 3) - 1) * 0.4
+      x: worker.x + ((hash % 3) - 1) * 0.12,
+      y: worker.y + ((Math.floor(hash / 3) % 3) - 1) * 0.12
     };
   }
+
   return { x: anchorX, y: anchorY };
 }
 
@@ -214,6 +214,8 @@ interface UseCanvasEngineProps {
   onSelectStand: (standId: string) => void;
   onOpenStandContext?: (standId: string) => void;
   customElements?: AirportElement[];
+  customConnections?: AirportConnection[];
+  airfieldMode?: AirfieldMode;
   theme: ThemeMode;
   weatherMode?: WeatherMode;
   isDevMode: boolean;
@@ -231,6 +233,8 @@ export function useCanvasEngine({
   onSelectStand,
   onOpenStandContext,
   customElements = [],
+  customConnections = [],
+  airfieldMode = 'SVO',
   theme,
   weatherMode = 'CLEAR',
   isDevMode,
@@ -354,383 +358,641 @@ export function useCanvasEngine({
     }
     ctx.restore();
 
-    // Keep the selected call readable without adding another permanent map layer.
+    // Draw each dispatched crew member's route strictly as its own independent polyline along the graph
     const selectedTask = tasks.find(t => t.standId === selectedStandId && t.status !== 'COMPLETED');
-    const selectedRoute = selectedTask?.crew.flatMap(member => member.waypoints).filter(Boolean) || [];
-    if (selectedRoute.length > 1) {
-      ctx.save();
-      ctx.strokeStyle = selectedTask?.priority === 'AOG' ? '#fb7185' : '#38bdf8';
-      ctx.globalAlpha = 0.85;
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([7, 5]);
-      ctx.beginPath();
-      selectedRoute.forEach((point, index) => {
-        const pos = pctToLogical(point.x, point.y);
-        if (index === 0) ctx.moveTo(pos.x, pos.y);
-        else ctx.lineTo(pos.x, pos.y);
+    if (selectedTask && selectedTask.crew.length > 0) {
+      selectedTask.crew.forEach(member => {
+        const route = member.waypoints;
+        if (route && route.length > 1) {
+          ctx.save();
+          ctx.strokeStyle = selectedTask.priority === 'AOG' ? '#fb7185' : '#38bdf8';
+          ctx.globalAlpha = 0.85;
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash([7, 5]);
+          ctx.beginPath();
+          route.forEach((point, index) => {
+            const pos = pctToLogical(point.x, point.y);
+            if (index === 0) ctx.moveTo(pos.x, pos.y);
+            else ctx.lineTo(pos.x, pos.y);
+          });
+          ctx.stroke();
+          ctx.restore();
+        }
       });
-      ctx.stroke();
-      ctx.restore();
     }
 
-    // SVO Buildings & Runways (Faint, non-intrusive decor shapes)
-    SVO_BUILDINGS.forEach(bld => {
-      ctx.save();
-      if (bld.type === 'ARC' && bld.center && bld.radius) {
-        const centerPos = pctToLogical(bld.center.x, bld.center.y);
-        const radLogical = (bld.radius / 100) * LOGICAL_WIDTH;
+    const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
 
-        ctx.fillStyle = palette.terminalFill;
-        ctx.strokeStyle = palette.terminalStroke;
-        ctx.lineWidth = 0.8;
-        ctx.globalAlpha = 0.35;
+    if (isCustomMode) {
+      // 1. CUSTOM CONNECTIONS (Drawn under elements)
+      customConnections.forEach(connection => {
+        const from = customElements.find(element => element.id === connection.from);
+        const to = customElements.find(element => element.id === connection.to);
+        const routePoints = connection.points && connection.points.length >= 2
+          ? connection.points
+          : (from && to ? [{ x: from.x, y: from.y }, { x: to.x, y: to.y }] : []);
 
+        if (routePoints.length < 2) return;
+        const logicalPts = routePoints.map(p => pctToLogical(p.x, p.y));
+
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        if (connection.kind === 'ROAD') {
+          ctx.strokeStyle = theme === 'dark' ? '#334155' : '#64748b';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          logicalPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+
+          ctx.strokeStyle = theme === 'dark' ? '#94a3b8' : '#e2e8f0';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 6]);
+          ctx.lineDashOffset = dashOffset * 0.4;
+          ctx.stroke();
+        } else if (connection.kind === 'TAXIWAY') {
+          ctx.strokeStyle = theme === 'dark' ? '#475569' : '#94a3b8';
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          logicalPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([6, 6]);
+          ctx.stroke();
+        } else if (connection.kind === 'TUNNEL') {
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 3.5;
+          ctx.setLineDash([8, 4]);
+          ctx.lineDashOffset = dashOffset * 0.5;
+          ctx.beginPath();
+          logicalPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+        } else { // SERVICE
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          logicalPts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+
+      // 2. CUSTOM RUNWAYS
+      customElements.filter(e => e.kind === 'RUNWAY').forEach(element => {
+        const pos = pctToLogical(element.x, element.y);
+        const width = (element.width || 32) / 100 * LOGICAL_WIDTH;
+        const height = (element.height || 4) / 100 * LOGICAL_HEIGHT;
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.fillStyle = theme === 'dark' ? '#1e293b' : '#94a3b8';
+        ctx.strokeStyle = theme === 'dark' ? '#475569' : '#64748b';
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(centerPos.x, centerPos.y, radLogical, bld.startAngle, bld.endAngle);
-        ctx.closePath();
+        ctx.roundRect(-width / 2, -height / 2, width, height, 4);
         ctx.fill();
         ctx.stroke();
 
-        ctx.globalAlpha = 0.25;
-        ctx.fillStyle = palette.textSubtle;
-        ctx.font = '500 11px "Inter", sans-serif';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([8, 8]);
+        ctx.beginPath();
+        ctx.moveTo(-width / 2 + 15, 0);
+        ctx.lineTo(width / 2 - 15, 0);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#ffffff';
+        for (let i = -3; i <= 3; i++) {
+          ctx.fillRect(-width / 2 + 3, i * 2 - 0.7, 6, 1.4);
+          ctx.fillRect(width / 2 - 9, i * 2 - 0.7, 6, 1.4);
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '800 10px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(bld.name, centerPos.x, centerPos.y - radLogical * 0.3);
-      } else if (bld.points && bld.points.length >= 2) {
-        const isRunway = bld.id.startsWith('RWY');
+        ctx.textBaseline = 'middle';
+        ctx.fillText(element.label, 0, height / 2 + 10);
+        ctx.restore();
+      });
 
-        if (isRunway) {
-          const p1 = pctToLogical(bld.points[0].x, bld.points[0].y);
-          const p2 = pctToLogical(bld.points[1].x, bld.points[1].y);
-          const dx = p2.x - p1.x;
-          const dy = p2.y - p1.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const ux = dx / len;
-          const uy = dy / len;
+      // 3. CUSTOM TERMINALS
+      customElements.filter(e => e.kind === 'TERMINAL').forEach(element => {
+        const pos = pctToLogical(element.x, element.y);
+        const width = (element.width || 16) / 100 * LOGICAL_WIDTH;
+        const height = (element.height || 10) / 100 * LOGICAL_HEIGHT;
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.fillStyle = theme === 'dark' ? 'rgba(14, 165, 233, 0.15)' : 'rgba(14, 165, 233, 0.12)';
+        ctx.strokeStyle = '#0284c7';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.roundRect(-width / 2, -height / 2, width, height, 6);
+        ctx.fill();
+        ctx.stroke();
 
-          ctx.globalAlpha = 0.2;
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '800 11px "Inter", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`🏢 ${element.label}`, 0, -2);
 
-          // Runway pavement (faint strip)
-          ctx.strokeStyle = palette.runwayFill;
-          ctx.lineCap = 'round';
-          ctx.lineWidth = 10;
+        ctx.fillStyle = palette.textSubtle;
+        ctx.font = '600 8.5px "JetBrains Mono", monospace';
+        ctx.fillText('ТЕРМИНАЛЬНЫЙ КОМПЛЕКС', 0, 10);
+        ctx.restore();
+      });
+
+      // 4. CUSTOM HANGARS
+      customElements.filter(e => e.kind === 'HANGAR').forEach(element => {
+        const pos = pctToLogical(element.x, element.y);
+        const width = (element.width || 12) / 100 * LOGICAL_WIDTH;
+        const height = (element.height || 8) / 100 * LOGICAL_HEIGHT;
+        const isHovered = hoveredNodeId === element.id;
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.fillStyle = theme === 'dark' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.1)';
+        ctx.strokeStyle = isHovered ? '#818cf8' : '#6366f1';
+        ctx.lineWidth = isHovered ? 2.2 : 1.5;
+        ctx.beginPath();
+        ctx.roundRect(-width / 2, -height / 2, width, height, 5);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#a5b4fc';
+        ctx.font = '800 10px "Inter", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`🏗️ ${element.label}`, 0, 0);
+        ctx.restore();
+      });
+
+      // 5. CUSTOM PARKINGS
+      customElements.filter(e => e.kind === 'PARKING').forEach(element => {
+        const pos = pctToLogical(element.x, element.y);
+        const width = (element.width || 10) / 100 * LOGICAL_WIDTH;
+        const height = (element.height || 6) / 100 * LOGICAL_HEIGHT;
+        const isHovered = hoveredNodeId === element.id;
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.fillStyle = theme === 'dark' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.08)';
+        ctx.strokeStyle = isHovered ? '#38bdf8' : '#f59e0b';
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.roundRect(-width / 2, -height / 2, width, height, 4);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = '800 9.5px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(element.label, 0, 0);
+        ctx.restore();
+      });
+
+      // 6. CUSTOM DUTY STATIONS
+      customElements.filter(e => e.kind === 'DUTY_STATION').forEach(element => {
+        const pos = pctToLogical(element.x, element.y);
+        const size = 30;
+        const isHovered = hoveredNodeId === element.id;
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.fillStyle = palette.bg;
+        ctx.strokeStyle = isHovered ? '#238636' : '#d97706';
+        ctx.lineWidth = isHovered ? 2.5 : 1.8;
+        ctx.beginPath();
+        ctx.roundRect(-size / 2, -size / 2, size, size, 5);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isHovered ? '#238636' : '#fbbf24';
+        ctx.font = '800 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('ПТО', 0, 0);
+
+        ctx.fillStyle = palette.textSubtle;
+        ctx.font = '600 9px "Inter", sans-serif';
+        ctx.fillText(element.label, 0, size / 2 + 10);
+        ctx.restore();
+      });
+
+      // 7. CUSTOM WAYPOINTS
+      customElements.filter(e => e.kind === 'WAYPOINT').forEach(element => {
+        const pos = pctToLogical(element.x, element.y);
+        ctx.save();
+        ctx.fillStyle = '#38bdf860';
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      // 8. CUSTOM STANDS
+      customElements.filter(e => e.kind === 'STAND').forEach(stand => {
+        const pos = pctToLogical(stand.x, stand.y);
+        const realNow = Date.now();
+        const isSelected = selectedStandId === stand.id;
+        const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
+        const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (realNow - (t as any).completedAtMs) < 5000);
+        const isTaskActive = !!activeTask;
+        const isHovered = hoveredNodeId === stand.id;
+
+        ctx.save();
+        const boxW = 58;
+        const boxH = 36;
+        const boxX = pos.x - boxW / 2;
+        const boxY = pos.y - boxH / 2;
+
+        let borderColor = palette.standBorder;
+        let bgColor = palette.standBg;
+
+        if (isHovered) {
+          borderColor = '#238636';
+          bgColor = '#23863625';
+        } else if (isSelected) {
+          borderColor = '#38bdf8';
+          bgColor = '#38bdf825';
+        } else if (recentCompletedTask) {
+          borderColor = '#22c55e';
+          bgColor = '#22c55e30';
+        } else if (isTaskActive) {
+          borderColor = activeTask?.status === 'WORKING' ? '#22c55e' : '#f59e0b';
+          bgColor = activeTask?.status === 'WORKING' ? '#22c55e25' : '#f59e0b25';
+        }
+
+        if (isSelected || isTaskActive || isHovered) {
+          const pulse = 3 + Math.sin(now / 180) * 1.8;
+          ctx.strokeStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#f59e0b' : '#238636';
+          ctx.globalAlpha = 0.3;
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 4]);
+          ctx.lineDashOffset = dashOffset;
           ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
-          ctx.stroke();
-
-          // Centerline dashes
-          ctx.strokeStyle = palette.runwayLine;
-          ctx.lineWidth = 1.0;
-          ctx.setLineDash([6, 6]);
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
+          ctx.roundRect(boxX - pulse, boxY - pulse, boxW + pulse * 2, boxH + pulse * 2, 7);
           ctx.stroke();
           ctx.setLineDash([]);
-        } else {
+          ctx.globalAlpha = 1;
+        }
+
+        ctx.fillStyle = bgColor;
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = isSelected || isHovered || isTaskActive ? 2.2 : 1.1;
+
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : palette.standText;
+        ctx.font = '800 11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(stand.label, pos.x, pos.y - 6);
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '600 8px "Inter", sans-serif';
+        ctx.fillText(stand.aircraftType || 'Airbus A320', pos.x, pos.y + 6);
+
+        if (isTaskActive) {
+          const isWorking = activeTask?.status === 'WORKING';
+          ctx.fillStyle = isWorking ? '#22c55e' : '#f59e0b';
+          ctx.beginPath();
+          ctx.arc(boxX + boxW - 6, boxY + 6, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+      });
+    } else {
+      // SVO BASELINE BUILDINGS & ROADS
+      SVO_BUILDINGS.forEach(bld => {
+        ctx.save();
+        if (bld.type === 'ARC' && bld.center && bld.radius) {
+          const centerPos = pctToLogical(bld.center.x, bld.center.y);
+          const radLogical = (bld.radius / 100) * LOGICAL_WIDTH;
+
           ctx.fillStyle = palette.terminalFill;
           ctx.strokeStyle = palette.terminalStroke;
           ctx.lineWidth = 0.8;
           ctx.globalAlpha = 0.35;
 
           ctx.beginPath();
-          const logicalPts = bld.points.map(p => pctToLogical(p.x, p.y));
-          roundedPolygonPath(ctx, logicalPts, 3.2);
+          ctx.arc(centerPos.x, centerPos.y, radLogical, bld.startAngle, bld.endAngle);
+          ctx.closePath();
           ctx.fill();
           ctx.stroke();
-
-          const avgX = bld.points.reduce((acc, p) => acc + p.x, 0) / bld.points.length;
-          const avgY = bld.points.reduce((acc, p) => acc + p.y, 0) / bld.points.length;
-          const labelPos = pctToLogical(avgX, avgY);
 
           ctx.globalAlpha = 0.25;
           ctx.fillStyle = palette.textSubtle;
           ctx.font = '500 11px "Inter", sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText(bld.name, labelPos.x, labelPos.y);
+          ctx.fillText(bld.name, centerPos.x, centerPos.y - radLogical * 0.3);
+        } else if (bld.points && bld.points.length >= 2) {
+          const isRunway = bld.id.startsWith('RWY');
+
+          if (isRunway) {
+            const p1 = pctToLogical(bld.points[0].x, bld.points[0].y);
+            const p2 = pctToLogical(bld.points[1].x, bld.points[1].y);
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+
+            ctx.globalAlpha = 0.2;
+
+            ctx.strokeStyle = palette.runwayFill;
+            ctx.lineCap = 'round';
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+
+            ctx.strokeStyle = palette.runwayLine;
+            ctx.lineWidth = 1.0;
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else {
+            ctx.fillStyle = palette.terminalFill;
+            ctx.strokeStyle = palette.terminalStroke;
+            ctx.lineWidth = 0.8;
+            ctx.globalAlpha = 0.35;
+
+            ctx.beginPath();
+            const logicalPts = bld.points.map(p => pctToLogical(p.x, p.y));
+            roundedPolygonPath(ctx, logicalPts, 3.2);
+            ctx.fill();
+            ctx.stroke();
+
+            const avgX = bld.points.reduce((acc, p) => acc + p.x, 0) / bld.points.length;
+            const avgY = bld.points.reduce((acc, p) => acc + p.y, 0) / bld.points.length;
+            const labelPos = pctToLogical(avgX, avgY);
+
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = palette.textSubtle;
+            ctx.font = '500 11px "Inter", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(bld.name, labelPos.x, labelPos.y);
+          }
         }
+        ctx.restore();
+      });
+
+      // ROAD TOPOLOGY GRAPH — Clean, bright default road network
+      const roadEdges = SVO_EDGES.filter(e => e.type !== 'TUNNEL');
+      const cornerRadius = 7;
+
+      if (!roadPathRef.current) {
+        roadPathRef.current = buildRoadNetworkPath(roadEdges, getNodePos, cornerRadius);
       }
-      ctx.restore();
-    });
-
-    customElements.forEach(element => {
-      const pos = pctToLogical(element.x, element.y);
-      const width = (element.width || 8) / 100 * LOGICAL_WIDTH;
-      const height = (element.height || 5) / 100 * LOGICAL_HEIGHT;
-      ctx.save();
-      ctx.fillStyle = element.kind === 'RUNWAY' ? 'rgba(148,163,184,.28)' : 'rgba(56,189,248,.16)';
-      ctx.strokeStyle = element.kind === 'RUNWAY' ? '#94a3b8' : '#38bdf8';
-      ctx.lineWidth = 1.5;
-      ctx.translate(pos.x, pos.y);
-      ctx.rotate(element.kind === 'RUNWAY' ? -0.08 : 0);
-      ctx.fillRect(-width / 2, -height / 2, width, height);
-      ctx.strokeRect(-width / 2, -height / 2, width, height);
-      ctx.rotate(element.kind === 'RUNWAY' ? 0.08 : 0);
-      ctx.fillStyle = '#bae6fd';
-      ctx.font = '600 10px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(element.label, 0, height / 2 + 13);
-      ctx.restore();
-    });
-
-    // ROAD TOPOLOGY GRAPH — Clean, bright default road network
-    const roadEdges = SVO_EDGES.filter(e => e.type !== 'TUNNEL');
-    const cornerRadius = 7;
-
-    if (!roadPathRef.current) {
-      roadPathRef.current = buildRoadNetworkPath(roadEdges, getNodePos, cornerRadius);
-    }
-    const roadPath = roadPathRef.current;
-
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    // Clear bright street underlay
-    ctx.strokeStyle = palette.roadLine;
-    ctx.globalAlpha = 0.85;
-    ctx.lineWidth = 3.2;
-    ctx.stroke(roadPath);
-
-    // Bright centerline
-    ctx.globalAlpha = 0.65;
-    ctx.strokeStyle = palette.grid;
-    ctx.lineWidth = 1.0;
-    ctx.stroke(roadPath);
-
-    // Subtle moving traffic flow dashes
-    ctx.strokeStyle = palette.textSubtle;
-    ctx.globalAlpha = theme === 'dark' ? 0.35 : 0.45;
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([4, 18]);
-    ctx.lineDashOffset = dashOffset * 0.5;
-    ctx.stroke(roadPath);
-    ctx.setLineDash([]);
-    ctx.restore();
-
-    // Glowing animated tunnel (underground conveyor) — separate layer
-    SVO_EDGES.filter(e => e.type === 'TUNNEL').forEach(edge => {
-      const p1 = getNodePos(edge.from);
-      const p2 = getNodePos(edge.to);
+      const roadPath = roadPathRef.current;
 
       ctx.save();
       ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
 
-      ctx.strokeStyle = palette.tunnelLine;
-      ctx.globalAlpha = 0.22;
-      ctx.lineWidth = 7;
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
+      ctx.strokeStyle = palette.roadLine;
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 3.2;
+      ctx.stroke(roadPath);
 
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = palette.tunnelLine;
-      ctx.lineWidth = 2.2;
-      ctx.setLineDash([10, 8]);
-      ctx.lineDashOffset = dashOffset;
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
+      ctx.globalAlpha = 0.65;
+      ctx.strokeStyle = palette.grid;
+      ctx.lineWidth = 1.0;
+      ctx.stroke(roadPath);
+
+      ctx.strokeStyle = palette.textSubtle;
+      ctx.globalAlpha = theme === 'dark' ? 0.35 : 0.45;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 18]);
+      ctx.lineDashOffset = dashOffset * 0.5;
+      ctx.stroke(roadPath);
       ctx.setLineDash([]);
-
       ctx.restore();
-    });
 
-    // Aeroflot Technics Bases & Physical Apron Parking Lots (Amber Gold Badges & Tarmac Bays)
-    SVO_FACILITIES.forEach(fac => {
-      const pos = pctToLogical(fac.x, fac.y);
-      const isHovered = hoveredNodeId === fac.id;
+      // Glowing animated tunnel
+      SVO_EDGES.filter(e => e.type === 'TUNNEL').forEach(edge => {
+        const p1 = getNodePos(edge.from);
+        const p2 = getNodePos(edge.to);
 
-      if (fac.type === 'PARKING') {
-        // Draw Asphalt Parking Bay Zone
         ctx.save();
-        const pW = 60;
-        const pH = 26;
-        const pX = pos.x - pW / 2;
-        const pY = pos.y - pH / 2;
+        ctx.lineCap = 'round';
 
-        // Parking Tarmac Surface with dashed yellow parking perimeter
-        ctx.fillStyle = theme === 'dark' ? '#0b131f' : '#e2e8f0';
-        ctx.strokeStyle = isHovered ? '#38bdf8' : '#f59e0b';
-        ctx.lineWidth = isHovered ? 1.8 : 1.2;
-        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = palette.tunnelLine;
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = 7;
         ctx.beginPath();
-        ctx.roundRect(pX, pY, pW, pH, 5);
-        ctx.fill();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = palette.tunnelLine;
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = dashOffset;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Label: 🅿️ АВТОПАРК-1 / 🅿️ АВТОПАРК-2
-        ctx.fillStyle = isHovered ? '#38bdf8' : '#f59e0b';
-        ctx.font = '800 8.5px "JetBrains Mono", monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(fac.code, pos.x, pos.y - pH / 2 - 6);
+        ctx.restore();
+      });
 
-        // Draw Parked Special Vehicles lined up inside the bays
-        for (let i = 0; i < 3; i++) {
-          const carX = pX + 10 + i * 20;
-          const carY = pos.y;
-          ctx.fillStyle = theme === 'dark' ? '#1e293b' : '#ffffff';
-          ctx.strokeStyle = '#f59e0b';
-          ctx.lineWidth = 1;
+      // SVO Facilities
+      SVO_FACILITIES.forEach(fac => {
+        const pos = pctToLogical(fac.x, fac.y);
+        const isHovered = hoveredNodeId === fac.id;
+
+        if (fac.type === 'PARKING') {
+          ctx.save();
+          const pW = 60;
+          const pH = 26;
+          const pX = pos.x - pW / 2;
+          const pY = pos.y - pH / 2;
+
+          ctx.fillStyle = theme === 'dark' ? '#0b131f' : '#e2e8f0';
+          ctx.strokeStyle = isHovered ? '#38bdf8' : '#f59e0b';
+          ctx.lineWidth = isHovered ? 1.8 : 1.2;
+          ctx.setLineDash([3, 3]);
           ctx.beginPath();
-          ctx.roundRect(carX - 7, carY - 5, 14, 10, 2);
+          ctx.roundRect(pX, pY, pW, pH, 5);
           ctx.fill();
           ctx.stroke();
+          ctx.setLineDash([]);
 
-          // Windshield
-          ctx.fillStyle = '#38bdf860';
-          ctx.fillRect(carX + 2, carY - 3, 3, 6);
+          ctx.fillStyle = isHovered ? '#38bdf8' : '#f59e0b';
+          ctx.font = '800 8.5px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(fac.code, pos.x, pos.y - pH / 2 - 6);
 
-          // Flashing Amber Beacon
-          ctx.fillStyle = '#f59e0b';
+          for (let i = 0; i < 3; i++) {
+            const carX = pX + 10 + i * 20;
+            const carY = pos.y;
+            ctx.fillStyle = theme === 'dark' ? '#1e293b' : '#ffffff';
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(carX - 7, carY - 5, 14, 10, 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#38bdf860';
+            ctx.fillRect(carX + 2, carY - 3, 3, 6);
+
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath();
+            ctx.arc(carX - 2, carY, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.restore();
+          return;
+        }
+
+        ctx.save();
+        const size = 28;
+
+        ctx.fillStyle = palette.bg;
+        ctx.strokeStyle = isHovered ? '#238636' : palette.facilityBorder;
+        ctx.lineWidth = isHovered ? 2.5 : 1.5;
+
+        ctx.beginPath();
+        ctx.roundRect(pos.x - size / 2, pos.y - size / 2, size, size, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isHovered ? '#238636' : palette.facilityText;
+        ctx.font = '700 10.5px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(fac.code, pos.x, pos.y);
+
+        ctx.fillStyle = palette.textSubtle;
+        ctx.font = '600 10px "Inter", sans-serif';
+        ctx.fillText(fac.name, pos.x, pos.y + 22);
+
+        ctx.restore();
+      });
+
+      // SVO Stands
+      SVO_NODES.filter(n => n.type === 'STAND').forEach(stand => {
+        const pos = pctToLogical(stand.x, stand.y);
+        const realNow = Date.now();
+        const isSelected = selectedStandId === stand.id;
+        const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
+        const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (realNow - (t as any).completedAtMs) < 5000);
+        const isTaskActive = !!activeTask;
+        const isHovered = hoveredNodeId === stand.id;
+
+        ctx.save();
+        const boxW = 54;
+        const boxH = 32;
+        const boxX = pos.x - boxW / 2;
+        const boxY = pos.y - boxH / 2;
+
+        let borderColor = palette.standBorder;
+        let bgColor = palette.standBg;
+
+        if (isHovered) {
+          borderColor = '#238636';
+          bgColor = '#23863625';
+        } else if (isSelected) {
+          borderColor = '#38bdf8';
+          bgColor = '#38bdf825';
+        } else if (recentCompletedTask) {
+          borderColor = '#22c55e';
+          bgColor = '#22c55e30';
+        } else if (isTaskActive) {
+          borderColor = activeTask?.status === 'WORKING' ? '#22c55e' : '#f59e0b';
+          bgColor = activeTask?.status === 'WORKING' ? '#22c55e25' : '#f59e0b25';
+        }
+
+        if (isSelected || isTaskActive || isHovered) {
+          const pulse = 3 + Math.sin(now / 180) * 1.8;
+          ctx.strokeStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#f59e0b' : '#238636';
+          ctx.globalAlpha = 0.3;
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 4]);
+          ctx.lineDashOffset = dashOffset;
           ctx.beginPath();
-          ctx.arc(carX - 2, carY, 1.5, 0, Math.PI * 2);
+          ctx.roundRect(boxX - pulse, boxY - pulse, boxW + pulse * 2, boxH + pulse * 2, 7);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+        }
+
+        ctx.fillStyle = bgColor;
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = isSelected || isHovered || isTaskActive ? 2.2 : 1.1;
+
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        if (isSelected) {
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 10;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+
+        ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#fbbf24' : palette.standText;
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(stand.label, pos.x, pos.y - 2);
+
+        ctx.fillStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#fbbf24' : '#94a3b8';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y + 8, 2, 0, Math.PI * 2);
+        ctx.rect(pos.x - 7, pos.y + 7, 14, 1.8);
+        ctx.fill();
+
+        // LIVE ACCURATE PROGRESS BAR (ONLY ON ACTIVE WORKING TASKS)
+        if (activeTask && activeTask.status === 'WORKING') {
+          const targetSec = activeTask.targetWorkSec || 40;
+          const elapsedSec = activeTask.elapsedWorkSec || 0;
+          const pctRatio = Math.min(1.0, Math.max(0.0, elapsedSec / targetSec));
+          const pctInt = Math.min(100, Math.floor(pctRatio * 100));
+
+          const barW = 54;
+          const barH = 5;
+          const barX = pos.x - barW / 2;
+          const barY = boxY + boxH + 3;
+
+          // Background Bar Track
+          ctx.fillStyle = '#0f172a';
+          ctx.beginPath();
+          ctx.roundRect(barX, barY, barW, barH, 2);
           ctx.fill();
+
+          // Green Progress Fill
+          ctx.fillStyle = '#22c55e';
+          ctx.beginPath();
+          ctx.roundRect(barX, barY, Math.max(2, barW * pctRatio), barH, 2);
+          ctx.fill();
+
+          // Label: 🔧 XX%
+          ctx.fillStyle = '#22c55e';
+          ctx.font = '700 9px "JetBrains Mono", monospace';
+          ctx.fillText(`🔧 ${pctInt}%`, pos.x, barY + barH + 9);
         }
 
         ctx.restore();
-        return;
-      }
-
-      ctx.save();
-      const size = 28;
-
-      ctx.fillStyle = palette.bg;
-      ctx.strokeStyle = isHovered ? '#238636' : palette.facilityBorder;
-      ctx.lineWidth = isHovered ? 2.5 : 1.5;
-
-      ctx.beginPath();
-      ctx.roundRect(pos.x - size / 2, pos.y - size / 2, size, size, 4);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = isHovered ? '#238636' : palette.facilityText;
-      ctx.font = '700 10.5px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(fac.code, pos.x, pos.y);
-
-      ctx.fillStyle = palette.textSubtle;
-      ctx.font = '600 10px "Inter", sans-serif';
-      ctx.fillText(fac.name, pos.x, pos.y + 22);
-
-      ctx.restore();
-    });
-
-    // Aircraft Stands Markers (stable, no layout shift; pulsing ring when relevant)
-    SVO_NODES.filter(n => n.type === 'STAND').forEach(stand => {
-      const pos = pctToLogical(stand.x, stand.y);
-      const realNow = Date.now();
-      const isSelected = selectedStandId === stand.id;
-      const activeTask = tasks.find(t => (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.standId === stand.id);
-      const recentCompletedTask = tasks.find(t => t.status === 'COMPLETED' && t.standId === stand.id && (t as any).completedAtMs && (realNow - (t as any).completedAtMs) < 5000);
-      const isTaskActive = !!activeTask;
-      const isHovered = hoveredNodeId === stand.id;
-
-      ctx.save();
-      const boxW = 54;
-      const boxH = 32;
-      const boxX = pos.x - boxW / 2;
-      const boxY = pos.y - boxH / 2;
-
-      let borderColor = palette.standBorder;
-      let bgColor = palette.standBg;
-
-      if (isHovered) {
-        borderColor = '#238636';
-        bgColor = '#23863625';
-      } else if (isSelected) {
-        borderColor = '#38bdf8';
-        bgColor = '#38bdf825';
-      } else if (recentCompletedTask) {
-        borderColor = '#22c55e';
-        bgColor = '#22c55e30';
-      } else if (isTaskActive) {
-        borderColor = activeTask?.status === 'WORKING' ? '#22c55e' : '#f59e0b';
-        bgColor = activeTask?.status === 'WORKING' ? '#22c55e25' : '#f59e0b25';
-      }
-
-      // Pulsing halo for selected / active / hovered stands
-      if (isSelected || isTaskActive || isHovered) {
-        const pulse = 3 + Math.sin(now / 180) * 1.8;
-        ctx.strokeStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#f59e0b' : '#238636';
-        ctx.globalAlpha = 0.3;
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([2, 4]);
-        ctx.lineDashOffset = dashOffset;
-        ctx.beginPath();
-        ctx.roundRect(boxX - pulse, boxY - pulse, boxW + pulse * 2, boxH + pulse * 2, 7);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-      }
-
-      ctx.fillStyle = bgColor;
-      ctx.strokeStyle = borderColor;
-      ctx.lineWidth = isSelected || isHovered || isTaskActive ? 2.2 : 1.1;
-
-      ctx.beginPath();
-      ctx.roundRect(boxX, boxY, boxW, boxH, 4);
-      ctx.fill();
-      ctx.stroke();
-
-      if (isSelected) {
-        ctx.shadowColor = '#38bdf8';
-        ctx.shadowBlur = 10;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-      }
-
-      ctx.fillStyle = isSelected ? '#38bdf8' : isHovered ? '#238636' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#fbbf24' : palette.standText;
-      ctx.font = '700 14px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(stand.label, pos.x, pos.y - 2);
-
-      // Small aircraft glyph below the label
-      ctx.fillStyle = isSelected ? '#38bdf8' : (activeTask?.status === 'WORKING' || recentCompletedTask) ? '#22c55e' : isTaskActive ? '#fbbf24' : '#94a3b8';
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y + 8, 2, 0, Math.PI * 2);
-      ctx.rect(pos.x - 7, pos.y + 7, 14, 1.8);
-      ctx.fill();
-
-      // LIVE ACCURATE PROGRESS BAR (ONLY ON ACTIVE WORKING TASKS)
-      if (activeTask && activeTask.status === 'WORKING') {
-        const targetSec = activeTask.targetWorkSec || 40;
-        const elapsedSec = activeTask.elapsedWorkSec || 0;
-        const pctRatio = Math.min(1.0, Math.max(0.0, elapsedSec / targetSec));
-        const pctInt = Math.min(100, Math.floor(pctRatio * 100));
-
-        const barW = 54;
-        const barH = 5;
-        const barX = pos.x - barW / 2;
-        const barY = boxY + boxH + 3;
-
-        // Background Bar Track
-        ctx.fillStyle = '#0f172a';
-        ctx.beginPath();
-        ctx.roundRect(barX, barY, barW, barH, 2);
-        ctx.fill();
-
-        // Green Progress Fill
-        ctx.fillStyle = '#22c55e';
-        ctx.beginPath();
-        ctx.roundRect(barX, barY, Math.max(2, barW * pctRatio), barH, 2);
-        ctx.fill();
-
-        // Label: 🔧 XX%
-        ctx.fillStyle = '#22c55e';
-        ctx.font = '700 9px "JetBrains Mono", monospace';
-        ctx.fillText(`🔧 ${pctInt}%`, pos.x, barY + barH + 9);
-      }
-      
-      // Remove cluttered text badges under stand boxes to keep CAD map ultra-clean
-      ctx.restore();
-    });
+      });
+    }
 
     // ELEGANT & INTUITIVE ROUTE OVERLAYS FOR ALL IN-TRANSIT WORKERS
     workers.forEach(w => {
@@ -811,7 +1073,7 @@ export function useCanvasEngine({
     const smoothK = 1 - Math.exp(-dtSec * 12);
     workers.forEach(worker => {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
-      const renderPos = workerClusterPos(worker, hash, clusterIdx);
+      const renderPos = workerClusterPos(worker, hash, clusterIdx, customElements);
       const pos = pctToLogical(renderPos.x, renderPos.y);
 
       const isAogEmergency = worker.isEmergency || tasksRef.current.some(t => t.priority === 'AOG' && (t.status === 'DISPATCHED' || t.status === 'WORKING') && t.crew.some(m => m.workerId === worker.id));
@@ -986,7 +1248,7 @@ export function useCanvasEngine({
       if (trackedWorker) {
         const clusterIdxTrack = buildClusterIndexes(workersRef.current);
         const hashTrack = parseInt(trackedWorker.id.replace(/\D/g, '')) || 0;
-        const renderPos = workerClusterPos(trackedWorker, hashTrack, clusterIdxTrack);
+        const renderPos = workerClusterPos(trackedWorker, hashTrack, clusterIdxTrack, customElements);
         const smoothPos = workerSmoothRef.current.get(trackedWorker.id) || renderPos;
         const pos = pctToLogical(smoothPos.x, smoothPos.y);
 
@@ -1056,7 +1318,7 @@ export function useCanvasEngine({
 
     ctx.restore(); // Restore pan/zoom
     ctx.restore(); // Restore dpr
-  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, trackedWorkerId, customElements]);
+  }, [panOffset, zoomScale, workersRef, tasksRef, selectedStandId, hoveredNodeId, isDragging, getNodePos, pctToLogical, theme, weatherMode, showMapSublayer, trackedWorkerId, customElements, customConnections]);
 
   // NATIVE NON-PASSIVE WHEEL LISTENER (Fixes "Unable to preventDefault inside passive event listener invocation")
   useEffect(() => {
@@ -1149,6 +1411,8 @@ export function useCanvasEngine({
     const lx = (rawX - panOffset.x) / zoomScale;
     const ly = (rawY - panOffset.y) / zoomScale;
 
+    const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
+
     // Hit Testing for Hover
     let foundNodeId: string | null = null;
     let foundHit: HoverTooltipData | null = null;
@@ -1157,7 +1421,7 @@ export function useCanvasEngine({
     const clusterIdx = buildClusterIndexes(workersRef.current);
     for (const worker of workersRef.current) {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
-      const renderPos = workerClusterPos(worker, hash, clusterIdx);
+      const renderPos = workerClusterPos(worker, hash, clusterIdx, customElements);
       const pos = pctToLogical(renderPos.x, renderPos.y);
 
       if (Math.hypot(lx - pos.x, ly - pos.y) <= 12) {
@@ -1180,6 +1444,8 @@ export function useCanvasEngine({
           if (base === 'PTO_NORTH') return 'ПТО-1 (Север B/C)';
           if (base === 'PTO_SOUTH') return 'ПТО-2 (Юг D/E/F)';
           if (base === 'HANGAR_BASE') return 'Ангарный комплекс SVO';
+          const customFac = customElements.find(e => e.id === base);
+          if (customFac) return customFac.label;
           return base || 'База ПТО';
         };
 
@@ -1207,42 +1473,83 @@ export function useCanvasEngine({
     }
 
     if (!foundHit) {
-      for (const stand of SVO_NODES.filter(n => n.type === 'STAND')) {
-        const pos = pctToLogical(stand.x, stand.y);
-        if (Math.abs(lx - pos.x) <= 28 && Math.abs(ly - pos.y) <= 18) {
-          foundNodeId = stand.id;
-          foundHit = {
-            type: 'STAND',
-            title: `Стоянка ВС ${stand.label}`,
-            subtitle: stand.aircraftType || 'Airbus A320-200',
-            details: [
-              { label: 'Зона:', value: stand.y < 45 ? 'Северный комплекс (B/C)' : 'Южный комплекс (D/E/F)' },
-              { label: 'Координаты:', value: `X:${stand.x}% Y:${stand.y}%` }
-            ],
-            x: e.clientX,
-            y: e.clientY
-          };
-          break;
+      if (isCustomMode) {
+        for (const stand of customElements.filter(e => e.kind === 'STAND')) {
+          const pos = pctToLogical(stand.x, stand.y);
+          if (Math.abs(lx - pos.x) <= 30 && Math.abs(ly - pos.y) <= 20) {
+            foundNodeId = stand.id;
+            foundHit = {
+              type: 'STAND',
+              title: `Стоянка ${stand.label}`,
+              subtitle: stand.aircraftType || 'Airbus A320-200',
+              details: [
+                { label: 'Сектор:', value: stand.y < 45 ? 'Северный сектор' : 'Южный сектор' },
+                { label: 'Координаты:', value: `X:${stand.x}% Y:${stand.y}%` }
+              ],
+              x: e.clientX,
+              y: e.clientY
+            };
+            break;
+          }
+        }
+      } else {
+        for (const stand of SVO_NODES.filter(n => n.type === 'STAND')) {
+          const pos = pctToLogical(stand.x, stand.y);
+          if (Math.abs(lx - pos.x) <= 28 && Math.abs(ly - pos.y) <= 18) {
+            foundNodeId = stand.id;
+            foundHit = {
+              type: 'STAND',
+              title: `Стоянка ВС ${stand.label}`,
+              subtitle: stand.aircraftType || 'Airbus A320-200',
+              details: [
+                { label: 'Зона:', value: stand.y < 45 ? 'Северный комплекс (B/C)' : 'Южный комплекс (D/E/F)' },
+                { label: 'Координаты:', value: `X:${stand.x}% Y:${stand.y}%` }
+              ],
+              x: e.clientX,
+              y: e.clientY
+            };
+            break;
+          }
         }
       }
     }
 
     if (!foundHit) {
-      for (const fac of SVO_FACILITIES) {
-        const pos = pctToLogical(fac.x, fac.y);
-        if (Math.abs(lx - pos.x) <= 20 && Math.abs(ly - pos.y) <= 20) {
-          foundNodeId = fac.id;
-          foundHit = {
-            type: 'FACILITY',
-            title: `${fac.code} — ${fac.name}`,
-            subtitle: fac.type === 'HANGAR' ? 'Ангарный комплекс' : 'Пункт дежурства ОТО',
-            details: [
-              { label: 'Координаты:', value: `X:${fac.x}% Y:${fac.y}%` }
-            ],
-            x: e.clientX,
-            y: e.clientY
-          };
-          break;
+      if (isCustomMode) {
+        for (const fac of customElements.filter(e => e.kind === 'DUTY_STATION' || e.kind === 'HANGAR' || e.kind === 'PARKING' || e.kind === 'TERMINAL')) {
+          const pos = pctToLogical(fac.x, fac.y);
+          if (Math.abs(lx - pos.x) <= 25 && Math.abs(ly - pos.y) <= 25) {
+            foundNodeId = fac.id;
+            foundHit = {
+              type: 'FACILITY',
+              title: fac.label,
+              subtitle: fac.kind === 'HANGAR' ? 'Ангарный комплекс' : fac.kind === 'DUTY_STATION' ? 'Пункт дежурства ПТО' : fac.kind === 'PARKING' ? 'Автопарк спецтехники' : 'Пассажирский терминал',
+              details: [
+                { label: 'Координаты:', value: `X:${fac.x}% Y:${fac.y}%` }
+              ],
+              x: e.clientX,
+              y: e.clientY
+            };
+            break;
+          }
+        }
+      } else {
+        for (const fac of SVO_FACILITIES) {
+          const pos = pctToLogical(fac.x, fac.y);
+          if (Math.abs(lx - pos.x) <= 20 && Math.abs(ly - pos.y) <= 20) {
+            foundNodeId = fac.id;
+            foundHit = {
+              type: 'FACILITY',
+              title: `${fac.code} — ${fac.name}`,
+              subtitle: fac.type === 'HANGAR' ? 'Ангарный комплекс' : 'Пункт дежурства ОТО',
+              details: [
+                { label: 'Координаты:', value: `X:${fac.x}% Y:${fac.y}%` }
+              ],
+              x: e.clientX,
+              y: e.clientY
+            };
+            break;
+          }
         }
       }
     }
@@ -1265,11 +1572,13 @@ export function useCanvasEngine({
     const lx = (rawX - panOffset.x) / zoomScale;
     const ly = (rawY - panOffset.y) / zoomScale;
 
+    const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
+
     const pctX = Math.round((lx / LOGICAL_WIDTH) * 1000) / 10;
     const pctY = Math.round((ly / LOGICAL_HEIGHT) * 1000) / 10;
 
     if (isDevMode && onDevPointClick) {
-      console.log(`📍 SVO Calibration Node: { x: ${pctX}, y: ${pctY} }`);
+      console.log(`📍 Calibration Node: { x: ${pctX}, y: ${pctY} }`);
       onDevPointClick(pctX, pctY);
       return;
     }
@@ -1278,7 +1587,7 @@ export function useCanvasEngine({
     const clusterIdx = buildClusterIndexes(workersRef.current);
     for (const worker of workersRef.current) {
       const hash = parseInt(worker.id.replace(/\D/g, '')) || 0;
-      const renderPos = workerClusterPos(worker, hash, clusterIdx);
+      const renderPos = workerClusterPos(worker, hash, clusterIdx, customElements);
       const pos = pctToLogical(renderPos.x, renderPos.y);
 
       if (Math.hypot(lx - pos.x, ly - pos.y) <= 15) {
@@ -1290,12 +1599,23 @@ export function useCanvasEngine({
     }
 
     // 2. Stand Click Hit Test
-    for (const stand of SVO_NODES.filter(n => n.type === 'STAND')) {
-      const pos = pctToLogical(stand.x, stand.y);
-      if (Math.abs(lx - pos.x) <= 28 && Math.abs(ly - pos.y) <= 18) {
-        onSelectStand(stand.id);
-        onOpenStandContext?.(stand.id);
-        break;
+    if (isCustomMode) {
+      for (const stand of customElements.filter(e => e.kind === 'STAND')) {
+        const pos = pctToLogical(stand.x, stand.y);
+        if (Math.abs(lx - pos.x) <= 30 && Math.abs(ly - pos.y) <= 20) {
+          onSelectStand(stand.id);
+          onOpenStandContext?.(stand.id);
+          break;
+        }
+      }
+    } else {
+      for (const stand of SVO_NODES.filter(n => n.type === 'STAND')) {
+        const pos = pctToLogical(stand.x, stand.y);
+        if (Math.abs(lx - pos.x) <= 28 && Math.abs(ly - pos.y) <= 18) {
+          onSelectStand(stand.id);
+          onOpenStandContext?.(stand.id);
+          break;
+        }
       }
     }
   };

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { OtoTask, TaskCrewMember, Worker, ThemeMode } from '../types/index';
+import { OtoTask, TaskCrewMember, Worker, ThemeMode, Stand, AirportElement, AirportConnection } from '../types/index';
 import { SVO_STANDS, DEFECT_TYPES } from '../constants/index';
 import { CrewRequirement } from '../constants/index';
 import { findNearestFreeWorkerOfExactCategory } from '../services/dijkstra';
+import { findNearestFreeCustomWorker } from '../services/airfieldGraph';
 import { calculateTaskTransitProgressPct, formatCompletedTaskDuration } from '../utils/progress';
 import { Wrench, Rocket, MapPin, Users, ChevronRight, ChevronLeft, Zap, Target, CheckCircle2, ChevronDown, Activity, Clock, Archive, UserRoundCheck } from 'lucide-react';
 
@@ -21,6 +22,9 @@ interface RightPanelProps {
   onTrackWorker?: (workerId: string) => void;
   activeScenarioName?: string;
   archivedTasks?: OtoTask[];
+  stands?: Stand[];
+  customElements?: AirportElement[];
+  customConnections?: AirportConnection[];
 }
 
 const SLA_LIMIT = 15.0;
@@ -39,8 +43,13 @@ export const RightPanel = React.memo<RightPanelProps>(({
   trackedWorkerId,
   onTrackWorker,
   activeScenarioName = 'Оперативный план',
-  archivedTasks = []
+  archivedTasks = [],
+  stands,
+  customElements = [],
+  customConnections = []
 }) => {
+  const isCustomMode = customElements.length > 0;
+  const availableStands = useMemo(() => (stands && stands.length > 0) ? stands : SVO_STANDS, [stands]);
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [panelMode, setPanelMode] = useState<'SCENARIO_MONITOR' | 'ARCHIVE' | 'CREATE'>('SCENARIO_MONITOR');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -54,11 +63,11 @@ export const RightPanel = React.memo<RightPanelProps>(({
     }
   }, [tasks.length, activeScenarioName]);
 
-  const [standId, setStandId] = useState<string>(selectedStandId || SVO_STANDS[0].id);
+  const [standId, setStandId] = useState<string>(selectedStandId || availableStands[0]?.id || SVO_STANDS[0].id);
   const [defectId, setDefectId] = useState<string>('');
 
   const selectedDefect = DEFECT_TYPES.find(d => d.id === defectId);
-  const currentStand = SVO_STANDS.find(s => s.id === standId) || SVO_STANDS[0];
+  const currentStand = availableStands.find(s => s.id === standId) || availableStands[0] || SVO_STANDS[0];
 
   // Sync selected stand
   useEffect(() => {
@@ -88,14 +97,21 @@ export const RightPanel = React.memo<RightPanelProps>(({
     const members: TaskCrewMember[] = [];
     for (const req of selectedDefect.requiredCrew as CrewRequirement[]) {
       for (let i = 0; i < req.count; i++) {
-        const m = findNearestFreeWorkerOfExactCategory(req.categoryCode, currentStand, workers, used);
+        const m = isCustomMode
+          ? findNearestFreeCustomWorker(
+              req.categoryCode, currentStand, workers, used,
+              customElements, customConnections
+            )
+          : findNearestFreeWorkerOfExactCategory(
+              req.categoryCode, currentStand, workers, used
+            );
         if (!m) break;
         used.add(m.workerId);
         members.push(m);
       }
     }
     return members;
-  }, [selectedDefect, currentStand, workers]);
+  }, [selectedDefect, currentStand, workers, isCustomMode, customElements, customConnections]);
 
   const crew: TaskCrewMember[] = autoCrew;
   const maxEtaMinutes = crew.length ? Math.max(...crew.map(m => m.etaMinutes)) : 0;
@@ -600,7 +616,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
                 }}
                 className="w-full p-2 rounded-xl border bg-slate-50 dark:bg-[#121820] border-slate-300 dark:border-[#263345] text-slate-900 dark:text-white font-bold cursor-pointer text-xs"
               >
-                {SVO_STANDS.map(s => (
+                {availableStands.map(s => (
                   <option key={s.id} value={s.id}>
                     Стоянка {s.label} ({s.aircraftType})
                   </option>
@@ -610,13 +626,11 @@ export const RightPanel = React.memo<RightPanelProps>(({
 
             {/* Quick Stand Chips */}
             <div className="flex flex-wrap gap-1">
-              {['B10', 'C21', 'D18', 'D24', 'E38', 'F45'].map(lbl => {
-                const st = SVO_STANDS.find(s => s.label === lbl);
-                if (!st) return null;
+              {availableStands.slice(0, 6).map(st => {
                 const isSel = st.id === standId;
                 return (
                   <button
-                    key={lbl}
+                    key={st.id}
                     onClick={() => {
                       setStandId(st.id);
                       onSelectStand(st.id);
@@ -627,7 +641,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
                         : 'bg-slate-100 dark:bg-[#121820] border-slate-300 dark:border-[#263345] text-slate-600 dark:text-gray-400'
                     }`}
                   >
-                    {lbl}
+                    {st.label}
                   </button>
                 );
               })}

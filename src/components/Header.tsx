@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Worker, ThemeMode, WeatherMode } from '../types/index';
+import { Worker, ThemeMode, WeatherMode, AirfieldMode } from '../types/index';
 import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import { WeatherWidget } from './WeatherWidget';
 import {
   FastForward, Sun, Moon, Pause, Play, Settings2, Users,
-  Wallet, TrendingDown, ShieldCheck, Rocket, ListChecks, Zap, Siren, AlertOctagon, Snowflake, RefreshCcw, ChevronDown, BarChart3, Clock
+  Wallet, TrendingDown, ShieldCheck, Rocket, ListChecks, Zap, Siren, AlertOctagon, Snowflake, RefreshCcw, ChevronDown, BarChart3, Clock, MapPin, Sliders
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -16,6 +16,9 @@ interface HeaderProps {
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenShiftConfig: () => void;
+  onOpenLocationBuilder?: () => void;
+  airfieldMode?: AirfieldMode;
+  onToggleAirfieldMode?: () => void;
   roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
   onRunScenario: (scenarioId: string) => void;
   weatherMode: WeatherMode;
@@ -43,6 +46,9 @@ export const Header: React.FC<HeaderProps> = ({
   theme,
   onToggleTheme,
   onOpenShiftConfig,
+  onOpenLocationBuilder,
+  airfieldMode = 'SVO',
+  onToggleAirfieldMode,
   roiMetrics,
   onRunScenario,
   weatherMode,
@@ -52,11 +58,6 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isRoiOpen, setIsRoiOpen] = useState(false);
-
-  const totalWorkers = workers.length;
-  const freeCount = workers.filter(w => w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING').length;
-  const inTransitCount = workers.filter(w => w.status === 'IN_TRANSIT').length;
-  const workingCount = workers.filter(w => w.status === 'WORKING_ON_SITE').length;
 
   const { completedCount, systemEtaSumMinutes, intuitiveEtaSumMinutes } = roiMetrics;
   const systemAvgMinutes = completedCount > 0 ? Math.round((systemEtaSumMinutes / completedCount) * 10) / 10 : 0;
@@ -69,9 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="h-14 min-h-[56px] px-4 flex items-center justify-between z-30 select-none transition-colors border-b backdrop-blur-md bg-opacity-90 dark:bg-[#070a0e]/95 bg-white/95 border-[#1e293b] dark:border-[#1e293b] border-slate-200">
-      {/* 1. BRANDING & FAR-LEFT ENLARGED THEME TOGGLE */}
       <div className="flex items-center space-x-3 shrink-0 font-mono">
-        {/* Enlarge & Move Theme Toggle to Far Left */}
         <button
           onClick={onToggleTheme}
           className="p-2.5 rounded-xl border border-slate-300 dark:border-[#263345] bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 text-amber-500 dark:text-sky-400 transition-all cursor-pointer shadow-sm"
@@ -88,59 +87,63 @@ export const Header: React.FC<HeaderProps> = ({
             АЭРОФЛОТ
           </span>
         </div>
+
+        {onToggleAirfieldMode && (
+          <button
+            onClick={onToggleAirfieldMode}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+              airfieldMode === 'CUSTOM'
+                ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-md'
+                : 'bg-sky-500/10 border-sky-500/30 text-sky-300 hover:bg-sky-500/20'
+            }`}
+            title="Переключить между базовым SVO и испытательным полигоном"
+          >
+            <MapPin className="w-3.5 h-3.5" />
+            <span>{airfieldMode === 'CUSTOM' ? '🛠️ Полигон' : '📍 SVO'}</span>
+          </button>
+        )}
       </div>
 
-      {/* 2. CENTER CONTROLS (SIM SPEED, PLAY/PAUSE, SCENARIOS) */}
       <div className="flex items-center space-x-2">
-        {/* Play/Pause Button (Icon Only) */}
         <button
           onClick={onTogglePause}
           className={`p-2 rounded-lg border transition-all cursor-pointer shadow-sm ${
             isPaused
               ? 'bg-amber-500/20 border-amber-500 text-amber-400 animate-pulse'
-              : 'bg-slate-100 dark:bg-[#121820] border-slate-300 dark:border-[#263345] text-slate-800 dark:text-gray-200 hover:bg-slate-200 dark:hover:bg-slate-800'
+              : 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
           }`}
-          title={isPaused ? 'Запустить симуляцию' : 'Пауза'}
+          title={isPaused ? 'Возобновить симуляцию' : 'Пауза симуляции'}
         >
-          {isPaused ? (
-            <Play className="w-4 h-4 text-emerald-400 fill-emerald-400" />
-          ) : (
-            <Pause className="w-4 h-4 text-amber-400 fill-amber-400" />
-          )}
+          {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
         </button>
 
-        {/* Speed Selector */}
-        <div className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#121820] px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-[#263345]">
-          <FastForward className="w-4 h-4 text-amber-400 shrink-0" />
-          <div className="flex space-x-1 font-mono text-sm">
-            {[1, 5, 10, 25].map(s => (
-              <button
-                key={s}
-                onClick={() => onSimSpeedChange(s)}
-                className={`px-2 py-0.5 rounded font-semibold transition-colors cursor-pointer ${
-                  simSpeed === s
-                    ? 'bg-amber-500/20 border border-amber-500 text-amber-400 font-bold'
-                    : 'text-slate-500 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {s}x
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center bg-slate-100 dark:bg-[#121820] p-1 rounded-lg border border-slate-300 dark:border-[#263345]">
+          {[1, 2, 5, 10, 50, 100].map(speed => (
+            <button
+              key={speed}
+              onClick={() => onSimSpeedChange(speed)}
+              className={`px-2 py-0.5 rounded text-xs font-mono font-bold transition-all cursor-pointer ${
+                simSpeed === speed
+                  ? 'bg-sky-500 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              {speed}x
+            </button>
+          ))}
         </div>
 
-        {/* Scenario Menu Dropdown */}
         <div className="relative">
           <button
             onClick={() => setIsScenarioOpen(!isScenarioOpen)}
             className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-[#263345] text-sm font-mono font-bold text-slate-800 dark:text-gray-200 transition-colors cursor-pointer"
           >
             <Rocket className="w-4 h-4 text-sky-400" />
-            <span>🎬 Сценарий</span>
-            <ChevronDown className="w-4 h-4 text-gray-400" />
+            <span>Сценарии</span>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
           </button>
           {isScenarioOpen && (
-            <div className="absolute top-full left-0 mt-2 w-64 rounded-xl border bg-white dark:bg-[#121820] border-slate-300 dark:border-[#263345] shadow-2xl p-1.5 z-50 flex flex-col space-y-1 font-mono text-sm">
+            <div className="absolute top-full left-0 mt-2 w-64 rounded-xl border bg-white dark:bg-[#121820] border-slate-300 dark:border-[#263345] shadow-2xl p-1.5 z-50 flex flex-col space-y-1 font-mono text-xs">
               {SCENARIOS.map(sc => (
                 <button
                   key={sc.id}
@@ -158,20 +161,17 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Quick Action Button for Hellish Scenario */}
         <button
           onClick={() => onRunScenario('hellish')}
           className="flex items-center space-x-1.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-extrabold text-rose-400 transition-all cursor-pointer shadow-sm animate-pulse"
           title="Запустить постепенный симулятор нагрузки (поддержание 3–5 задач в очереди)"
         >
           <Zap className="w-4 h-4 text-rose-500" />
-          <span>🔥 СТРЕСС-ТЕСТ (3–5)</span>
+          <span>🔥 СТРЕСС-ТЕСТ</span>
         </button>
       </div>
 
-      {/* 3. RIGHT METRICS & SETTINGS */}
-      <div className="flex items-center space-x-2.5">
-        {/* ROI / Economic Summary Pill */}
+      <div className="flex items-center space-x-2">
         <div className="relative">
           <button
             onClick={() => setIsRoiOpen(!isRoiOpen)}
@@ -213,14 +213,12 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Weather Selector */}
         <WeatherWidget
           weatherMode={weatherMode}
           onWeatherChange={onWeatherChange}
           theme={theme}
         />
 
-        {/* Timeline Gantt Chart Launcher */}
         {onOpenTimeline && (
           <button
             onClick={onOpenTimeline}
@@ -232,7 +230,6 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Analytics Modal Launcher */}
         <button
           onClick={onOpenAnalytics}
           className="flex items-center space-x-1.5 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-sky-400 transition-all cursor-pointer shadow-sm"
@@ -242,14 +239,24 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden sm:inline">📊 Аналитика</span>
         </button>
 
-        {/* Shift Personnel Button */}
+        {onOpenLocationBuilder && (
+          <button
+            onClick={onOpenLocationBuilder}
+            className="flex items-center space-x-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-amber-300 transition-all cursor-pointer shadow-sm"
+            title="Открыть конструктор испытательного полигона"
+          >
+            <Sliders className="w-4 h-4 text-amber-400" />
+            <span>🛠️ Полигон</span>
+          </button>
+        )}
+
         <button
           onClick={onOpenShiftConfig}
           className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-[#263345] text-sm font-mono font-bold text-slate-800 dark:text-gray-200 transition-colors cursor-pointer"
-           title="Открыть конструктор локации"
+          title="Настроить состав смены инженеров"
         >
-          <Settings2 className="w-4 h-4 text-emerald-400" />
-           <span>Локация</span>
+          <Users className="w-4 h-4 text-emerald-400" />
+          <span>Смена</span>
         </button>
       </div>
     </header>

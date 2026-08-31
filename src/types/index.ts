@@ -2,7 +2,7 @@ export type Category = 'ENGINES_AIRFRAME' | 'AVIONICS' | 'GENERAL_MECHANIC';
 export type CategoryCode = 'B1' | 'B2' | 'A';
 
 export type Complex = 'NORTH' | 'SOUTH' | 'REMOTE';
-export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE';
+export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE' | 'PARKING' | 'HANGAR';
 
 export type ThemeMode = 'dark' | 'light';
 export type WeatherMode = 'CLEAR' | 'RAIN' | 'BLIZZARD' | 'NIGHT';
@@ -37,7 +37,9 @@ export interface Stand {
   status?: 'IDLE' | 'HAS_TASK';
 }
 
-export type AirportElementKind = 'TERMINAL' | 'HANGAR' | 'PARKING' | 'RUNWAY' | 'STAND' | 'DUTY_STATION';
+export type AirfieldMode = 'SVO' | 'CUSTOM';
+
+export type AirportElementKind = 'TERMINAL' | 'HANGAR' | 'PARKING' | 'RUNWAY' | 'STAND' | 'DUTY_STATION' | 'WAYPOINT';
 
 export interface AirportElement {
   id: string;
@@ -47,6 +49,19 @@ export interface AirportElement {
   y: number;
   width?: number;
   height?: number;
+  aircraftType?: string;
+  code?: string;
+  complex?: Complex;
+}
+
+export type AirportConnectionKind = 'ROAD' | 'TAXIWAY' | 'TUNNEL' | 'SERVICE';
+
+export interface AirportConnection {
+  id: string;
+  from?: string;
+  to?: string;
+  kind: AirportConnectionKind;
+  points?: { x: number; y: number }[];
 }
 
 export type WorkerStatus =
@@ -57,7 +72,7 @@ export type WorkerStatus =
   | 'WORKING_ON_SITE'    // 🔴 Дошел до борта и проводит ТО
   | 'RETURNING_TO_BASE';  // 🟡 Возврат на базу
 
-export type VehicleType = 'PEDESTRIAN' | 'APRON_VEHICLE' | 'SHUTTLE';
+export type VehicleType = 'PEDESTRIAN' | 'APRON_VEHICLE' | 'SHUTTLE' | 'WALK';
 
 export interface Worker {
   id: string;

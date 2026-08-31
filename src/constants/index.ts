@@ -165,6 +165,12 @@ export const SVO_EDGES = [
   { from: 'WAY_S_EAST', to: 'STAND_E38', type: 'ROAD', distance: 150 },
   { from: 'WAY_S_EAST', to: 'STAND_F45', type: 'ROAD', distance: 180 },
 
+  // Автопарки спецтехники
+  { from: 'PARKING_1', to: 'PTO_1', type: 'ROAD', distance: 60 },
+  { from: 'PARKING_1', to: 'WAY_N_MID', type: 'ROAD', distance: 100 },
+  { from: 'PARKING_2', to: 'PTO_2', type: 'ROAD', distance: 50 },
+  { from: 'PARKING_2', to: 'WAY_S_MID', type: 'ROAD', distance: 80 },
+
   // Ответвления к южному ангарному сектору (St-201, St-204)
   { from: 'WAY_AK1', to: 'STAND_201', type: 'ROAD', distance: 130 },
   { from: 'WAY_AK1', to: 'STAND_204', type: 'ROAD', distance: 150 }
