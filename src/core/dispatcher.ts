@@ -283,11 +283,15 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     }
 
     const costOf = (eta: number, w: Worker, q: OtoTask, delay: number): number => {
+      const stand = standById.get(q.standId);
+      const isTargetNorth = stand ? stand.y < 45 : false;
+      const isWorkerNorth = w.y < 45;
+      const crossComplexPenalty = isTargetNorth !== isWorkerNorth ? 500 : 0;
       const fatigue = eta * FATIGUE_WEIGHT * Math.min(w.dispatchedCount || 0, FATIGUE_CAP);
       const zone = delay === 0 && (freeByBase.get(w.baseId) || 0) - 1 < 2 ? ZONE_GUARD_COST : 0;
       const activeLoad = delay > 0 ? (load[w.id] || 0) * eta * LOAD_WEIGHT : 0;
       const slaPenalty = eta > q.slaLimitMinutes ? SLA_PENALTY : 0;
-      return eta + fatigue + zone + activeLoad + slaPenalty - PRIORITY_BONUS[q.priority];
+      return eta + fatigue + zone + activeLoad + slaPenalty + crossComplexPenalty - PRIORITY_BONUS[q.priority];
     };
 
     // ---- Step 2a: single-member calls (crew size 1) ----
@@ -405,12 +409,15 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
 
       const pickNearestFor = (cat: CategoryCode, q: OtoTask, stand: Stand): { w: Worker; member: TaskCrewMember; eff: number } | null => {
         let best: { w: Worker; member: TaskCrewMember; eff: number } | null = null;
+        const isTargetNorth = stand.y < 45;
         for (const w of freePool) {
           if (usedIds.has(w.id)) continue;
           const surcharge = overqualSurcharge(cat, w.categoryCode);
           if (!Number.isFinite(surcharge)) continue;
+          const isWorkerNorth = w.y < 45;
+          const crossComplex = isTargetNorth !== isWorkerNorth ? 500 : 0;
           const m = calculateEta(w, stand);
-          const eff = m.etaMinutes + surcharge;
+          const eff = m.etaMinutes + surcharge + crossComplex;
           if (!best || eff < best.eff) best = { w, member: m, eff };
         }
         return best;
@@ -604,10 +611,13 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     const gainRequired = (task.maxEtaMinutes || 0) > task.slaLimitMinutes ? REASSIGN_GAIN_MIN_TIGHT : REASSIGN_GAIN_MIN;
     let bestFree: Worker | null = null;
     let bestMember: TaskCrewMember | null = null;
+    const isTargetNorth = stand.y < 45;
     for (const w of workerById.values()) {
       if (busy.has(w.id)) continue;
       if (w.status !== 'FREE_STATIONARY' && w.status !== 'FREE_PATROLLING') continue;
       if (!(w.categoryCode === task.categoryCode || task.categoryCode === 'A')) continue;
+      const isWorkerNorth = w.y < 45;
+      if (isTargetNorth !== isWorkerNorth) continue; // Never swap across the tunnel between North and South
       const member = calculateEta(w, stand);
       if (member.etaMinutes >= remainingTransit - gainRequired) continue;
       if (!bestMember || member.etaMinutes < bestMember.etaMinutes) {

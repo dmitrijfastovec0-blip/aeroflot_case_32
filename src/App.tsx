@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { OtoTask, ThemeMode, Stand, WeatherMode } from './types/index';
+import { OtoTask, ThemeMode, Stand, WeatherMode, AirportElement, AirportConnection, AirfieldMode, Worker } from './types/index';
 import { SVO_STANDS, DEFECT_TYPES } from './constants/index';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { Header } from './components/Header';
@@ -12,7 +12,7 @@ import { AnalyticsModal } from './components/AnalyticsModal';
 import { StandRadialMenu } from './components/StandRadialMenu';
 import { TimelineModal } from './components/TimelineModal';
 import { WorkerEditModal } from './components/WorkerEditModal';
-import { Worker } from './types/index';
+import { LocationBuilderWorkspace } from './components/LocationBuilderWorkspace';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
@@ -40,6 +40,10 @@ export function App() {
 
   // Shift Personnel Config Modal State
   const [isShiftModalOpen, setIsShiftModalOpen] = useState<boolean>(false);
+  const [isLocationBuilderOpen, setIsLocationBuilderOpen] = useState(false);
+  const [airfieldMode, setAirfieldMode] = useState<AirfieldMode>('SVO');
+  const [customElements, setCustomElements] = useState<AirportElement[]>([]);
+  const [customConnections, setCustomConnections] = useState<AirportConnection[]>([]);
   const [shiftCounts, setShiftCounts] = useState({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
 
   // Sync theme with HTML root class
@@ -69,13 +73,17 @@ export function App() {
     cancelTask,
     applyShiftConfig,
     updateWorker,
+    manuallyAssignTask,
     dispatchStats,
     roiMetrics,
     weatherMode,
     setWeatherMode,
     runScenario,
-    activeScenarioName
-  } = useSimulationEngine();
+    activeScenarioName,
+    activeStands,
+    activeFacilities,
+    simClockSec
+  } = useSimulationEngine(customElements, customConnections, airfieldMode);
 
   // GLOBAL KEYBOARD SHORTCUTS HANDLER
   useEffect(() => {
@@ -97,6 +105,10 @@ export function App() {
         setSimSpeed(5);
       } else if (e.key === '4') {
         setSimSpeed(10);
+      } else if (e.key === '5') {
+        setSimSpeed(50);
+      } else if (e.key === '6') {
+        setSimSpeed(100);
       } else if (e.key === 'Escape' || e.code === 'Escape') {
         // Clear tracking, modals, radial menu
         setTrackedWorkerId(null);
@@ -230,6 +242,8 @@ export function App() {
         archivedTasks={allHistoricalTasks}
         workers={workers}
         theme={theme}
+        simClockSec={simClockSec}
+        stands={activeStands}
       />
 
       {/* Stand Context / Radial Menu */}
@@ -269,6 +283,9 @@ export function App() {
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
+        onOpenLocationBuilder={() => setIsLocationBuilderOpen(true)}
+        airfieldMode={airfieldMode}
+        onToggleAirfieldMode={() => setAirfieldMode((prev: AirfieldMode) => (prev === 'SVO' ? 'CUSTOM' : 'SVO'))}
         roiMetrics={roiMetrics}
         onRunScenario={runScenario}
         weatherMode={weatherMode}
@@ -280,26 +297,56 @@ export function App() {
       {/* 2. Main Fullscreen CAD Airport Map & Floating Drawer Overlays */}
       <main className="flex-1 w-full h-full relative overflow-hidden">
         {/* Fullscreen Interactive CAD Airport Canvas */}
-        <CanvasMap
+         <CanvasMap
           workersRef={workersRef}
           tasksRef={tasksRef}
           selectedStandId={selectedStandId}
           onSelectStand={(standId) => {
             setSelectedStandId(standId);
-            const standObj = SVO_STANDS.find(s => s.id === standId);
+          }}
+          onOpenStandContext={(standId) => {
+            const standObj = activeStands.find(s => s.id === standId) || SVO_STANDS.find(s => s.id === standId);
             if (standObj) {
               const rect = document.body.getBoundingClientRect();
               setRadialMenu({ stand: standObj, x: rect.width / 2, y: rect.height / 2 });
             }
           }}
+          customElements={customElements}
+          customConnections={customConnections}
+          airfieldMode={airfieldMode}
           theme={theme}
           weatherMode={weatherMode}
           isDevMode={false}
-          showMapSublayer={true}
+          showMapSublayer={false}
           trackedWorkerId={trackedWorkerId}
           onStopTracking={() => setTrackedWorkerId(null)}
           onSelectWorker={(w) => setEditingWorker(w)}
         />
+
+        {isLocationBuilderOpen && (
+          <LocationBuilderWorkspace
+            elements={customElements}
+            connections={customConnections}
+            onElementsChange={(els) => {
+              setCustomElements(els);
+              if (els.length > 0 && els.some(e => e.kind === 'STAND')) {
+                setAirfieldMode('CUSTOM');
+              }
+            }}
+            onConnectionsChange={setCustomConnections}
+            onClose={() => setIsLocationBuilderOpen(false)}
+            onOpenShift={() => {
+              setIsLocationBuilderOpen(false);
+              setIsShiftModalOpen(true);
+            }}
+            onRunSimulation={() => {
+              setIsLocationBuilderOpen(false);
+              setAirfieldMode('CUSTOM');
+              runScenario('standard');
+            }}
+            theme={theme}
+          />
+        )}
 
         {/* Floating Collapsible Right Task Drawer */}
         <RightPanel
@@ -308,6 +355,7 @@ export function App() {
           workers={workers}
           tasks={tasks}
           onLaunchTask={handleLaunchTaskSubmit}
+          onManualAssign={manuallyAssignTask}
           onTriggerSlaAlert={handleTriggerSlaAlert}
           onNotify={showNotification}
           activeTaskForStand={activeTaskForSelectedStand}
@@ -315,6 +363,9 @@ export function App() {
           trackedWorkerId={trackedWorkerId}
           activeScenarioName={activeScenarioName}
           archivedTasks={archivedTasks}
+          stands={activeStands}
+          customElements={customElements}
+          customConnections={customConnections}
           onTrackWorker={(workerId) => {
             setTrackedWorkerId(prev => prev === workerId ? null : workerId);
             const workerObj = workers.find(w => w.id === workerId);
@@ -349,6 +400,8 @@ export function App() {
           onClose={() => setEditingWorker(null)}
           onSaveWorker={updateWorker}
           theme={theme}
+          stands={activeStands}
+          facilities={activeFacilities}
         />
       </main>
     </div>

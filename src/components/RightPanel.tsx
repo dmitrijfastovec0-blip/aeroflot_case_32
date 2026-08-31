@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { OtoTask, TaskCrewMember, Worker, ThemeMode } from '../types/index';
+import { OtoTask, TaskCrewMember, Worker, ThemeMode, Stand, AirportElement, AirportConnection } from '../types/index';
 import { SVO_STANDS, DEFECT_TYPES } from '../constants/index';
 import { CrewRequirement } from '../constants/index';
 import { findNearestFreeWorkerOfExactCategory } from '../services/dijkstra';
+import { findNearestFreeCustomWorker } from '../services/airfieldGraph';
 import { calculateTaskTransitProgressPct, formatCompletedTaskDuration } from '../utils/progress';
-import { Wrench, Rocket, MapPin, Users, ChevronRight, ChevronLeft, Zap, Target, CheckCircle2, ChevronDown, Activity, Clock, Archive } from 'lucide-react';
+import { Wrench, Rocket, MapPin, Users, ChevronRight, ChevronLeft, Zap, Target, CheckCircle2, ChevronDown, Activity, Clock, Archive, UserRoundCheck } from 'lucide-react';
 
 interface RightPanelProps {
   selectedStandId: string | null;
@@ -12,6 +13,7 @@ interface RightPanelProps {
   workers: Worker[];
   tasks: OtoTask[];
   onLaunchTask: (task: OtoTask) => void;
+  onManualAssign?: (taskId: string, workerId: string) => void;
   onTriggerSlaAlert: (task: OtoTask) => void;
   onNotify: (msg: string) => void;
   activeTaskForStand?: OtoTask | null;
@@ -20,6 +22,9 @@ interface RightPanelProps {
   onTrackWorker?: (workerId: string) => void;
   activeScenarioName?: string;
   archivedTasks?: OtoTask[];
+  stands?: Stand[];
+  customElements?: AirportElement[];
+  customConnections?: AirportConnection[];
 }
 
 const SLA_LIMIT = 15.0;
@@ -30,6 +35,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
   workers,
   tasks,
   onLaunchTask,
+  onManualAssign,
   onTriggerSlaAlert,
   onNotify,
   activeTaskForStand,
@@ -37,12 +43,18 @@ export const RightPanel = React.memo<RightPanelProps>(({
   trackedWorkerId,
   onTrackWorker,
   activeScenarioName = 'Оперативный план',
-  archivedTasks = []
+  archivedTasks = [],
+  stands,
+  customElements = [],
+  customConnections = []
 }) => {
+  const isCustomMode = customElements.length > 0;
+  const availableStands = useMemo(() => (stands && stands.length > 0) ? stands : SVO_STANDS, [stands]);
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [panelMode, setPanelMode] = useState<'SCENARIO_MONITOR' | 'ARCHIVE' | 'CREATE'>('SCENARIO_MONITOR');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [manualWorkerByTask, setManualWorkerByTask] = useState<Record<string, string>>({});
 
   // Auto-open panel when a scenario is launched or tasks are active
   useEffect(() => {
@@ -51,11 +63,11 @@ export const RightPanel = React.memo<RightPanelProps>(({
     }
   }, [tasks.length, activeScenarioName]);
 
-  const [standId, setStandId] = useState<string>(selectedStandId || SVO_STANDS[0].id);
+  const [standId, setStandId] = useState<string>(selectedStandId || availableStands[0]?.id || SVO_STANDS[0].id);
   const [defectId, setDefectId] = useState<string>('');
 
   const selectedDefect = DEFECT_TYPES.find(d => d.id === defectId);
-  const currentStand = SVO_STANDS.find(s => s.id === standId) || SVO_STANDS[0];
+  const currentStand = availableStands.find(s => s.id === standId) || availableStands[0] || SVO_STANDS[0];
 
   // Sync selected stand
   useEffect(() => {
@@ -85,14 +97,21 @@ export const RightPanel = React.memo<RightPanelProps>(({
     const members: TaskCrewMember[] = [];
     for (const req of selectedDefect.requiredCrew as CrewRequirement[]) {
       for (let i = 0; i < req.count; i++) {
-        const m = findNearestFreeWorkerOfExactCategory(req.categoryCode, currentStand, workers, used);
+        const m = isCustomMode
+          ? findNearestFreeCustomWorker(
+              req.categoryCode, currentStand, workers, used,
+              customElements, customConnections
+            )
+          : findNearestFreeWorkerOfExactCategory(
+              req.categoryCode, currentStand, workers, used
+            );
         if (!m) break;
         used.add(m.workerId);
         members.push(m);
       }
     }
     return members;
-  }, [selectedDefect, currentStand, workers]);
+  }, [selectedDefect, currentStand, workers, isCustomMode, customElements, customConnections]);
 
   const crew: TaskCrewMember[] = autoCrew;
   const maxEtaMinutes = crew.length ? Math.max(...crew.map(m => m.etaMinutes)) : 0;
@@ -266,8 +285,13 @@ export const RightPanel = React.memo<RightPanelProps>(({
               <div className="space-y-2">
                 {tasks.map((task) => {
                   const isExpanded = expandedTaskId === task.id;
-                  const isAog = task.priority === 'AOG';
-                  const isCompleted = task.status === 'COMPLETED';
+                   const isAog = task.priority === 'AOG';
+                   const isCompleted = task.status === 'COMPLETED';
+                   const slaRemaining = Math.round((SLA_LIMIT - (task.elapsedQueueSec || 0) / 60 - (task.maxEtaMinutes || 0)) * 10) / 10;
+                   const slaState = slaRemaining <= 0 ? 'breach' : slaRemaining <= 5 ? 'warning' : 'ok';
+                   const manualCandidates = task.status === 'QUEUED' && (task.requiredCrew?.reduce((sum, r) => sum + r.count, 0) || 1) === 1
+                     ? workers.filter(w => (w.categoryCode === task.categoryCode || task.categoryCode === 'A') && (w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING'))
+                     : [];
 
                   // 1. Smooth Physical Transit Progress (Путь)
                   const transitPct = calculateTaskTransitProgressPct(task, workers);
@@ -320,9 +344,16 @@ export const RightPanel = React.memo<RightPanelProps>(({
                           </div>
                         </div>
 
-                        <div className={`text-[11px] font-semibold line-clamp-1 ${isCompleted ? 'text-emerald-100' : 'text-slate-600 dark:text-gray-300'}`}>
-                          🔧 {task.defectLabel || task.categoryLabel}
-                        </div>
+                         <div className={`text-[11px] font-semibold line-clamp-1 ${isCompleted ? 'text-emerald-100' : 'text-slate-600 dark:text-gray-300'}`}>
+                           🔧 {task.defectLabel || task.categoryLabel}
+                         </div>
+
+                         {!isCompleted && (
+                           <div className={`flex items-center justify-between text-[10px] font-bold ${slaState === 'breach' ? 'text-red-400' : slaState === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                             <span>SLA</span>
+                             <span>{slaState === 'breach' ? `нарушен на ${Math.abs(slaRemaining).toFixed(1)} мин` : `${slaRemaining.toFixed(1)} мин запаса`}</span>
+                           </div>
+                         )}
 
                         {/* LIVE SMOOTH MINIMAL PROGRESS BARS (NO CLUTTERING TEXT ABOVE) */}
                         {!isCompleted ? (
@@ -399,7 +430,44 @@ export const RightPanel = React.memo<RightPanelProps>(({
                             })()}
                           </div>
 
-                          {/* Crew Workers as Action Buttons with Camera Fix */}
+                          <div className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2.5 text-[11px]">
+                            <div className="mb-1 text-[10px] font-bold uppercase text-sky-400">Почему принято это решение</div>
+                            <p className="leading-relaxed text-slate-600 dark:text-gray-300">
+                              {task.waitingReason
+                                ? task.waitingReason
+                                : task.crew.length > 0
+                                  ? `Назначены ${task.crew.map(member => `${member.workerName} (${member.categoryCode})`).join(', ')}: минимальный маршрут до стоянки с учётом квалификации и SLA.`
+                                  : 'Система подбирает полный состав бригады по регламенту задачи.'}
+                            </p>
+                          </div>
+
+                          {manualCandidates.length > 0 && onManualAssign && (
+                             <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 space-y-2">
+                               <div className="text-[10px] font-bold uppercase text-amber-400 flex items-center gap-1">
+                                 <UserRoundCheck className="w-3 h-3" /> Ручное назначение
+                               </div>
+                               <div className="flex gap-2">
+                                 <select
+                                   value={manualWorkerByTask[task.id] || ''}
+                                   onChange={e => setManualWorkerByTask(prev => ({ ...prev, [task.id]: e.target.value }))}
+                                   onClick={e => e.stopPropagation()}
+                                   className="min-w-0 flex-1 rounded-lg border border-slate-300 dark:border-[#263345] bg-white dark:bg-[#121820] px-2 py-1.5 text-[10px] font-bold"
+                                 >
+                                   <option value="">Выбрать специалиста</option>
+                                   {manualCandidates.map(w => <option key={w.id} value={w.id}>{w.name} · {w.categoryCode}</option>)}
+                                 </select>
+                                 <button
+                                   disabled={!manualWorkerByTask[task.id]}
+                                   onClick={e => { e.stopPropagation(); onManualAssign(task.id, manualWorkerByTask[task.id]); }}
+                                   className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-extrabold text-slate-950 disabled:opacity-40"
+                                 >
+                                   Назначить
+                                 </button>
+                               </div>
+                             </div>
+                           )}
+
+                           {/* Crew Workers as Action Buttons with Camera Fix */}
                           <div className="space-y-1">
                             <div className={`text-[10px] font-bold uppercase flex items-center gap-1 ${
                               isCompleted ? 'text-emerald-200' : 'text-gray-400'
@@ -548,7 +616,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
                 }}
                 className="w-full p-2 rounded-xl border bg-slate-50 dark:bg-[#121820] border-slate-300 dark:border-[#263345] text-slate-900 dark:text-white font-bold cursor-pointer text-xs"
               >
-                {SVO_STANDS.map(s => (
+                {availableStands.map(s => (
                   <option key={s.id} value={s.id}>
                     Стоянка {s.label} ({s.aircraftType})
                   </option>
@@ -558,13 +626,11 @@ export const RightPanel = React.memo<RightPanelProps>(({
 
             {/* Quick Stand Chips */}
             <div className="flex flex-wrap gap-1">
-              {['B10', 'C21', 'D18', 'D24', 'E38', 'F45'].map(lbl => {
-                const st = SVO_STANDS.find(s => s.label === lbl);
-                if (!st) return null;
+              {availableStands.slice(0, 6).map(st => {
                 const isSel = st.id === standId;
                 return (
                   <button
-                    key={lbl}
+                    key={st.id}
                     onClick={() => {
                       setStandId(st.id);
                       onSelectStand(st.id);
@@ -575,7 +641,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
                         : 'bg-slate-100 dark:bg-[#121820] border-slate-300 dark:border-[#263345] text-slate-600 dark:text-gray-400'
                     }`}
                   >
-                    {lbl}
+                    {st.label}
                   </button>
                 );
               })}

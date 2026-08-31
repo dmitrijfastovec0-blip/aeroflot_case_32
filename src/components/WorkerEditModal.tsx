@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Worker, CategoryCode, VehicleType, ThemeMode } from '../types/index';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Worker, CategoryCode, VehicleType, ThemeMode, Stand, Facility } from '../types/index';
 import { SVO_STANDS, SVO_FACILITIES } from '../constants/index';
 import { UserCheck, X, Save, MapPin, Truck, Award } from 'lucide-react';
 
@@ -9,6 +9,8 @@ interface WorkerEditModalProps {
   onClose: () => void;
   onSaveWorker: (workerId: string, updates: Partial<Worker>) => void;
   theme: ThemeMode;
+  stands?: Stand[];
+  facilities?: Facility[];
 }
 
 export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
@@ -16,8 +18,13 @@ export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
   isOpen,
   onClose,
   onSaveWorker,
-  theme
+  theme,
+  stands,
+  facilities
 }) => {
+  const availableStands = useMemo(() => (stands && stands.length > 0) ? stands : SVO_STANDS, [stands]);
+  const availableFacilities = useMemo(() => (facilities && facilities.length > 0) ? facilities : SVO_FACILITIES, [facilities]);
+
   const [categoryCode, setCategoryCode] = useState<CategoryCode>('B1');
   const [baseId, setBaseId] = useState<string>('PTO_NORTH');
   const [vehicle, setVehicle] = useState<VehicleType>('APRON_VEHICLE');
@@ -51,7 +58,7 @@ export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
 
     // ONLY update x,y position IF a stand relocation is explicitly selected by user
     if (targetStandId) {
-      const stand = SVO_STANDS.find(s => s.id === targetStandId);
+      const stand = availableStands.find(s => s.id === targetStandId);
       if (stand) {
         updates.x = stand.x;
         updates.y = stand.y;
@@ -125,8 +132,11 @@ export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
                 theme === 'dark' ? 'bg-[#121820] border-[#263345] text-gray-200' : 'bg-slate-50 border-slate-300 text-slate-800'
               }`}
             >
-              <option value="PTO_NORTH">ПТО-1 (Север B/C)</option>
-              <option value="PTO_SOUTH">ПТО-2 (Юг D/E/F)</option>
+              {availableFacilities.map(fac => (
+                <option key={fac.id} value={fac.id}>
+                  {fac.code} ({fac.name})
+                </option>
+              ))}
             </select>
           </div>
 
@@ -143,9 +153,9 @@ export const WorkerEditModal: React.FC<WorkerEditModalProps> = ({
               }`}
             >
               <option value="">-- На базе приписки --</option>
-              {SVO_STANDS.map(stand => (
+              {availableStands.map(stand => (
                 <option key={stand.id} value={stand.id}>
-                  Стоянка {stand.label} ({stand.complex === 'NORTH' ? 'Север' : 'Юг'})
+                  Стоянка {stand.label} ({stand.aircraftType})
                 </option>
               ))}
             </select>

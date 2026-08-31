@@ -1,5 +1,6 @@
-import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus } from '../types/index';
-import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } from '../constants/index';
+import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus, AirportConnection, AirportElement, Facility } from '../types/index';
+import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, REAL_SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } from '../constants/index';
+import { computeCustomAirfieldRoute, calculateModularWorkerEta } from './airfieldGraph';
 
 // ============================================================================
 // WEATHER / CONDITIONS SPEED OVERRIDES (scenario "Снегопад")
@@ -11,6 +12,82 @@ import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } fr
 // ============================================================================
 const WEATHER_DEFAULTS = { pedestrianKmH: 4.5, vehicleKmH: 20.0, tunnelVehicleKmH: 40.0 };
 let weatherSpeeds = { ...WEATHER_DEFAULTS };
+
+let customAirportElements: AirportElement[] = [];
+let customAirportConnections: AirportConnection[] = [];
+
+export function configureCustomAirport(elements: AirportElement[], connections: AirportConnection[]) {
+  customAirportElements = elements;
+  customAirportConnections = connections;
+}
+
+export function getCustomAirportStands(elements: AirportElement[] = customAirportElements): Stand[] {
+  return elements.filter(element => element.kind === 'STAND').map(element => ({
+    id: element.id,
+    label: element.label,
+    complex: element.complex || (element.y < 45 ? 'NORTH' : 'SOUTH'),
+    x: element.x,
+    y: element.y,
+    aircraftType: element.aircraftType || 'Airbus A320-200',
+    airline: 'Испытательный авиапарк',
+    status: 'IDLE'
+  }));
+}
+
+export function getCustomAirportFacilities(elements: AirportElement[] = customAirportElements): Facility[] {
+  const facElements = elements.filter(element =>
+    element.kind === 'DUTY_STATION' || element.kind === 'HANGAR' || element.kind === 'PARKING' || element.kind === 'TERMINAL'
+  );
+  if (facElements.length > 0) {
+    return facElements.map(element => ({
+      id: element.id,
+      name: element.label,
+      code: element.code || (element.kind === 'DUTY_STATION' ? 'ПТО' : element.kind === 'HANGAR' ? 'АК' : element.kind === 'PARKING' ? '🅿️' : 'ТЕРМ'),
+      complex: element.complex || (element.y < 45 ? 'NORTH' : 'SOUTH'),
+      x: element.x,
+      y: element.y,
+      type: element.kind === 'HANGAR' ? 'HANGAR_BASE' : 'DUTY_STATION'
+    }));
+  }
+  if (elements.length > 0) {
+    const first = elements[0];
+    return [{
+      id: 'BASE_CUSTOM_MAIN',
+      name: 'Главный пункт полигона',
+      code: 'ПТО-ЦЕНТР',
+      complex: 'NORTH',
+      x: first.x,
+      y: first.y,
+      type: 'DUTY_STATION'
+    }];
+  }
+  return REAL_SVO_FACILITIES;
+}
+
+export interface CustomRouteResult {
+  points: { x: number; y: number }[];
+  distance: number;
+  waypoints: { x: number; y: number }[];
+  distanceMeters: number;
+}
+
+export function customRoute(
+  start: { x: number; y: number },
+  target: { x: number; y: number },
+  customElements?: AirportElement[],
+  customConnections?: AirportConnection[]
+): CustomRouteResult {
+  const cElements = customElements || customAirportElements;
+  const cConnections = customConnections || customAirportConnections;
+
+  const res = computeCustomAirfieldRoute(start, target, cElements, cConnections);
+  return {
+    points: res.points,
+    waypoints: res.waypoints,
+    distance: res.distanceMeters,
+    distanceMeters: res.distanceMeters
+  };
+}
 
 export function getWeatherSpeeds() {
   return { ...weatherSpeeds };
@@ -155,18 +232,21 @@ for (let s = 0; s < N; s++) {
   ALL_PAIRS_NEXT[s] = next;
 }
 
-// 1. Find Closest Node by Percentage Coordinates
+// 1. Find Closest Node by Percentage Coordinates across all nodes, facilities and autoparks
 export function getClosestNodeId(pctX: number, pctY: number): string {
   let minDistanceSq = Infinity;
-  let closestId = SVO_NODES[0].id;
+  let closestId = GRAPH_VERTEX_IDS[0] || SVO_NODES[0].id;
 
-  for (const node of SVO_NODES) {
-    const dx = node.x - pctX;
-    const dy = node.y - pctY;
-    const distSq = dx * dx + dy * dy;
-    if (distSq < minDistanceSq) {
-      minDistanceSq = distSq;
-      closestId = node.id;
+  for (const id of GRAPH_VERTEX_IDS) {
+    const coord = NODE_COORD[id];
+    if (coord) {
+      const dx = coord.x - pctX;
+      const dy = coord.y - pctY;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < minDistanceSq) {
+        minDistanceSq = distSq;
+        closestId = id;
+      }
     }
   }
   return closestId;
@@ -179,7 +259,7 @@ const resolveVertexIndex = (id: string): number => {
   return GRAPH_INDEX[getClosestNodeId(coordFor(id).x, coordFor(id).y)];
 };
 
-// Internal: O(1) distance + O(path length) tunnel detection + node path
+// Internal: O(1) distance + O(path length) tunnel detection + node path strictly along SVO_EDGES
 const routeBetween = (startNodeId: string, endId: string) => {
   const s = resolveVertexIndex(startNodeId);
   const t = resolveVertexIndex(endId);
@@ -191,7 +271,6 @@ const routeBetween = (startNodeId: string, endId: string) => {
   while (cur !== s) {
     const pred = ALL_PAIRS_NEXT[s][cur];
     if (pred === -1) {
-      // Graph is connected in practice; guard for safety
       distanceMeters = Infinity;
       break;
     }
@@ -201,8 +280,6 @@ const routeBetween = (startNodeId: string, endId: string) => {
   }
 
   nodePath.reverse();
-  if (nodePath[0] !== startNodeId) nodePath.unshift(startNodeId);
-  if (nodePath[nodePath.length - 1] !== endId) nodePath.push(endId);
 
   if (distanceMeters !== Infinity) {
     let acc = 0;
@@ -219,9 +296,6 @@ const routeBetween = (startNodeId: string, endId: string) => {
 };
 
 // Real-world length (meters) of a single road graph edge between two node ids.
-// Used by moving-target ETA interpolation to map %-waypoints back to exact
-// meters (the tunnel edge is ~120 m per % unit, taxiways ~9-37 m — a single
-// global scale factor would be wrong).
 export function edgeDistanceMeters(nodeIdA: string, nodeIdB: string): number {
   if (nodeIdA === nodeIdB) return 0;
   const edge = SVO_EDGES.find(
@@ -250,7 +324,7 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
 
   // GUARANTEE AT LEAST 2 POINTS SO ANIMATION LOOP NEVER SKIPS!
   if (points.length === 1) {
-    points.push({ x: startPoint.x + 0.01, y: startPoint.y + 0.01 });
+    points.push({ x: points[0].x + 0.001, y: points[0].y + 0.001 });
   }
 
   return points;
@@ -263,21 +337,31 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
 // meters, then the precomputed all-pairs shortest path from that edge's far
 // node to the target stand is added — so no static-node overestimate when
 // someone is already 70% across a long edge.
-export function calculateWorkerToStandEta(worker: Worker, stand: Stand): TaskCrewMember {
+export function calculateWorkerToStandEta(
+  worker: Worker,
+  stand: Stand,
+  customElements?: AirportElement[],
+  customConnections?: AirportConnection[]
+): TaskCrewMember {
   const isVehicle = worker.vehicle === 'APRON_VEHICLE';
-  const onPath = (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING')
-    && worker.pathWaypoints
-    && worker.pathWaypoints.length >= 2
-    && (worker.currentSegmentIndex ?? 0) < worker.pathWaypoints.length - 1;
+  const weatherSpeeds = getWeatherSpeeds();
 
-  let routeStartNodeId: string;
+  // Custom airport mode routing via dedicated custom engine
+  if ((customElements && customElements.length > 0) || (customConnections && customConnections.length > 0)) {
+    return calculateModularWorkerEta(worker, stand, customElements || [], customConnections || []);
+  }
+
   let partialDistanceMeters = 0;
+  let routeStartNodeId: string;
 
-  if (onPath) {
-    // Interpolate: remaining fraction of the CURRENT graph edge the worker is
-    // crossing (real meters), then add the precomputed shortest path from the
-    // edge's far node to the target stand. Mapping %-waypoints back to real
-    // road edges keeps the meters exact (the tunnel edge is far longer per %
+  if (
+    (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') &&
+    worker.pathWaypoints &&
+    worker.pathWaypoints.length >= 2
+  ) {
+    // Worker is actively traveling on a graph edge: find which edge they are on,
+    // count the remaining fraction of THAT specific edge, and route from its far node.
+    // (A single edge's straight distance is well-correlated enough to scale in one
     // unit than a short taxiway link).
     const wps = worker.pathWaypoints!;
     const currIdx = worker.currentSegmentIndex ?? 0;
@@ -352,8 +436,9 @@ export function findNearestFreeWorkerOfCategory(
     const isWorkerNorth = worker.y < 45;
     const isSameComplex = isTargetNorth === isWorkerNorth;
     
-    // Cost calculation: ETA in minutes + non-exact penalty (5 min) + cross-complex penalty (2 min)
-    const cost = memberCandidate.etaMinutes + (isExact ? 0 : 5.0) + (isSameComplex ? 0 : 2.0);
+    // Cost calculation: ETA + non-exact penalty (5 min) + massive cross-complex penalty (+100 min)
+    // This strictly prevents workers from crossing between North and South unless no workers exist in the sector!
+    const cost = memberCandidate.etaMinutes + (isExact ? 0 : 5.0) + (isSameComplex ? 0 : 100.0);
 
     if (cost < minCost) {
       minCost = cost;
@@ -372,15 +457,20 @@ export function findNearestFreeWorkerOfExactCategory(
   alreadySelectedWorkerIds: Set<string>
 ): TaskCrewMember | null {
   let bestMember: TaskCrewMember | null = null;
-  let minEta = Infinity;
+  let minCost = Infinity;
+
+  const isTargetNorth = targetStand.y < 45;
 
   for (const worker of allWorkers) {
     if (alreadySelectedWorkerIds.has(worker.id)) continue;
     if (worker.categoryCode !== catCode) continue;
     if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') continue;
+    const isWorkerNorth = worker.y < 45;
+    const isSameComplex = isTargetNorth === isWorkerNorth;
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
-    if (memberCandidate.etaMinutes < minEta) {
-      minEta = memberCandidate.etaMinutes;
+    const cost = memberCandidate.etaMinutes + (isSameComplex ? 0 : 100.0);
+    if (cost < minCost) {
+      minCost = cost;
       bestMember = memberCandidate;
     }
   }
@@ -433,7 +523,7 @@ export function getCategoryCandidates(
         status: w.status,
         etaMinutes: member ? member.etaMinutes : 0,
         vehicleLabel: member ? member.vehicleLabel : w.vehicle === 'APRON_VEHICLE' ? '🚘 Спецавтомобиль' : '🚶 Пешком',
-        startLocationText: member ? member.startLocationText : (SVO_FACILITIES.find(f => f.id === w.baseId)?.code ?? `База (${w.baseId})`),
+        startLocationText: member ? member.startLocationText : (SVO_FACILITIES.find(f => f.id === w.baseId)?.code ?? customAirportElements.find(e => e.id === w.baseId)?.label ?? `База (${w.baseId})`),
         isAvailable,
         load: loadMap?.[w.id] || 0
       };
@@ -488,30 +578,61 @@ const BASE_POSTS: Record<string, string[]> = {
   'AK_1': ['STAND_201', 'STAND_204', 'STAND_F45']
 };
 
-// Patrol targets cover the whole apron: roads AND remote stands, so patrolling
-// crews regularly show up at the far corners instead of hugging the center.
-export const PATROL_TARGET_IDS = [
-  ...SVO_NODES.filter(n => n.type === 'WAYPOINT').map(n => n.id),
-  ...SVO_STANDS.map(s => s.id)
+export function getClosestSectorNodeId(pctX: number, pctY: number, allowedNodeIds: string[]): string {
+  let minDistanceSq = Infinity;
+  let closestId = allowedNodeIds[0] || GRAPH_VERTEX_IDS[0];
+
+  for (const id of allowedNodeIds) {
+    const coord = NODE_COORD[id];
+    if (coord) {
+      const dx = coord.x - pctX;
+      const dy = coord.y - pctY;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < minDistanceSq) {
+        minDistanceSq = distSq;
+        closestId = id;
+      }
+    }
+  }
+  return closestId;
+}
+
+const NORTH_BASE_IDS = new Set(['PTO_1', 'PARKING_1', 'AK_4']);
+const SOUTH_BASE_IDS = new Set(['PTO_2', 'PARKING_2', 'AK_1']);
+
+const NORTH_PATROL_TARGETS = [
+  'STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27',
+  'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST'
 ];
 
-// Local patrol zones: every base patrols only its own geographic sector, so
-// crews never cross the apron (north <-> south tunnel) just for a stroll —
-// PTO-1 guards B/C, AK-4 guards the hangar sector, PTO-2 guards D/E/F,
-// AK-1 guards the remote southeast corner.
-const PATROL_ZONES: Record<string, string[]> = {
-  'PTO_1': ['WAY_N1', 'WAY_N2', 'WAY_N3', 'STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27'],
-  'AK_4': ['WAY_N1', 'STAND_B10', 'STAND_101', 'STAND_102', 'STAND_105'],
-  'PTO_2': ['WAY_S1', 'WAY_S2', 'STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45'],
-  'AK_1': ['WAY_S3', 'STAND_201', 'STAND_204', 'STAND_F45']
-};
+const SOUTH_PATROL_TARGETS = [
+  'STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45',
+  'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1'
+];
 
-// Random patrol target inside the base's local zone (falls back to the whole
-// apron for unknown bases).
-export function pickPatrolTargetId(baseId: string): string {
-  const zone = PATROL_ZONES[baseId];
-  const pool = zone && zone.length > 0 ? zone : PATROL_TARGET_IDS;
-  return pool[Math.floor(Math.random() * pool.length)];
+export function pickPatrolTargetId(baseId: string, customStandsList?: Stand[]): string {
+  if (NORTH_BASE_IDS.has(baseId)) {
+    return NORTH_PATROL_TARGETS[Math.floor(Math.random() * NORTH_PATROL_TARGETS.length)];
+  }
+  if (SOUTH_BASE_IDS.has(baseId)) {
+    return SOUTH_PATROL_TARGETS[Math.floor(Math.random() * SOUTH_PATROL_TARGETS.length)];
+  }
+  if (customAirportElements.length > 0) {
+    const baseElem = customAirportElements.find(e => e.id === baseId);
+    const stands = customAirportElements.filter(e => e.kind === 'STAND' || e.kind === 'WAYPOINT');
+    if (baseElem && stands.length > 0) {
+      // Strictly within 20% distance of the base (prevents cross-terminal/tunnel patrol)
+      const nearby = stands
+        .map(s => ({ s, dist: Math.hypot(s.x - baseElem.x, s.y - baseElem.y) }))
+        .filter(x => x.dist > 2 && x.dist <= 20)
+        .sort((a, b) => a.dist - b.dist);
+      if (nearby.length > 0) {
+        return nearby[Math.floor(Math.random() * Math.min(3, nearby.length))].s.id;
+      }
+    }
+    if (stands.length > 0) return stands[0].id;
+  }
+  return 'STAND_B12';
 }
 
 // 7. Generate Shift Personnel with Custom Counts & Vivid Apron Patrol
@@ -519,24 +640,54 @@ export function generateShiftWorkersWithCustomCounts(
   b1Count: number = 22,
   b2Count: number = 12,
   catACount: number = 6,
-  vehiclesCount: number = 20
+  vehiclesCount: number = 20,
+  customBases?: Facility[],
+  customStands?: Stand[]
 ): Worker[] {
   const workers: Worker[] = [];
   let nameIdx = 0;
 
-  const bases = SVO_FACILITIES;
+  const isCustomMode = (customBases && customBases.length > 0) || customAirportElements.length > 0;
+  const bases: Facility[] = (customBases && customBases.length > 0)
+    ? customBases
+    : (isCustomMode ? getCustomAirportFacilities(customAirportElements) : REAL_SVO_FACILITIES);
 
-  // Global flow of all workers (categories in order: B1, B2, A). Stationary and
-  // patrolling halves round-robin over the bases with INDEPENDENT counters, so
-  // every base gets exactly the same headcount with a mix of standing + patrol,
-  // and the far-corner bases AK-4 / AK-1 never end up empty or patrol-only.
+  const activeStandsList = (customStands && customStands.length > 0)
+    ? customStands
+    : (isCustomMode ? getCustomAirportStands(customAirportElements) : SVO_STANDS);
+
+  const safeBases = bases.length > 0 ? bases : [{
+    id: 'BASE_DEFAULT',
+    name: 'Главная база',
+    code: 'ПТО',
+    complex: 'NORTH' as const,
+    x: 50,
+    y: 50,
+    type: 'DUTY_STATION' as const
+  }];
+
   const total = b1Count + b2Count + catACount;
   const stationCount = Math.ceil(total / 2);
   const stationVehicles = Math.ceil(vehiclesCount / 2);
   let stationIdx = 0;
   let patrolIdx = 0;
   let vehicleAllocated = 0;
-  const stationPerBase: Record<string, number> = {};
+  const ptoBases = safeBases.filter(b => b.type === 'DUTY_STATION');
+  const parkBases = safeBases.filter(b => b.type === 'PARKING');
+  const hangarBases = safeBases.filter(b => b.type === 'HANGAR' || b.type === 'HANGAR_BASE');
+
+  const getBaseForRole = (catCode: CategoryCode, roleIdx: number): Facility => {
+    if (catCode === 'A' && parkBases.length > 0) {
+      return parkBases[roleIdx % parkBases.length];
+    }
+    if ((catCode === 'B1' || catCode === 'B2') && hangarBases.length > 0 && roleIdx % 3 === 2) {
+      return hangarBases[roleIdx % hangarBases.length];
+    }
+    if (ptoBases.length > 0) {
+      return ptoBases[roleIdx % ptoBases.length];
+    }
+    return safeBases[roleIdx % safeBases.length];
+  };
 
   for (let g = 0; g < total; g++) {
     const isPatrolling = g % 2 === 1;
@@ -544,35 +695,31 @@ export function generateShiftWorkersWithCustomCounts(
     const code: CategoryCode = cat === 'ENGINES_AIRFRAME' ? 'B1' : cat === 'AVIONICS' ? 'B2' : 'A';
 
     const rr = isPatrolling ? patrolIdx++ : stationIdx++;
-    const baseObj = bases[rr % bases.length];
+    const baseObj = getBaseForRole(code, rr);
 
     const hasVehicle = isPatrolling
       ? vehicleAllocated >= stationVehicles && vehicleAllocated < vehiclesCount
       : vehicleAllocated < stationVehicles;
     if (hasVehicle) vehicleAllocated++;
 
-    // Stationary workers crowd around their tech center (that's the natural
-    // "hive" of the apron), and only every 3rd of them mans a duty post on a
-    // zone stand — so the bases look busy, yet remote stands stay covered.
-    const posts = BASE_POSTS[baseObj.id] || [];
-    let dutyStandId: string | undefined = undefined;
-    if (!isPatrolling) {
-      const atBase = (stationPerBase[baseObj.id] = (stationPerBase[baseObj.id] || 0) + 1);
-      if (atBase % 3 === 0 && posts.length > 0) {
-        dutyStandId = posts[Math.floor(atBase / 3) % posts.length];
-      }
-    }
-    const dutyStand = dutyStandId ? SVO_STANDS.find(s => s.id === dutyStandId) : undefined;
-    const startX = dutyStand ? dutyStand.x : baseObj.x;
-    const startY = dutyStand ? dutyStand.y : baseObj.y;
+    const startX = baseObj.x;
+    const startY = baseObj.y;
 
     let waypoints: { x: number; y: number }[] | undefined = undefined;
 
     if (isPatrolling) {
-      const startNodeId = getClosestNodeId(startX, startY);
-      const randomTargetId = pickPatrolTargetId(baseObj.id);
-      const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
-      waypoints = getWaypointsForNodePath({ x: startX, y: startY }, nodePath);
+      if (isCustomMode) {
+        const targetStand = activeStandsList.length > 0
+          ? activeStandsList[Math.floor(Math.random() * activeStandsList.length)]
+          : { x: (startX + 20) % 90 + 5, y: (startY + 20) % 90 + 5 };
+        const route = customRoute({ x: startX, y: startY }, { x: targetStand.x, y: targetStand.y });
+        waypoints = route.points;
+      } else {
+        const startNodeId = getClosestNodeId(startX, startY);
+        const randomTargetId = pickPatrolTargetId(baseObj.id);
+        const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
+        waypoints = getWaypointsForNodePath({ x: startX, y: startY }, nodePath);
+      }
     }
 
     workers.push({
@@ -580,10 +727,9 @@ export function generateShiftWorkersWithCustomCounts(
       name: TECHNICIAN_NAMES[nameIdx % TECHNICIAN_NAMES.length] + (nameIdx >= TECHNICIAN_NAMES.length ? ` ${Math.floor(nameIdx / TECHNICIAN_NAMES.length) + 1}` : ''),
       category: cat,
       categoryCode: code,
-      status: isPatrolling ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
+      status: 'FREE_PATROLLING',
       baseId: baseObj.id,
-      dutyStandId,
-      isPatrolPreference: isPatrolling,
+      isPatrolPreference: true,
       x: startX,
       y: startY,
       vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN',

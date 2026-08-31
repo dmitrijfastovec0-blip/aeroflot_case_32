@@ -1,5 +1,5 @@
-import React, { useMemo, useRef } from 'react';
-import { OtoTask, Worker, ThemeMode } from '../types/index';
+import React, { useMemo, useRef, useEffect } from 'react';
+import { OtoTask, Worker, ThemeMode, Stand } from '../types/index';
 import { SVO_NODES } from '../constants/index';
 import { X, Table, MapPin } from 'lucide-react';
 
@@ -11,6 +11,7 @@ interface TimelineModalProps {
   workers: Worker[];
   theme: ThemeMode;
   simClockSec?: number;
+  stands?: Stand[];
 }
 
 export const TimelineModal: React.FC<TimelineModalProps> = ({
@@ -19,17 +20,23 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
   tasks,
   archivedTasks = [],
   theme,
-  simClockSec = 0
+  simClockSec = 0,
+  stands
 }) => {
-  if (!isOpen) return null;
-
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const currentSimMin = Math.floor(simClockSec / 60);
 
-  // Permanent Rows: All Stand Stations in Sheremetyevo Airport
+  // Rows: Active custom stands or Sheremetyevo stands
   const standNodes = useMemo(() => {
+    if (stands && stands.length > 0) {
+      return stands.map(s => ({
+        id: s.id,
+        label: s.label || s.id.replace('CUST-ST-', ''),
+        type: 'STAND' as const
+      }));
+    }
     return SVO_NODES.filter(n => n.type === 'STAND');
-  }, []);
+  }, [stands]);
 
   // Combine ALL active and archived historical tasks into one master registry
   const allTasks = useMemo(() => {
@@ -46,15 +53,24 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
     let maxTaskEndMin = 60;
     allTasks.forEach(t => {
       const startSec = t.startedAtSimSec ?? t.createdAtSimSec ?? 0;
-      const workSec = t.targetWorkSec || 120;
+      const workSec = t.targetWorkSec || 40;
       const endSec = t.completedAtSimSec ?? (startSec + (t.maxEtaMinutes || 5) * 60 + workSec);
       const endMin = Math.ceil(endSec / 60);
       if (endMin > maxTaskEndMin) maxTaskEndMin = endMin;
     });
 
-    const highestNeeded = Math.max(60, currentSimMin + 15, maxTaskEndMin + 5);
+    const highestNeeded = Math.max(60, currentSimMin + 20, maxTaskEndMin + 5);
     return Math.ceil(highestNeeded / 15) * 15;
   }, [allTasks, currentSimMin]);
+
+  // Auto-scroll timeline to current operation window
+  useEffect(() => {
+    if (isOpen && tableContainerRef.current) {
+      const colWidth = 42;
+      const targetScroll = Math.max(0, currentSimMin * colWidth - 220);
+      tableContainerRef.current.scrollTo({ left: targetScroll, behavior: 'smooth' });
+    }
+  }, [isOpen, currentSimMin]);
 
   // Generate minute columns dynamically from 0 to maxTimelineMinutes
   const minuteColumns = useMemo(() => {
@@ -80,7 +96,7 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
       const transitMin = Math.max(1, Math.round(t.maxEtaMinutes || 5));
       const arrivalMin = startMin + transitMin;
 
-      const workMin = Math.max(1, Math.round((t.targetWorkSec || 120) / 60));
+      const workMin = Math.max(1, Math.round((t.targetWorkSec || 40) / 60));
       const completionMin = t.completedAtSimSec
         ? Math.floor(t.completedAtSimSec / 60)
         : arrivalMin + workMin;
@@ -101,12 +117,14 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
     return null;
   };
 
-  // Convert standard vertical mouse wheel scroll into horizontal scroll!
+  // Convert standard vertical mouse wheel scroll into horizontal scroll
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (tableContainerRef.current && e.deltaY !== 0) {
       tableContainerRef.current.scrollLeft += e.deltaY;
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-md animate-fadeIn font-mono">
@@ -119,9 +137,14 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
             <div className="p-2.5 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
               <Table className="w-6 h-6" />
             </div>
-            <h2 className="font-extrabold text-base uppercase tracking-wider text-slate-900 dark:text-white">
-              📊 ГАНТ-МАТРИЦА СТОЯНОК SVO
-            </h2>
+            <div>
+              <h2 className="font-extrabold text-base uppercase tracking-wider text-slate-900 dark:text-white">
+                📊 ПЛАН-ГРАФИК ОБСЛУЖИВАНИЯ СТОЯНОК
+              </h2>
+              <p className="text-xs text-sky-400">
+                Текущее модельное время: {currentSimMin} мин. ({Math.floor(simClockSec / 3600).toString().padStart(2, '0')}:{Math.floor((simClockSec % 3600) / 60).toString().padStart(2, '0')})
+              </p>
+            </div>
           </div>
 
           <button
@@ -146,7 +169,7 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
                 <tr className="bg-slate-200 dark:bg-[#101724] border-b border-slate-300 dark:border-[#1e2a3a] text-xs font-bold text-gray-400">
                   <th className="p-3 w-48 sticky left-0 z-20 bg-slate-200 dark:bg-[#101724] border-r border-slate-300 dark:border-[#1e2a3a] uppercase">
                     <div className="flex items-center gap-1.5 text-slate-800 dark:text-gray-200 font-extrabold text-sm">
-                      <MapPin className="w-4 h-4 text-sky-400" /> Стоянки
+                      <MapPin className="w-4 h-4 text-sky-400" /> Стоянки ({standNodes.length})
                     </div>
                   </th>
                   {minuteColumns.map(col => {
@@ -167,7 +190,7 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
                 </tr>
               </thead>
 
-              {/* Rows: Fixed Stand Stations (No "Стоянка" prefix, no aircraft types) */}
+              {/* Rows: Fixed Stand Stations */}
               <tbody className="divide-y divide-slate-200 dark:divide-[#16202e] text-sm font-mono">
                 {standNodes.map(stand => {
                   const standTasks = allTasks.filter(t => t.standId === stand.id);
@@ -245,13 +268,13 @@ export const TimelineModal: React.FC<TimelineModalProps> = ({
         <div className="p-3 border-t flex justify-between items-center border-slate-200 dark:border-[#1e2a3a] bg-slate-100/70 dark:bg-[#0c121b]/90 text-sm shrink-0 font-mono">
           <div className="flex items-center space-x-5">
             <span className="flex items-center gap-1.5 text-sky-400 font-bold">
-              <span className="w-4 h-4 rounded bg-sky-500 flex items-center justify-center text-xs text-white">🚘</span> Путь
+              <span className="w-4 h-4 rounded bg-sky-500 flex items-center justify-center text-xs text-white">🚘</span> В пути
             </span>
             <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
-              <span className="w-4 h-4 rounded bg-emerald-500 flex items-center justify-center text-xs text-white">🔧</span> Ремонт
+              <span className="w-4 h-4 rounded bg-emerald-500 flex items-center justify-center text-xs text-white">🔧</span> ОТО на ВС
             </span>
             <span className="flex items-center gap-1.5 text-emerald-300 font-bold">
-              <span className="w-4 h-4 rounded bg-emerald-700 flex items-center justify-center text-xs text-white">✓</span> Выполнено
+              <span className="w-4 h-4 rounded bg-emerald-700 flex items-center justify-center text-xs text-white">✓</span> Завершено
             </span>
             <span className="flex items-center gap-1.5 text-gray-400 font-bold">
               <span className="w-4 h-4 rounded bg-[#162232] flex items-center justify-center text-xs text-gray-400">·</span> Свободна

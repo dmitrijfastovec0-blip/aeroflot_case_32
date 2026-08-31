@@ -34,13 +34,13 @@ export const BottomConsole = React.memo<BottomConsoleProps>(({
     : 'bg-white/95 border-slate-200 text-slate-900 backdrop-blur-md shadow-xl';
 
   return (
-    <footer className={`absolute bottom-3 left-4 right-4 z-20 flex flex-col rounded-2xl border transition-all overflow-hidden ${barStyle} ${
-      isExpanded ? 'h-72' : 'h-11 min-h-[44px]'
+    <footer className={`absolute bottom-3 z-20 flex flex-col rounded-2xl border transition-all overflow-hidden ${barStyle} ${
+      isExpanded ? 'left-4 right-4 h-72' : 'right-4 h-11 min-h-[44px]'
     }`}>
       {/* 1. COLLAPSED COMPACT STATUS BAR HEADER */}
       <div className="h-11 px-4 flex items-center justify-between border-b border-slate-200 dark:border-[#1e2a3a] font-mono text-sm cursor-pointer select-none">
         {/* Left Live Indicators */}
-        <div className="flex items-center space-x-4">
+        <div className={`items-center space-x-4 ${isExpanded ? 'flex' : 'hidden'}`}>
           <div className="flex items-center space-x-1.5" onClick={() => { setIsExpanded(true); setActiveTab('ACTIVE'); }}>
             <Activity className="w-4 h-4 text-emerald-400" />
             <span className="font-bold text-slate-700 dark:text-gray-300">Активные:</span>
