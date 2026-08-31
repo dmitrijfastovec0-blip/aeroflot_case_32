@@ -169,8 +169,20 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     }
   }
 
+  // Fast memoized ETA cache for this dispatch cycle (avoids thousands of redundant Dijkstra paths)
+  const etaMemo = new Map<string, TaskCrewMember>();
+  const fastCalculateEta = (w: Worker, stand: Stand): TaskCrewMember => {
+    const key = `${w.id}_${stand.id}_${Math.round(w.x * 10)}_${Math.round(w.y * 10)}`;
+    let cached = etaMemo.get(key);
+    if (!cached) {
+      cached = calculateEta(w, stand);
+      etaMemo.set(key, cached);
+    }
+    return cached;
+  };
+
   // Item 1: SLA-aware ordering (AOG first, then by slack-to-deadline)
-  const ordered = sortQueuedBySla(queuedAll, workerById, busy, standById, calculateEta);
+  const ordered = sortQueuedBySla(queuedAll, workerById, busy, standById, fastCalculateEta);
 
   const pushStat = (q: OtoTask, systemEta: number) => {
     const targetStand = standById.get(q.standId);
@@ -222,7 +234,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
         currentSegmentIndex: 0,
         dispatchedCount: (w.dispatchedCount || 0) + 1
       };
-      return calculateEta(w, targetStand);
+      return fastCalculateEta(w, targetStand);
     });
 
     const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
@@ -278,7 +290,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
       const stand = standById.get(q.standId);
       if (!stand) continue;
       const remainingSimMin = Math.max(0, ((active.targetWorkSec || 120) - (active.elapsedWorkSec || 0)) / 60);
-      const travel = calculateEta(rw, stand).etaMinutes;
+      const travel = fastCalculateEta(rw, stand).etaMinutes;
       reservation.set(q.id, { w: rw, eta: remainingSimMin + travel });
     }
 
@@ -340,7 +352,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
           const { w, delay } = candidates[ci];
           const surcharge = overqualSurcharge(q.categoryCode, w.categoryCode);
           if (!stand || !Number.isFinite(surcharge)) { row.push(INF); continue; }
-          const member = calculateEta(w, stand);
+          const member = fastCalculateEta(w, stand);
           etaCache[ti][ci] = member;
           row.push(costOf(delay + member.etaMinutes + surcharge, w, q, delay));
         }
@@ -416,7 +428,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
           if (!Number.isFinite(surcharge)) continue;
           const isWorkerNorth = w.y < 45;
           const crossComplex = isTargetNorth !== isWorkerNorth ? 500 : 0;
-          const m = calculateEta(w, stand);
+          const m = fastCalculateEta(w, stand);
           const eff = m.etaMinutes + surcharge + crossComplex;
           if (!best || eff < best.eff) best = { w, member: m, eff };
         }
@@ -483,7 +495,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
           for (let ci = 0; ci < cols.length; ci++) {
             const w = cols[ci];
             const surcharge = overqualSurcharge(cat, w.categoryCode);
-            const member = calculateEta(w, stand);
+            const member = fastCalculateEta(w, stand);
             etaCache[ri][ci] = member;
             row.push(costOf(member.etaMinutes + surcharge, w, q, 0));
           }
@@ -618,7 +630,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
       if (!(w.categoryCode === task.categoryCode || task.categoryCode === 'A')) continue;
       const isWorkerNorth = w.y < 45;
       if (isTargetNorth !== isWorkerNorth) continue; // Never swap across the tunnel between North and South
-      const member = calculateEta(w, stand);
+      const member = fastCalculateEta(w, stand);
       if (member.etaMinutes >= remainingTransit - gainRequired) continue;
       if (!bestMember || member.etaMinutes < bestMember.etaMinutes) {
         bestFree = w;

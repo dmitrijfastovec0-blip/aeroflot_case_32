@@ -99,7 +99,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Переключить между базовым SVO и испытательным полигоном"
           >
             <MapPin className="w-3.5 h-3.5" />
-            <span>{airfieldMode === 'CUSTOM' ? '🛠️ Полигон' : '📍 SVO'}</span>
+            <span>{airfieldMode === 'CUSTOM' ? 'Полигон' : '📍 SVO'}</span>
           </button>
         )}
       </div>
@@ -213,21 +213,19 @@ export const Header: React.FC<HeaderProps> = ({
         {onOpenTimeline && (
           <button
             onClick={onOpenTimeline}
-            className="flex items-center space-x-1.5 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-sky-400 transition-all cursor-pointer shadow-sm"
-            title="Открыть План-график вызовов ОТО (Гант)"
+            className="p-2 rounded-lg border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 transition-all cursor-pointer shadow-sm"
+            title="План-график вызовов ОТО (Гант)"
           >
             <Clock className="w-4 h-4 text-sky-400" />
-            <span className="hidden md:inline">📊 План-график</span>
           </button>
         )}
 
         <button
           onClick={onOpenAnalytics}
-          className="flex items-center space-x-1.5 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-sky-400 transition-all cursor-pointer shadow-sm"
-          title="Открыть сравнительную аналитику эффективности"
+          className="p-2 rounded-lg border border-sky-500/40 bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 text-sky-400 transition-all cursor-pointer shadow-sm"
+          title="Сравнительная аналитика эффективности"
         >
           <BarChart3 className="w-4 h-4 text-sky-400" />
-          <span className="hidden sm:inline">📊 Аналитика</span>
         </button>
 
         {onOpenLocationBuilder && (
@@ -237,7 +235,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Открыть конструктор испытательного полигона"
           >
             <Sliders className="w-4 h-4 text-amber-400" />
-            <span>🛠️ Полигон</span>
+            <span>Полигон</span>
           </button>
         )}
 

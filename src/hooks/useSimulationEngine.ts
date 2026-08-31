@@ -108,39 +108,99 @@ export function useSimulationEngine(
   const workersRef = useRef<Worker[]>(workers);
   const tasksRef = useRef<OtoTask[]>(tasks);
 
-  // Sync airfield changes with custom airport configuration and respawn workers
-  useEffect(() => {
-    configureCustomAirport(customElements, customConnections);
-    const { b1, b2, catA, vehicles } = shiftCountsRef.current;
-    const updated = spawnAirfieldShift({
-      b1Count: b1,
-      b2Count: b2,
-      catACount: catA,
-      vehiclesCount: vehicles,
-      customElements,
-      customConnections,
-      customFacilities: activeFacilities,
-      customStands: activeStands,
-      isCustomMode
-    });
-    workersRef.current = updated;
-    setWorkers(updated);
-    tasksRef.current = [];
-    setTasks([]);
-    allHistoricalTasksRef.current = [];
-    setAllHistoricalTasks([]);
-    statsRef.current = [];
-    setDispatchStats([]);
-    roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 };
-    setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
-    simClockRef.current = 0;
-    setSimClockSec(0);
-  }, [airfieldMode, isCustomMode, customElements, customConnections]);
+  interface AirfieldSnapshot {
+    workers: Worker[];
+    tasks: OtoTask[];
+    allHistoricalTasks: OtoTask[];
+    stats: DispatchStat[];
+    roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
+    simClockSec: number;
+    scenarioName: string;
+  }
+
+  const modeSnapshotsRef = useRef<{ SVO?: AirfieldSnapshot; CUSTOM?: AirfieldSnapshot }>({});
+  const prevModeRef = useRef<AirfieldMode>(airfieldMode);
+  const isFirstAirfieldMountRef = useRef(true);
 
   const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
     setNotificationBanner(msg);
     setTimeout(() => setNotificationBanner(null), durationMs);
   }, []);
+
+  // Sync airfield changes with custom airport configuration and preserve/restore mode snapshots
+  useEffect(() => {
+    configureCustomAirport(customElements, customConnections);
+
+    if (isFirstAirfieldMountRef.current) {
+      isFirstAirfieldMountRef.current = false;
+      prevModeRef.current = airfieldMode;
+      return;
+    }
+
+    const prevMode = prevModeRef.current;
+    if (prevMode !== airfieldMode) {
+      // 1. SAVE SNAPSHOT of previous mode
+      modeSnapshotsRef.current[prevMode] = {
+        workers: [...workersRef.current],
+        tasks: [...tasksRef.current],
+        allHistoricalTasks: [...allHistoricalTasksRef.current],
+        stats: [...statsRef.current],
+        roiMetrics: { ...roiMetricsRef.current },
+        simClockSec: simClockRef.current,
+        scenarioName: activeScenarioName
+      };
+
+      // 2. PAUSE SIMULATION ON MODE SWITCH (fallback requirement)
+      setIsPaused(true);
+
+      // 3. RESTORE SNAPSHOT of target mode if available, otherwise spawn initial shift
+      const saved = modeSnapshotsRef.current[airfieldMode];
+      if (saved) {
+        workersRef.current = saved.workers;
+        setWorkers(saved.workers);
+        tasksRef.current = saved.tasks;
+        setTasks(saved.tasks);
+        allHistoricalTasksRef.current = saved.allHistoricalTasks;
+        setAllHistoricalTasks(saved.allHistoricalTasks);
+        statsRef.current = saved.stats;
+        setDispatchStats(saved.stats);
+        roiMetricsRef.current = saved.roiMetrics;
+        setRoiMetrics(saved.roiMetrics);
+        simClockRef.current = saved.simClockSec;
+        setSimClockSec(saved.simClockSec);
+        setActiveScenarioName(saved.scenarioName);
+        showNotification(`Состояние ${airfieldMode === 'CUSTOM' ? 'Полигона' : 'SVO'} восстановлено. Симуляция на паузе.`);
+      } else {
+        const { b1, b2, catA, vehicles } = shiftCountsRef.current;
+        const updated = spawnAirfieldShift({
+          b1Count: b1,
+          b2Count: b2,
+          catACount: catA,
+          vehiclesCount: vehicles,
+          customElements,
+          customConnections,
+          customFacilities: activeFacilities,
+          customStands: activeStands,
+          isCustomMode
+        });
+        workersRef.current = updated;
+        setWorkers(updated);
+        tasksRef.current = [];
+        setTasks([]);
+        allHistoricalTasksRef.current = [];
+        setAllHistoricalTasks([]);
+        statsRef.current = [];
+        setDispatchStats([]);
+        roiMetricsRef.current = { completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 };
+        setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
+        simClockRef.current = 0;
+        setSimClockSec(0);
+        showNotification(`${airfieldMode === 'CUSTOM' ? 'Полигон' : 'SVO'}: смена сформирована (пауза).`);
+      }
+
+      prevModeRef.current = airfieldMode;
+    }
+  }, [airfieldMode, isCustomMode, customElements, customConnections, activeFacilities, activeStands, activeScenarioName, showNotification]);
 
   // Weather Mode State
   const [weatherMode, setWeatherModeState] = useState<WeatherMode>('CLEAR');
@@ -610,11 +670,6 @@ export function useSimulationEngine(
             } else {
               tasksRef.current = completedTasks;
             }
-
-            // Force UI update on completion
-            setWorkers([...workersRef.current]);
-            setTasks([...tasksRef.current]);
-            lastRenderTimeRef.current = now;
 
             // Global greedy re-drain: nearest freed engineer wins each queued call.
             // Reservations are respected, but only while nobody closer is free.
