@@ -363,22 +363,26 @@ export function calculateWorkerToStandEta(
     // count the remaining fraction of THAT specific edge, and route from its far node.
     // (A single edge's straight distance is well-correlated enough to scale in one
     // unit than a short taxiway link).
-    const wps = worker.pathWaypoints!;
-    const currIdx = worker.currentSegmentIndex ?? 0;
+    const wps = worker.pathWaypoints;
+    const currIdx = Math.max(0, Math.min(wps.length - 2, worker.currentSegmentIndex ?? 0));
     const prevPt = wps[currIdx];
     const nextPt = wps[currIdx + 1];
 
-    const segPct = Math.hypot(nextPt.x - prevPt.x, nextPt.y - prevPt.y);
-    const prevNodeId = getClosestNodeId(prevPt.x, prevPt.y);
-    const nextNodeId = getClosestNodeId(nextPt.x, nextPt.y);
-    const segMeters = edgeDistanceMeters(prevNodeId, nextNodeId);
+    if (prevPt && nextPt) {
+      const segPct = Math.hypot(nextPt.x - prevPt.x, nextPt.y - prevPt.y);
+      const prevNodeId = getClosestNodeId(prevPt.x, prevPt.y);
+      const nextNodeId = getClosestNodeId(nextPt.x, nextPt.y);
+      const segMeters = edgeDistanceMeters(prevNodeId, nextNodeId);
 
-    const remainingFraction = segPct > 0
-      ? Math.min(1, Math.max(0, Math.hypot(nextPt.x - worker.x, nextPt.y - worker.y) / segPct))
-      : 1;
-    partialDistanceMeters = segMeters * remainingFraction;
+      const remainingFraction = segPct > 0
+        ? Math.min(1, Math.max(0, Math.hypot(nextPt.x - worker.x, nextPt.y - worker.y) / segPct))
+        : 1;
+      partialDistanceMeters = segMeters * remainingFraction;
 
-    routeStartNodeId = nextNodeId;
+      routeStartNodeId = nextNodeId;
+    } else {
+      routeStartNodeId = getClosestNodeId(worker.x, worker.y);
+    }
   } else {
     routeStartNodeId = getClosestNodeId(worker.x, worker.y);
   }

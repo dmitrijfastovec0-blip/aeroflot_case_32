@@ -392,6 +392,19 @@ export function useSimulationEngine(
             }
 
             const targetPt = worker.pathWaypoints[currIdx + 1];
+            if (!targetPt) {
+              const finalStatus: WorkerStatus = worker.status === 'IN_TRANSIT' ? 'WORKING_ON_SITE' : 'FREE_STATIONARY';
+              const lastPt = worker.pathWaypoints[worker.pathWaypoints.length - 1];
+              return {
+                ...worker,
+                x: lastPt ? lastPt.x : worker.x,
+                y: lastPt ? lastPt.y : worker.y,
+                status: finalStatus,
+                pathWaypoints: undefined,
+                currentSegmentIndex: undefined
+              };
+            }
+
             const dx = targetPt.x - worker.x;
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
@@ -471,6 +484,13 @@ export function useSimulationEngine(
 
             const currIdx = worker.currentSegmentIndex || 0;
             const targetPt = worker.pathWaypoints[currIdx + 1];
+            if (!targetPt) {
+              return {
+                ...worker,
+                currentSegmentIndex: 0
+              };
+            }
+
             const dx = targetPt.x - worker.x;
             const dy = targetPt.y - worker.y;
             const distPct = Math.hypot(dx, dy);
