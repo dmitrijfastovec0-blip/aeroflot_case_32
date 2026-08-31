@@ -45,7 +45,7 @@ export function useSimulationEngine(
   customConnections: AirportConnection[] = [],
   airfieldMode: AirfieldMode = 'SVO'
 ) {
-  const isCustomMode = airfieldMode === 'CUSTOM' || (customElements.length > 0 && airfieldMode !== 'SVO');
+  const isCustomMode = airfieldMode === 'CUSTOM';
 
   const activeStands = useMemo(() => {
     if (isCustomMode && customElements.length > 0) {
@@ -135,7 +135,7 @@ export function useSimulationEngine(
     setRoiMetrics({ completedCount: 0, systemEtaSumMinutes: 0, intuitiveEtaSumMinutes: 0 });
     simClockRef.current = 0;
     setSimClockSec(0);
-  }, [airfieldMode, isCustomMode, customElements, customConnections, activeFacilities, activeStands]);
+  }, [airfieldMode, isCustomMode, customElements, customConnections]);
 
   const showNotification = useCallback((msg: string, durationMs: number = 4000) => {
     setNotificationBanner(msg);

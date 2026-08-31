@@ -285,7 +285,15 @@ export function App() {
         onOpenShiftConfig={() => setIsShiftModalOpen(true)}
         onOpenLocationBuilder={() => setIsLocationBuilderOpen(true)}
         airfieldMode={airfieldMode}
-        onToggleAirfieldMode={() => setAirfieldMode((prev: AirfieldMode) => (prev === 'SVO' ? 'CUSTOM' : 'SVO'))}
+        onToggleAirfieldMode={() => {
+          setAirfieldMode((prev: AirfieldMode) => {
+            const next = prev === 'SVO' ? 'CUSTOM' : 'SVO';
+            if (next === 'CUSTOM' && customElements.length === 0) {
+              setIsLocationBuilderOpen(true);
+            }
+            return next;
+          });
+        }}
         roiMetrics={roiMetrics}
         onRunScenario={runScenario}
         weatherMode={weatherMode}
@@ -325,21 +333,18 @@ export function App() {
 
         {isLocationBuilderOpen && (
           <LocationBuilderWorkspace
-            elements={customElements}
-            connections={customConnections}
-            onElementsChange={(els) => {
-              setCustomElements(els);
-              if (els.length > 0 && els.some(e => e.kind === 'STAND')) {
-                setAirfieldMode('CUSTOM');
-              }
-            }}
+            initialElements={customElements}
+            initialConnections={customConnections}
+            onElementsChange={setCustomElements}
             onConnectionsChange={setCustomConnections}
             onClose={() => setIsLocationBuilderOpen(false)}
             onOpenShift={() => {
               setIsLocationBuilderOpen(false);
               setIsShiftModalOpen(true);
             }}
-            onRunSimulation={() => {
+            onRunSimulation={(els, conns) => {
+              setCustomElements(els);
+              setCustomConnections(conns);
               setIsLocationBuilderOpen(false);
               setAirfieldMode('CUSTOM');
               runScenario('standard');

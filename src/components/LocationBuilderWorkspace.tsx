@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { AirportConnection, AirportConnectionKind, AirportElement, AirportElementKind, ThemeMode } from '../types/index';
 import {
   Box,
@@ -22,14 +22,14 @@ import {
 } from 'lucide-react';
 
 interface Props {
-  elements: AirportElement[];
-  connections: AirportConnection[];
+  initialElements: AirportElement[];
+  initialConnections: AirportConnection[];
   onElementsChange: (elements: AirportElement[]) => void;
   onConnectionsChange: (connections: AirportConnection[]) => void;
   onClose: () => void;
   theme: ThemeMode;
   onOpenShift: () => void;
-  onRunSimulation: () => void;
+  onRunSimulation: (elements: AirportElement[], connections: AirportConnection[]) => void;
 }
 
 const TOOLS: { kind: AirportElementKind; label: string; icon: React.ReactNode }[] = [
@@ -56,8 +56,8 @@ const AIRCRAFT_TYPES = [
 ];
 
 export const LocationBuilderWorkspace: React.FC<Props> = ({
-  elements,
-  connections,
+  initialElements,
+  initialConnections,
   onElementsChange,
   onConnectionsChange,
   onClose,
@@ -65,6 +65,20 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
   onOpenShift,
   onRunSimulation
 }) => {
+  // Local editing state: keeps the simulation engine from respawning workers
+  // on every tiny drag/update. Changes are flushed to the app only when the
+  // user explicitly runs the polygon.
+  const [elements, setElements] = useState<AirportElement[]>(initialElements);
+  const [connections, setConnections] = useState<AirportConnection[]>(initialConnections);
+
+  useEffect(() => {
+    setElements(initialElements);
+  }, [initialElements]);
+
+  useEffect(() => {
+    setConnections(initialConnections);
+  }, [initialConnections]);
+
   const [selectedId, setSelectedId] = useState<string | null>(elements[0]?.id || null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [connectionMode, setConnectionMode] = useState<AirportConnectionKind | null>(null);
@@ -78,6 +92,11 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
 
   const selected = elements.find(item => item.id === selectedId);
   const panel = theme === 'dark' ? 'bg-[#0b131f]/95 border-[#263345] text-gray-100' : 'bg-white/95 border-slate-200 text-slate-900';
+
+  const flushToApp = useCallback(() => {
+    onElementsChange(elements);
+    onConnectionsChange(connections);
+  }, [elements, connections, onElementsChange, onConnectionsChange]);
 
   // --- PRESETS / TEMPLATES GENERATOR ---
   const applyPreset = (presetName: 'TYPICAL' | 'HUB' | 'COMPACT' | 'LINEAR' | 'CROSS_HUB' | 'MRO_CARGO') => {
@@ -276,8 +295,8 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
       ];
     }
 
-    onElementsChange(newElements);
-    onConnectionsChange(newConnections);
+    setElements(newElements);
+    setConnections(newConnections);
     setSelectedId(newElements[0]?.id || null);
   };
 
@@ -362,7 +381,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
       });
     });
 
-    onConnectionsChange(newLinks);
+    setConnections(newLinks);
   };
 
   const addElement = (kind: AirportElementKind, x = 50, y = 50) => {
@@ -378,13 +397,13 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
       width: kind === 'RUNWAY' ? 26 : kind === 'TERMINAL' ? 16 : kind === 'HANGAR' ? 12 : 8,
       height: kind === 'RUNWAY' ? 3 : kind === 'TERMINAL' ? 8 : kind === 'HANGAR' ? 6 : 5
     };
-    onElementsChange([...elements, item]);
+    setElements([...elements, item]);
     if (autoConnect && elements.length > 0) {
       const nearest = elements.reduce(
         (best, current) => (Math.hypot(current.x - x, current.y - y) < Math.hypot(best.x - x, best.y - y) ? current : best),
         elements[0]
       );
-      onConnectionsChange([
+      setConnections([
         ...connections,
         {
           id: `LINK-${Date.now()}`,
@@ -400,7 +419,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
 
   const updateSelected = (updates: Partial<AirportElement>) => {
     if (!selectedId) return;
-    onElementsChange(elements.map(item => (item.id === selectedId ? { ...item, ...updates } : item)));
+    setElements(elements.map(item => (item.id === selectedId ? { ...item, ...updates } : item)));
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -408,7 +427,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
     const rect = event.currentTarget.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
     const y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100));
-    onElementsChange(elements.map(item => (item.id === dragId ? { ...item, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) } : item)));
+    setElements(elements.map(item => (item.id === dragId ? { ...item, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) } : item)));
   };
 
   const handleMapPointerDown = (event: React.PointerEvent<SVGElement>) => {
@@ -446,7 +465,7 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
     const start = elements.find(item => item.id === routeStartId);
     const end = elements.find(item => item.id === selectedId);
     if (!start || !end) return;
-    onConnectionsChange([
+    setConnections([
       ...connections,
       {
         id: `LINK-${Date.now()}`,
@@ -464,8 +483,8 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
 
   const removeSelected = () => {
     if (!selectedId) return;
-    onElementsChange(elements.filter(item => item.id !== selectedId));
-    onConnectionsChange(connections.filter(link => link.from !== selectedId && link.to !== selectedId));
+    setElements(elements.filter(item => item.id !== selectedId));
+    setConnections(connections.filter(link => link.from !== selectedId && link.to !== selectedId));
     setSelectedId(null);
   };
 
@@ -763,7 +782,10 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
         {/* Actions */}
         <div className="mt-4 border-t border-slate-300/20 pt-3 space-y-2">
           <button
-            onClick={onRunSimulation}
+            onClick={() => {
+              flushToApp();
+              onRunSimulation(elements, connections);
+            }}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 px-3 py-2 text-xs font-bold text-white shadow-lg hover:from-emerald-500 hover:to-teal-500 active:scale-98 transition-all"
           >
             <Play className="h-4 w-4" /> Запустить полигон
@@ -776,8 +798,8 @@ export const LocationBuilderWorkspace: React.FC<Props> = ({
           </button>
           <button
             onClick={() => {
-              onElementsChange([]);
-              onConnectionsChange([]);
+              setElements([]);
+              setConnections([]);
               setSelectedId(null);
             }}
             className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
