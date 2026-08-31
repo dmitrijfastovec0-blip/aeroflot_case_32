@@ -118,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <div className="flex items-center bg-slate-100 dark:bg-[#121820] p-1 rounded-lg border border-slate-300 dark:border-[#263345]">
-          {[1, 2, 5, 10, 50, 100].map(speed => (
+          {[1, 10, 100].map(speed => (
             <button
               key={speed}
               onClick={() => onSimSpeedChange(speed)}
@@ -160,15 +160,6 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
         </div>
-
-        <button
-          onClick={() => onRunScenario('hellish')}
-          className="flex items-center space-x-1.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 px-3 py-1.5 rounded-lg text-sm font-mono font-extrabold text-rose-400 transition-all cursor-pointer shadow-sm animate-pulse"
-          title="Запустить постепенный симулятор нагрузки (поддержание 3–5 задач в очереди)"
-        >
-          <Zap className="w-4 h-4 text-rose-500" />
-          <span>🔥 СТРЕСС-ТЕСТ</span>
-        </button>
       </div>
 
       <div className="flex items-center space-x-2">

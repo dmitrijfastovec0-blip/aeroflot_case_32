@@ -76,25 +76,29 @@ export const CanvasMap: React.FC<CanvasMapProps> = (props) => {
         <button
           onClick={() => onPreset('ALL')}
           className={`${btnBase} ${btnNeutral(focusPreset === 'ALL', 'from-sky-600 to-blue-700 text-sky-100')}`}
+          title="Показать весь аэродром"
         >
-          🗺️ Весь SVO
+          🗺️ Весь
         </button>
         <button
           onClick={() => onPreset('NORTH')}
           className={`${btnBase} ${btnNeutral(focusPreset === 'NORTH', 'from-cyan-500 to-sky-600 text-cyan-50')}`}
+          title="Сектор Север"
         >
-          🏢 Север B/C
+          🧭 Север
         </button>
         <button
           onClick={() => onPreset('SOUTH')}
           className={`${btnBase} ${btnNeutral(focusPreset === 'SOUTH', 'from-emerald-500 to-teal-600 text-emerald-50')}`}
+          title="Сектор Юг"
         >
-          🏬 Юг D/E/F
+          🧭 Юг
         </button>
         <div className="h-4 w-px bg-slate-400 dark:bg-[#263345] mx-1" />
         <button
           onClick={() => onPreset('RESET')}
           className={`${btnBase} ${btnNeutral(focusPreset === 'RESET', 'from-slate-600 to-slate-700 text-slate-100')}`}
+          title="Сбросить масштаб и положение"
         >
           🔍 Сброс
         </button>

@@ -100,14 +100,8 @@ export function App() {
       } else if (e.key === '1') {
         setSimSpeed(1);
       } else if (e.key === '2') {
-        setSimSpeed(2);
-      } else if (e.key === '3') {
-        setSimSpeed(5);
-      } else if (e.key === '4') {
         setSimSpeed(10);
-      } else if (e.key === '5') {
-        setSimSpeed(50);
-      } else if (e.key === '6') {
+      } else if (e.key === '3') {
         setSimSpeed(100);
       } else if (e.key === 'Escape' || e.code === 'Escape') {
         // Clear tracking, modals, radial menu
