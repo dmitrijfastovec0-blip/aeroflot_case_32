@@ -70,8 +70,18 @@ export function spawnAirfieldShift(config: ShiftSpawnerConfig): Worker[] {
     return safeBases[roleIdx % safeBases.length];
   };
 
+  const BASE_POSTS: Record<string, string[]> = {
+    'PTO_1': ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27'],
+    'PARKING_1': ['STAND_B12', 'STAND_B14', 'STAND_C21'],
+    'AK_4': ['STAND_101', 'STAND_102', 'STAND_105'],
+    'PTO_2': ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45'],
+    'PARKING_2': ['STAND_D14', 'STAND_D18', 'STAND_D24'],
+    'AK_1': ['STAND_201', 'STAND_204', 'STAND_F45']
+  };
+
   let stationIdx = 0;
   let patrolIdx = 0;
+  const stationPerBase: Record<string, number> = {};
 
   const createWorker = (
     catCode: CategoryCode,
@@ -79,18 +89,29 @@ export function spawnAirfieldShift(config: ShiftSpawnerConfig): Worker[] {
     prefix: string,
     num: number
   ): Worker => {
+    const isPatrol = num % 2 === 1;
+    if (isPatrol) patrolIdx++;
+    else stationIdx++;
+
     const hasVehicle = vehicleAllocated < vehiclesCount;
     if (hasVehicle) vehicleAllocated++;
 
-    const isPatrol = true;
-    patrolIdx++;
-
-    const roleIdx = patrolIdx;
+    const roleIdx = isPatrol ? patrolIdx : stationIdx;
     const baseObj = getBaseForRole(catCode, roleIdx);
 
-    // All personnel strictly spawn inside central operational bases
-    const initX = baseObj.x;
-    const initY = baseObj.y;
+    // Stationary workers post on duty stands or stay at base
+    const posts = BASE_POSTS[baseObj.id] || [];
+    let dutyStandId: string | undefined = undefined;
+    if (!isPatrol) {
+      const atBase = (stationPerBase[baseObj.id] = (stationPerBase[baseObj.id] || 0) + 1);
+      if (atBase % 3 === 0 && posts.length > 0) {
+        dutyStandId = posts[Math.floor(atBase / 3) % posts.length];
+      }
+    }
+
+    const dutyStand = dutyStandId ? SVO_STANDS.find(s => s.id === dutyStandId) : undefined;
+    const initX = dutyStand ? dutyStand.x : baseObj.x;
+    const initY = dutyStand ? dutyStand.y : baseObj.y;
 
     const name = TECHNICIAN_NAMES[nameIdx % TECHNICIAN_NAMES.length];
     nameIdx++;
@@ -100,28 +121,31 @@ export function spawnAirfieldShift(config: ShiftSpawnerConfig): Worker[] {
       name,
       category,
       categoryCode: catCode,
-      status: 'FREE_PATROLLING',
+      status: isPatrol ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
       x: initX,
       y: initY,
       baseId: baseObj.id,
+      dutyStandId,
       vehicle: hasVehicle ? 'APRON_VEHICLE' : 'WALK',
-      isPatrolPreference: true,
+      isPatrolPreference: isPatrol,
       dispatchedCount: 0
     };
 
-    if (isCustomMode && customElements.length > 0) {
-      tempWorker.pathWaypoints = getCustomPatrolWaypoints(tempWorker, customElements, customConnections);
-    } else {
-      const isNorth = baseObj.id === 'PTO_1' || baseObj.id === 'PARKING_1' || baseObj.id === 'AK_4';
-      const sectorNodes = isNorth
-        ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
-        : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
-      const startNodeId = getClosestSectorNodeId(initX, initY, sectorNodes);
-      const localTargetId = pickPatrolTargetId(baseObj.id);
-      const nodePath = findDijkstraShortestPath(startNodeId, localTargetId);
-      tempWorker.pathWaypoints = getWaypointsForNodePath({ x: initX, y: initY }, nodePath);
+    if (isPatrol) {
+      if (isCustomMode && customElements.length > 0) {
+        tempWorker.pathWaypoints = getCustomPatrolWaypoints(tempWorker, customElements, customConnections);
+      } else {
+        const isNorth = baseObj.id === 'PTO_1' || baseObj.id === 'PARKING_1' || baseObj.id === 'AK_4';
+        const sectorNodes = isNorth
+          ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
+          : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
+        const startNodeId = getClosestSectorNodeId(initX, initY, sectorNodes);
+        const localTargetId = pickPatrolTargetId(baseObj.id);
+        const nodePath = findDijkstraShortestPath(startNodeId, localTargetId);
+        tempWorker.pathWaypoints = getWaypointsForNodePath({ x: initX, y: initY }, nodePath);
+      }
+      tempWorker.currentSegmentIndex = 0;
     }
-    tempWorker.currentSegmentIndex = 0;
 
     return tempWorker;
   };
