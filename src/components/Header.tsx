@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
   const fmtMin = (n: number) => n.toFixed(1);
 
   return (
-    <header className="h-14 min-h-[56px] max-h-[56px] px-4 flex items-center justify-between z-30 select-none transition-colors border-b backdrop-blur-md bg-opacity-90 dark:bg-[#070a0e]/95 bg-white/95 border-[#1e293b] dark:border-[#1e293b] border-slate-200 shrink-0 overflow-hidden">
+    <header className="h-14 min-h-[56px] max-h-[56px] px-4 flex items-center justify-between relative z-40 select-none transition-colors border-b backdrop-blur-md bg-opacity-90 dark:bg-[#070a0e]/95 bg-white/95 border-[#1e293b] dark:border-[#1e293b] border-slate-200 shrink-0">
       <div className="flex items-center space-x-3 shrink-0 font-mono">
         <button
           onClick={onToggleTheme}
