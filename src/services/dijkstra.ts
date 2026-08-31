@@ -1,6 +1,6 @@
 import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus, AirportConnection, AirportElement, Facility } from '../types/index';
 import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, REAL_SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } from '../constants/index';
-import { computeCustomAirfieldRoute } from './airfieldGraph';
+import { computeCustomAirfieldRoute, calculateModularWorkerEta } from './airfieldGraph';
 
 // ============================================================================
 // WEATHER / CONDITIONS SPEED OVERRIDES (scenario "Снегопад")
@@ -313,7 +313,7 @@ export function findDijkstraShortestPath(startNodeId: string, endNodeId: string)
   return routeBetween(startNodeId, endNodeId).nodePath;
 }
 
-// 3. Convert Node Path to Percentage Waypoints
+// 3. Convert Node Path to Percentage Waypoints strictly along graph nodes
 export function getWaypointsForNodePath(startPoint: { x: number; y: number }, nodePath: string[]): { x: number; y: number }[] {
   const points: { x: number; y: number }[] = [];
 
@@ -321,24 +321,19 @@ export function getWaypointsForNodePath(startPoint: { x: number; y: number }, no
     const coord = NODE_COORD[nodeId];
     if (coord) {
       const last = points[points.length - 1];
-      if (!last || Math.hypot(last.x - coord.x, last.y - coord.y) > 0.05) {
+      if (!last || Math.hypot(last.x - coord.x, last.y - coord.y) > 0.01) {
         points.push({ x: coord.x, y: coord.y });
       }
     }
   }
 
-  if (points.length > 0) {
-    const first = points[0];
-    if (Math.hypot(first.x - startPoint.x, first.y - startPoint.y) > 0.5) {
-      points.unshift(startPoint);
-    }
-  } else {
-    points.push(startPoint);
+  if (points.length === 0) {
+    points.push({ x: startPoint.x, y: startPoint.y });
   }
 
   // GUARANTEE AT LEAST 2 POINTS SO ANIMATION LOOP NEVER SKIPS!
   if (points.length === 1) {
-    points.push({ x: startPoint.x + 0.01, y: startPoint.y + 0.01 });
+    points.push({ x: points[0].x + 0.001, y: points[0].y + 0.001 });
   }
 
   return points;
@@ -358,40 +353,24 @@ export function calculateWorkerToStandEta(
   customConnections?: AirportConnection[]
 ): TaskCrewMember {
   const isVehicle = worker.vehicle === 'APRON_VEHICLE';
-  const cElements = customElements || customAirportElements;
-  const cConnections = customConnections || customAirportConnections;
+  const weatherSpeeds = getWeatherSpeeds();
 
-  if (cElements.some(element => element.id === stand.id) || !SVO_STANDS.some(s => s.id === stand.id)) {
-    const route = customRoute({ x: worker.x, y: worker.y }, { x: stand.x, y: stand.y }, cElements, cConnections);
-    const speed = isVehicle ? weatherSpeeds.vehicleKmH : weatherSpeeds.pedestrianKmH;
-    const etaMinutes = Math.max(0.4, Number((route.distanceMeters / (speed * 1000 / 60)).toFixed(1)));
-    const customFac = getCustomAirportFacilities(cElements).find(f => f.id === worker.baseId);
-    const startLoc = customFac ? customFac.code : (worker.dutyStandId ? `Стоянка ${worker.dutyStandId}` : (worker.baseId || 'Полигон'));
-    return {
-      workerId: worker.id,
-      workerName: worker.name,
-      categoryCode: worker.categoryCode,
-      startLocationText: startLoc,
-      distanceMeters: Math.round(route.distance),
-      vehicle: worker.vehicle,
-      vehicleLabel: isVehicle ? '🚘 Спецавтомобиль' : '🚶 Пешком',
-      etaMinutes,
-      waypoints: route.points
-    };
+  // Custom airport mode routing via dedicated custom engine
+  if ((customElements && customElements.length > 0) || (customConnections && customConnections.length > 0)) {
+    return calculateModularWorkerEta(worker, stand, customElements || [], customConnections || []);
   }
-  const onPath = (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING')
-    && worker.pathWaypoints
-    && worker.pathWaypoints.length >= 2
-    && (worker.currentSegmentIndex ?? 0) < worker.pathWaypoints.length - 1;
 
-  let routeStartNodeId: string;
   let partialDistanceMeters = 0;
+  let routeStartNodeId: string;
 
-  if (onPath) {
-    // Interpolate: remaining fraction of the CURRENT graph edge the worker is
-    // crossing (real meters), then add the precomputed shortest path from the
-    // edge's far node to the target stand. Mapping %-waypoints back to real
-    // road edges keeps the meters exact (the tunnel edge is far longer per %
+  if (
+    (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') &&
+    worker.pathWaypoints &&
+    worker.pathWaypoints.length >= 2
+  ) {
+    // Worker is actively traveling on a graph edge: find which edge they are on,
+    // count the remaining fraction of THAT specific edge, and route from its far node.
+    // (A single edge's straight distance is well-correlated enough to scale in one
     // unit than a short taxiway link).
     const wps = worker.pathWaypoints!;
     const currIdx = worker.currentSegmentIndex ?? 0;
@@ -466,8 +445,9 @@ export function findNearestFreeWorkerOfCategory(
     const isWorkerNorth = worker.y < 45;
     const isSameComplex = isTargetNorth === isWorkerNorth;
     
-    // Cost calculation: ETA in minutes + non-exact penalty (5 min) + cross-complex penalty (2 min)
-    const cost = memberCandidate.etaMinutes + (isExact ? 0 : 5.0) + (isSameComplex ? 0 : 2.0);
+    // Cost calculation: ETA + non-exact penalty (5 min) + massive cross-complex penalty (+100 min)
+    // This strictly prevents workers from crossing between North and South unless no workers exist in the sector!
+    const cost = memberCandidate.etaMinutes + (isExact ? 0 : 5.0) + (isSameComplex ? 0 : 100.0);
 
     if (cost < minCost) {
       minCost = cost;
@@ -486,15 +466,20 @@ export function findNearestFreeWorkerOfExactCategory(
   alreadySelectedWorkerIds: Set<string>
 ): TaskCrewMember | null {
   let bestMember: TaskCrewMember | null = null;
-  let minEta = Infinity;
+  let minCost = Infinity;
+
+  const isTargetNorth = targetStand.y < 45;
 
   for (const worker of allWorkers) {
     if (alreadySelectedWorkerIds.has(worker.id)) continue;
     if (worker.categoryCode !== catCode) continue;
     if (worker.status !== 'FREE_STATIONARY' && worker.status !== 'FREE_PATROLLING') continue;
+    const isWorkerNorth = worker.y < 45;
+    const isSameComplex = isTargetNorth === isWorkerNorth;
     const memberCandidate = calculateWorkerToStandEta(worker, targetStand);
-    if (memberCandidate.etaMinutes < minEta) {
-      minEta = memberCandidate.etaMinutes;
+    const cost = memberCandidate.etaMinutes + (isSameComplex ? 0 : 100.0);
+    if (cost < minCost) {
+      minCost = cost;
       bestMember = memberCandidate;
     }
   }
