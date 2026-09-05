@@ -778,12 +778,11 @@ export function generateShiftWorkersWithCustomCounts(
         const route = customRoute({ x: startX, y: startY }, { x: targetStand.x, y: targetStand.y });
         waypoints = route.points;
       } else {
-        const startNodeId = getClosestNodeId(startX, startY);
-        const randomTargetId = pickPatrolTargetId(baseObj.id);
-        const nodePath = findDijkstraShortestPath(startNodeId, randomTargetId);
-        waypoints = getWaypointsForNodePath({ x: startX, y: startY }, nodePath);
+        waypoints = getSvoPatrolWaypoints({ x: startX, y: startY }, baseObj.id);
       }
     }
+
+    const patrolStart = isPatrolling && waypoints && waypoints.length > 0 ? waypoints[0] : undefined;
 
     workers.push({
       id: `WRK-${String(workers.length + 1).padStart(3, '0')}`,
@@ -793,8 +792,8 @@ export function generateShiftWorkersWithCustomCounts(
       status: isPatrolling ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
       baseId: baseObj.id,
       isPatrolPreference: isPatrolling,
-      x: startX,
-      y: startY,
+      x: patrolStart?.x ?? startX,
+      y: patrolStart?.y ?? startY,
       vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN',
       pathWaypoints: waypoints,
       currentSegmentIndex: isPatrolling ? 0 : undefined

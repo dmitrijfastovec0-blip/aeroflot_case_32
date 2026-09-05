@@ -71,8 +71,9 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
       return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy)) < 0.01;
     };
 
-    const workers = spawnAirfieldShift({ b1Count: 22, b2Count: 12, catACount: 6, vehiclesCount: 20 });
-    workers.filter(worker => worker.status === 'FREE_PATROLLING').forEach(worker => {
+    const assertPatrolRoutesFollowRoads = (workers: Worker[]) => workers
+      .filter(worker => worker.status === 'FREE_PATROLLING')
+      .forEach(worker => {
       const route = getSvoPatrolWaypoints({ x: worker.x, y: worker.y }, worker.baseId);
       for (let i = 0; i < route.length - 1; i++) {
         const followsRoad = SVO_EDGES.some(edge => {
@@ -83,6 +84,11 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
         expect(followsRoad).toBe(true);
       }
     });
+
+    assertPatrolRoutesFollowRoads(spawnAirfieldShift({ b1Count: 22, b2Count: 12, catACount: 6, vehiclesCount: 20 }));
+    // Shift reset/configuration uses this legacy entry point and must produce
+    // the same graph-constrained patrol routes as the initial spawn path.
+    assertPatrolRoutesFollowRoads(generateShiftWorkersWithCustomCounts(22, 12, 6, 20));
   });
 
   it('2. Enforces 15-Minute SLA Limits & Adjusts Speed under Severe Weather', () => {
