@@ -485,6 +485,11 @@ export function getCustomPatrolWaypoints(
   const stands = elements.filter(e => e.kind === 'STAND');
   const baseElem = elements.find(e => e.id === worker.baseId) || { x: worker.x, y: worker.y };
 
+  // Patrols use only explicitly drawn roads. Other connection types can be
+  // valid for assigned tasks, but must not become routine patrol shortcuts.
+  const patrolConnections = connections.filter(c => c.kind === 'ROAD');
+  if (stands.length === 0 || patrolConnections.length === 0) return [];
+
   // Strict local base sector: only stands within 20% distance of the worker's home base
   const localSectorStands = stands
     .map(s => ({ stand: s, distFromBase: Math.hypot(s.x - baseElem.x, s.y - baseElem.y), distFromWorker: Math.hypot(s.x - worker.x, s.y - worker.y) }))
@@ -497,23 +502,24 @@ export function getCustomPatrolWaypoints(
     .sort((a, b) => a.dist - b.dist)
     .map(s => s.stand);
 
-  const target = localSectorStands.length > 0
-    ? localSectorStands[Math.floor(Math.random() * Math.min(3, localSectorStands.length))]
-    : (fallbackStands.length > 0 ? fallbackStands[0] : elements[0]);
+  const preferredStands = localSectorStands.length > 0 ? localSectorStands : fallbackStands;
+  const reachable = preferredStands
+    .map(target => ({
+      target,
+      route: computeCustomAirfieldRoute(
+        { x: worker.x, y: worker.y },
+        { x: target.x, y: target.y },
+        elements,
+        patrolConnections
+      )
+    }))
+    .filter(candidate => candidate.route.reachable && candidate.route.waypoints.length >= 2);
 
-  if (!target) return [];
+  if (reachable.length === 0) return [];
 
-  // Routine patrol strictly avoids tunnels (no cross-sector migrations)
-  const patrolConnections = connections.filter(c => c.kind !== 'TUNNEL');
-  if (patrolConnections.length === 0) return [];
-
-  const route = computeCustomAirfieldRoute(
-    { x: worker.x, y: worker.y },
-    { x: target.x, y: target.y },
-    elements,
-    patrolConnections
-  );
-  return route.reachable ? route.waypoints : [];
+  const patrolCandidates = reachable.slice(0, Math.min(3, reachable.length));
+  const selected = patrolCandidates[Math.floor(Math.random() * patrolCandidates.length)];
+  return selected.route.waypoints;
 }
 
 /**

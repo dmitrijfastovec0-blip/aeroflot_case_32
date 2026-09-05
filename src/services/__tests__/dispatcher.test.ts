@@ -383,4 +383,30 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
     expect(route.distanceMeters).toBe(Infinity);
     expect(route.waypoints).toHaveLength(0);
   });
+
+  it('keeps custom patrols on ROAD connections only', () => {
+    const elements: AirportElement[] = [
+      { id: 'PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 10, y: 10 },
+      { id: 'W-1', kind: 'WAYPOINT', label: 'Узел 1', x: 50, y: 10 },
+      { id: 'STAND-1', kind: 'STAND', label: '101', x: 90, y: 10 }
+    ];
+    const connections: AirportConnection[] = [
+      { id: 'ROAD-1', from: 'PTO-1', to: 'W-1', kind: 'ROAD' },
+      { id: 'SERVICE-1', from: 'W-1', to: 'STAND-1', kind: 'SERVICE' }
+    ];
+
+    const patrolWorker: Worker = {
+      id: 'patrol-1',
+      name: 'Патруль',
+      category: 'GENERAL_MECHANIC',
+      categoryCode: 'A',
+      status: 'FREE_PATROLLING',
+      baseId: 'PTO-1',
+      x: 10,
+      y: 10,
+      vehicle: 'WALK'
+    };
+
+    expect(getCustomPatrolWaypoints(patrolWorker, elements, connections)).toHaveLength(0);
+  });
 });
