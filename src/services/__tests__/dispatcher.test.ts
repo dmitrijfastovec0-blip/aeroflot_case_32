@@ -13,6 +13,7 @@ import {
 import {
   extractCustomStands,
   calculateModularWorkerEta,
+  findNearestFreeCustomWorker,
   getCustomPatrolWaypoints,
   getCustomReturnToBaseWaypoints
 } from '../airfieldGraph';
@@ -382,6 +383,60 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
 
     expect(route.distanceMeters).toBe(Infinity);
     expect(route.waypoints).toHaveLength(0);
+  });
+
+  it('does not dispatch a custom task when no road route exists', () => {
+    const elements: AirportElement[] = [
+      { id: 'PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 10, y: 10 },
+      { id: 'STAND-1', kind: 'STAND', label: '101', x: 90, y: 90 },
+      { id: 'W-1', kind: 'WAYPOINT', label: 'Узел 1', x: 20, y: 10 },
+      { id: 'W-2', kind: 'WAYPOINT', label: 'Узел 2', x: 80, y: 90 }
+    ];
+    const connections: AirportConnection[] = [
+      { id: 'ROAD-1', from: 'PTO-1', to: 'W-1', kind: 'ROAD' },
+      { id: 'ROAD-2', from: 'W-2', to: 'STAND-1', kind: 'ROAD' }
+    ];
+    const stand = extractCustomStands(elements)[0];
+    const worker: Worker = {
+      id: 'worker-1',
+      name: 'Инженер',
+      category: 'ENGINES_AIRFRAME',
+      categoryCode: 'B1',
+      status: 'FREE_STATIONARY',
+      baseId: 'PTO-1',
+      x: 10,
+      y: 10,
+      vehicle: 'WALK'
+    };
+    const task: OtoTask = {
+      id: 'unreachable-task',
+      standId: stand.id,
+      standLabel: stand.label,
+      aircraftType: stand.aircraftType,
+      categoryCode: 'B1',
+      categoryLabel: 'ОТО',
+      priority: 'AOG',
+      status: 'QUEUED',
+      crew: [],
+      arrivedCount: 0,
+      maxEtaMinutes: 15,
+      slaLimitMinutes: 15,
+      withinSla: true,
+      createdAt: '15:00',
+      elapsedWorkSec: 0,
+      targetWorkSec: 40
+    };
+
+    const plan = computeDispatchPlan({
+      tasks: [task],
+      workers: [worker],
+      standById: new Map([[stand.id, stand]]),
+      calculateEta: (w, s) => calculateModularWorkerEta(w, s, elements, connections),
+      findNaiveNearest: (cat, s, workers, busy) =>
+        findNearestFreeCustomWorker(cat, s, workers, busy || new Set(), elements, connections)
+    });
+
+    expect(plan.dispatchedTasks[task.id]).toBeUndefined();
   });
 
   it('keeps custom patrols on ROAD connections only', () => {

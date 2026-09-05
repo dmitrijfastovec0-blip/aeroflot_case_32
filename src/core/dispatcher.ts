@@ -36,6 +36,9 @@ const reqOf = (t: OtoTask): CrewRequirement[] =>
 const totalSlots = (reqs: CrewRequirement[]): number =>
   reqs.reduce((s, r) => s + r.count, 0);
 
+const hasUsableRoute = (member: TaskCrewMember): boolean =>
+  Number.isFinite(member.etaMinutes) && member.waypoints.length > 0;
+
 // Skill-ladder eligibility: trades are strict (B1≠B2≠A). A Cat-A slot may be
 // covered by any certified engineer at a fixed surcharge; higher certs never
 // substitute for a lower trade (B1 cannot do avionics).
@@ -209,6 +212,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     if (qTask.crew.length === 0) continue;
     const targetStand = standById.get(qTask.standId);
     if (!targetStand) continue;
+    if (!qTask.crew.every(hasUsableRoute)) continue;
 
     let allAvailable = true;
     for (const member of qTask.crew) {
@@ -354,7 +358,9 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
           if (!stand || !Number.isFinite(surcharge)) { row.push(INF); continue; }
           const member = fastCalculateEta(w, stand);
           etaCache[ti][ci] = member;
-          row.push(costOf(delay + member.etaMinutes + surcharge, w, q, delay));
+          row.push(hasUsableRoute(member)
+            ? costOf(delay + member.etaMinutes + surcharge, w, q, delay)
+            : INF);
         }
         costMatrix.push(row);
       }
@@ -366,7 +372,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
         const q = matrixTasks[ti].task;
         const cand = candidates[ci];
         const member = cand.member || etaCache[ti][ci];
-        if (!member) continue;
+        if (!member || !hasUsableRoute(member)) continue;
 
         const targetStand = standById.get(q.standId);
         if (!targetStand) continue;
@@ -429,6 +435,7 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
           const isWorkerNorth = w.y < 45;
           const crossComplex = isTargetNorth !== isWorkerNorth ? 500 : 0;
           const m = fastCalculateEta(w, stand);
+          if (!hasUsableRoute(m)) continue;
           const eff = m.etaMinutes + surcharge + crossComplex;
           if (!best || eff < best.eff) best = { w, member: m, eff };
         }

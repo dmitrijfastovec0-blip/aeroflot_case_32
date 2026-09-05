@@ -9,7 +9,6 @@ import {
   getWaypointsForNodePath,
   calculateWorkerToStandEta,
   findNearestFreeWorkerOfCategory,
-  getCategoryCandidates,
   findNaiveNearestWorkerOfCategory,
   pickPatrolTargetId,
   applyWeatherOverrides,
@@ -1187,38 +1186,44 @@ export function useSimulationEngine(
 
   const runControlTests = useCallback((): ControlTestResult[] => {
     const results: ControlTestResult[] = [];
-    const { busy, load } = computeLoadMap(tasksRef.current);
-    const testScenarios: { stand: string; cat: CategoryCode }[] = [
-      { stand: 'STAND_B12', cat: 'B1' },
-      { stand: 'STAND_D18', cat: 'B2' },
-      { stand: 'STAND_F45', cat: 'A' },
-      { stand: 'STAND_105', cat: 'B1' },
-      { stand: 'STAND_201', cat: 'B2' },
-      { stand: 'STAND_C25', cat: 'A' }
-    ];
+    const { busy } = computeLoadMap(tasksRef.current);
+    const calculateEtaForTest = isCustomMode
+      ? (w: Worker, s: Stand) => calculateModularWorkerEta(w, s, customElements, customConnections)
+      : (w: Worker, s: Stand) => calculateWorkerToStandEta(w, s);
+    const pickForTest = isCustomMode
+      ? (cat: CategoryCode, s: Stand, wrks: Worker[], busyIds?: Set<string>) =>
+          findNearestFreeCustomWorker(cat, s, wrks, busyIds || new Set(), customElements, customConnections)
+      : (cat: CategoryCode, s: Stand, wrks: Worker[], busyIds?: Set<string>) =>
+          findNearestFreeWorkerOfCategory(cat, s, wrks, busyIds || new Set());
+    const testScenarios = activeStands.slice(0, 6).map((stand, index) => ({
+      stand,
+      cat: (['B1', 'B2', 'A'] as CategoryCode[])[index % 3]
+    }));
     for (const sc of testScenarios) {
       const t0 = performance.now();
-      const stand = activeStands.find(s => s.id === sc.stand) || activeStands[0];
-      if (!stand) continue;
-      const picked = findNearestFreeWorkerOfCategory(sc.cat, stand, workersRef.current, new Set<string>());
-      const available = getCategoryCandidates(sc.cat, stand, workersRef.current, busy, load).filter(c => c.isAvailable);
+      const picked = pickForTest(sc.cat, sc.stand, workersRef.current, new Set<string>());
+      const available = workersRef.current
+        .filter(w => (sc.cat === 'A' || w.categoryCode === sc.cat) && !busy.has(w.id))
+        .filter(w => w.status === 'FREE_STATIONARY' || w.status === 'FREE_PATROLLING')
+        .map(w => calculateEtaForTest(w, sc.stand));
       const ms = Math.round((performance.now() - t0) * 100) / 100;
 
       if (!picked) {
-        results.push({ name: `Сценарий ${sc.stand} (Cat ${sc.cat})`, pass: false, details: 'Нет свободного сотрудника нужной квалификации', ms });
+        results.push({ name: `Сценарий ${sc.stand.label} (Cat ${sc.cat})`, pass: false, details: 'Нет свободного сотрудника нужной квалификации или маршрута', ms });
         continue;
       }
-      const minEta = available.length ? Math.min(...available.map(a => a.etaMinutes)) : Infinity;
+      const reachable = available.filter(candidate => Number.isFinite(candidate.etaMinutes));
+      const minEta = reachable.length ? Math.min(...reachable.map(a => a.etaMinutes)) : Infinity;
       const isMin = picked.etaMinutes <= minEta + 0.05;
       const within15 = picked.etaMinutes <= 15;
-      const naive = findNaiveNearestWorkerOfCategory(sc.cat, stand, workersRef.current, new Set<string>());
+      const naive = findNaiveNearestWorkerOfCategory(sc.cat, sc.stand, workersRef.current, new Set<string>());
       const detail = [
         `Выбран ${picked.workerName} (${picked.categoryCode}), ETA ${picked.etaMinutes} мин`,
         `min по кандидатам: ${minEta === Infinity ? '—' : minEta + ' мин'}`,
         `по прямой: ${naive ? naive.etaMinutes + ' мин' : '—'}`,
         `регламент 15 мин: ${within15 ? 'OK' : 'нет свободного ≤ 15 (дефицит)'}`
       ].join(' · ');
-      results.push({ name: `Сценарий ${sc.stand} (Cat ${sc.cat})`, pass: isMin, details: isMin ? detail : detail + ' — НАРУШЕНИЕ: назначен не ближайший!', ms });
+      results.push({ name: `Сценарий ${sc.stand.label} (Cat ${sc.cat})`, pass: isMin, details: isMin ? detail : detail + ' — НАРУШЕНИЕ: назначен не ближайший!', ms });
     }
     const totalMs = results.reduce((s, r) => s + r.ms, 0);
     results.push({
@@ -1238,7 +1243,7 @@ export function useSimulationEngine(
     for (let i = 0; i < massCount; i++) {
       const stand = standById.get(standIds[i % standIds.length]);
       if (!stand) continue;
-      const picked = findNearestFreeWorkerOfCategory(cats[i % 3], stand, workersRef.current, massBusy);
+       const picked = pickForTest(cats[i % 3], stand, workersRef.current, massBusy);
       if (picked) {
         massBusy.add(picked.workerId);
         massDispatched++;
@@ -1258,7 +1263,7 @@ export function useSimulationEngine(
     for (let i = 0; i < sweepCount; i++) {
       const w = workersRef.current[i % workersRef.current.length];
       const stand = standById.get(standIds[i % standIds.length]);
-      if (w && stand) calculateWorkerToStandEta(w, stand);
+       if (w && stand) calculateEtaForTest(w, stand);
     }
     const sweepMs = Math.round((performance.now() - tSweep0) * 100) / 100;
     results.push({
@@ -1269,7 +1274,7 @@ export function useSimulationEngine(
     });
 
     return results;
-  }, []);
+  }, [activeStands, isCustomMode, customElements, customConnections, standById]);
 
   const updateWorker = useCallback((workerId: string, updates: Partial<Worker>) => {
     setWorkers(prev => {
@@ -1290,6 +1295,10 @@ export function useSimulationEngine(
     const member = isCustomMode
       ? calculateModularWorkerEta(worker, stand, customElements, customConnections)
       : calculateWorkerToStandEta(worker, stand);
+    if (!Number.isFinite(member.etaMinutes) || member.waypoints.length === 0) {
+      showNotification(`⚠️ Для задачи ${task.id} нет доступного маршрута до ${task.standLabel}.`);
+      return;
+    }
     const nextWorker = {
       ...worker,
       status: 'IN_TRANSIT' as const,
@@ -1314,7 +1323,7 @@ export function useSimulationEngine(
     setWorkers([...workersRef.current]);
     setTasks([...tasksRef.current]);
     showNotification(`Ручное назначение: ${worker.name} направлен на ${task.standLabel}.`);
-  }, [showNotification]);
+  }, [isCustomMode, customElements, customConnections, standById, showNotification]);
 
   return {
     workers,

@@ -11,125 +11,128 @@ interface AnalyticsModalProps {
   theme: ThemeMode;
 }
 
-export type DispatchAlgorithm =
-  | 'HUNGARIAN_MINCOST'
-  | 'ANT_COLONY_VRP'
-  | 'SLACK_TIME_FIRST'
-  | 'GREEDY_NEAREST'
-  | 'KMEANS_VORONOI';
+export type SolutionAnalog =
+  | 'MANUAL_DISPATCH'
+  | 'NEAREST_ENGINEER'
+  | 'ERP_EAM'
+  | 'AIRPORT_OPERATIONS'
+  | 'VOZDUHAN';
 
-interface AlgorithmInfo {
-  id: DispatchAlgorithm;
+interface AnalogInfo {
+  id: SolutionAnalog;
   title: string;
   shortTitle: string;
   icon: React.ReactNode;
   tagline: string;
-  avgEtaMin: number;
-  slaPct: number;
-  savedMinPerCall: number;
-  efficiencyIndex: string;
+  route: string;
+  qualification: string;
+  workload: string;
+  sla: string;
   description: string;
   pros: string[];
   cons: string[];
 }
 
-const ALGORITHMS: AlgorithmInfo[] = [
+const ANALOGS: AnalogInfo[] = [
   {
-    id: 'HUNGARIAN_MINCOST',
-    title: 'ИИ ОТО — Венгерское Сопоставление (Kuhn-Munkres + Dijkstra)',
-    shortTitle: 'Венгерский (Min-Cost)',
+    id: 'MANUAL_DISPATCH',
+    title: 'Ручная диспетчеризация',
+    shortTitle: 'Ручной процесс',
     icon: <Cpu className="w-5 h-5 text-emerald-400" />,
-    tagline: 'Глобальная оптимизация двудольного графа назначений по дорожной сети SVO',
-    avgEtaMin: 2.1,
-    slaPct: 99.8,
-    savedMinPerCall: 5.3,
-    efficiencyIndex: '100% (Глобальный оптимум)',
-    description: 'Математически строгий глобальный алгоритм (Kuhn-Munkres bipartite matching), интегрированный с графом автодорог Шереметьево. В каждый квант времени оптимизирует суммарную матрицу затрат (расстояние, профиль спецавтотранспорта, квалификацию B1/B2/A и приоритет AOG) по всем доступным инженерам и вызовам одновременно.',
+    tagline: 'Звонок или сообщение диспетчеру и ручное назначение сотрудника',
+    route: 'Обычно не рассчитывается автоматически',
+    qualification: 'Проверяется человеком',
+    workload: 'Оценивается вручную',
+    sla: 'Зависит от оператора',
+    description: 'Базовый процесс для сравнения: диспетчер получает вызов, сверяет расположение и занятость сотрудников, затем вручную назначает исполнителя.',
     pros: [
-      'Устраняет перекрестные и неэффективные проезды между северным и южным комплексами SVO',
-      'Обеспечивает сборку квалифицированных бригад под сложные главы ATA с минимальной задержкой',
-      'Полная защита от просрочек SLA при массовом наплыве бортов (час пик)'
+      'Не требует сложной ИТ-инфраструктуры',
+      'Гибко учитывает нестандартные обстоятельства'
     ],
     cons: [
-      'Требует актуальной топологии дорожной сети перрона'
+      'Высокая зависимость от человеческого фактора',
+      'Плохо масштабируется при массовых вызовах'
     ]
   },
   {
-    id: 'ANT_COLONY_VRP',
-    title: 'Муравейный Алгоритм Маршрутизации (ACO VRP-TW)',
-    shortTitle: 'Муравейный (ACO VRP)',
+    id: 'NEAREST_ENGINEER',
+    title: 'Ближайший свободный инженер',
+    shortTitle: 'Ближайший',
     icon: <GitMerge className="w-5 h-5 text-sky-400" />,
-    tagline: 'Эвристическая оптимизация цепочек последовательного обслуживания стоянок',
-    avgEtaMin: 3.1,
-    slaPct: 96.4,
-    savedMinPerCall: 4.1,
-    efficiencyIndex: '88% (Высокая)',
-    description: 'Метаэвристический алгоритм оптимизации маршрутов спецавтотранспорта с временными окнами (Vehicle Routing Problem with Time Windows). Виртуальные агенты («муравьи») прокладывают наилучшие цепочки проезда спецбригад между стоянками, оставляя феромонный след на эффективных связках.',
+    tagline: 'Простой автоматический baseline без глобального планирования',
+    route: 'Прямая или локальная оценка расстояния',
+    qualification: 'Фильтр по категории',
+    workload: 'Обычно учитывается только занятость',
+    sla: 'Проверяется после выбора',
+    description: 'Типовой локальный аналог: система выбирает ближайшего подходящего сотрудника для одного вызова, не оптимизируя одновременно очередь и ресурсы.',
     pros: [
-      'Идеален для построения оптимальных кольцевых маршрутов обслуживания нескольких бортов подряд',
-      'Эффективно планирует дозаправку и возврат на базы ПТО'
+      'Простая реализация',
+      'Быстро работает на одиночном вызове'
     ],
     cons: [
-      'Вероятностная природа: требует итерационных вычислений для нахождения оптимальной траектории'
+      'Может занять редкого специалиста для менее срочного вызова',
+      'Не видит конфликтов в очереди'
     ]
   },
   {
-    id: 'SLACK_TIME_FIRST',
-    title: 'Алгоритм Резерва Времени (Slack-Time First / Deadline First)',
-    shortTitle: 'Резерв Времени (Slack-Time)',
+    id: 'ERP_EAM',
+    title: 'ERP/EAM-система ТОиР',
+    shortTitle: 'ERP / EAM',
     icon: <Clock3 className="w-5 h-5 text-purple-400" />,
-    tagline: 'Приоритет назначения по критическому запасу времени до вылета бортовой линии',
-    avgEtaMin: 3.8,
-    slaPct: 93.2,
-    savedMinPerCall: 3.4,
-    efficiencyIndex: '79% (Оптимально по расписанию)',
-    description: 'Динамический алгоритм приоритетных очередей, рассчитывающий свободный резерв времени (Slack Time = Время вылета - Время ремонта - ETA). Вызовы с наименьшим резервом обслуживаются в первую очередь независимо от дистанции.',
+    tagline: 'Управление заявками, ресурсами, регламентами и историей ТО',
+    route: 'Зависит от интеграции с картой аэропорта',
+    qualification: 'Обычно поддерживается через справочники персонала',
+    workload: 'Поддерживается через статусы и наряды',
+    sla: 'Настраивается правилами предприятия',
+    description: 'Класс корпоративных систем управления техническим обслуживанием. Сильная сторона — единый контур заявок и истории работ, но оперативная маршрутизация по дорожному графу требует отдельной интеграции.',
     pros: [
-      'Гарантирует минимальные задержки вылетов регулярных рейсов Аэрофлота',
-      'Предотвращает срывы слотов судов с коротким оборотом (Turnaround)'
+      'Единый учёт заявок и истории обслуживания',
+      'Поддержка регламентных процессов и отчётности'
     ],
     cons: [
-      'Может вызывать задержки обслуживания рутинных вызовов с большим запасом времени'
+      'Не является специализированной картой оперативного перрона',
+      'Требует внедрения и интеграции'
     ]
   },
   {
-    id: 'GREEDY_NEAREST',
-    title: 'Жадный Перронный Алгоритм (Nearest Available Engineer)',
-    shortTitle: 'Жадный (Ближайший инженер)',
+    id: 'AIRPORT_OPERATIONS',
+    title: 'Airport Operations Management',
+    shortTitle: 'Airport Ops',
     icon: <Compass className="w-5 h-5 text-amber-400" />,
-    tagline: 'Локальное мгновенное назначение ближайшего свободного инженера',
-    avgEtaMin: 4.8,
-    slaPct: 87.5,
-    savedMinPerCall: 2.3,
-    efficiencyIndex: '64% (Локальная)',
-    description: 'Импульсный алгоритм локальной оптимизации: при появлении нового вызова немедленно выбирается ближайший свободен инженер требуемой категории без учета вероятности будущих вызовов и распределения бригад на других стоянках.',
+    tagline: 'Оперативное управление ресурсами и событиями аэропорта',
+    route: 'Может использовать GIS/карту объектов',
+    qualification: 'Зависит от конкретного продукта',
+    workload: 'Обычно учитывается в операционном контуре',
+    sla: 'Контролируется через операционные KPI',
+    description: 'Широкий класс систем управления аэропортом: перрон, объекты, транспорт и события. Предлагаемый прототип сфокусирован на узкой задаче ОТО и может быть подключён к такому контуру.',
     pros: [
-      'Мгновенная реакция на одиночные изоляционные вызовы',
-      'Простота реализации и отсутствие задержек на вычисления'
+      'Широкий контекст операционной деятельности',
+      'Возможность интеграции с картой и телеметрией'
     ],
     cons: [
-      'Создает дефицит квалифицированных специалистов B2 при неожиданных вызовах AOG',
-      'Приводит к суб-оптимальному назначению при одновременных вызовах в разных терминалах'
+      'Часто требует сложной интеграции',
+      'Может быть избыточным для узкой задачи ОТО'
     ]
   },
   {
-    id: 'KMEANS_VORONOI',
-    title: 'Кластерный Алгоритм Зонирования (k-Means Partitioning + Voronoi)',
-    shortTitle: 'Кластерный (k-Means ПТО)',
+    id: 'VOZDUHAN',
+    title: 'Воздухан — предлагаемый прототип',
+    shortTitle: 'Воздухан',
     icon: <Layers className="w-5 h-5 text-rose-400" />,
-    tagline: 'Закрепление бригад за жесткими секторами ПТО-1 (Север) и ПТО-2 (Юг)',
-    avgEtaMin: 6.2,
-    slaPct: 81.0,
-    savedMinPerCall: 1.1,
-    efficiencyIndex: '52% (Зонная)',
-    description: 'Алгоритм пространственной кластеризации территории Шереметьево на зоны ответственности (ПТО-1 север B/C, ПТО-2 юг D/E/F). Инженеры дежурят строго в своих секторах с минимальным межзональным перераспределением.',
+    tagline: 'Квалификация + загрузка + ETA + дорожный граф в одном прототипе',
+    route: 'Dijkstra по графу дорог SVO/CUSTOM',
+    qualification: 'B1, B2, A и составы бригад ATA',
+    workload: 'Статусы, занятость, резервы и перераспределение',
+    sla: 'Проверяется до назначения, норматив 15 минут',
+    description: 'Предлагаемая система автоматизирует диспетчерский цикл: принимает вызов, формирует требования по дефекту, выбирает допустимый состав, рассчитывает путь и визуализирует движение.',
     pros: [
-      'Максимально понятная структура зоны ответственности инженеров',
-      'Предсказуемый пробег спецавтотранспорта в пределах одного сектора'
+      'Сочетает глобальное назначение и граф маршрутов',
+      'Поддерживает интерактивный пользовательский полигон',
+      'Позволяет воспроизводимо проверять сценарии'
     ],
     cons: [
-      'При перегрузке одного терминала специалисты из соседних секторов стоят без дела',
-      'Повышенный риск штрафных санкий SLA из-за задержек межзонального перехвата'
+      'Прототип использует симулированные координаты',
+      'Для промышленной эксплуатации нужны интеграции с телеметрией и ТОиР'
     ]
   }
 ];
@@ -140,11 +143,13 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   roiMetrics,
   theme
 }) => {
-  const [selectedAlgoId, setSelectedAlgoId] = useState<DispatchAlgorithm>('HUNGARIAN_MINCOST');
-  const selectedAlgo = ALGORITHMS.find(a => a.id === selectedAlgoId) || ALGORITHMS[0];
+  const [selectedAnalogId, setSelectedAnalogId] = useState<SolutionAnalog>('VOZDUHAN');
+  const selectedAnalog = ANALOGS.find(a => a.id === selectedAnalogId) || ANALOGS[0];
 
-  const completedCount = Math.max(1, roiMetrics.completedCount || 5);
-  const savedMinTotal = Math.round(selectedAlgo.savedMinPerCall * completedCount * 10) / 10;
+  const completedCount = roiMetrics.completedCount;
+  const savedMinTotal = completedCount > 0
+    ? Math.max(0, Math.round((roiMetrics.intuitiveEtaSumMinutes - roiMetrics.systemEtaSumMinutes) * 10) / 10)
+    : 0;
   const preventedLossRub = Math.round(savedMinTotal * AIRCRAFT_DOWNTIME_COST_PER_MIN);
 
   const fmtRub = (n: number) => n.toLocaleString('ru-RU');
@@ -169,7 +174,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 Сравнительный Анализ Алгоритмов Диспетчеризации
               </h2>
               <p className="text-xs text-gray-500 font-medium">
-                Исследование 5 алгоритмов оптимизации наземного обслуживания SVO ОТО
+                 Сравнение аналогов и фактических результатов прототипа
               </p>
             </div>
           </div>
@@ -181,18 +186,18 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           </button>
         </div>
 
-        {/* ALGORITHM SELECTOR TABS (5 REAL ALGORITHMS) */}
+        {/* SOLUTION ANALOG SELECTOR */}
         <div className="space-y-2">
           <label className="text-xs font-bold uppercase tracking-wider text-gray-400">
-            Выберите алгоритм для анализа и сравнения показателей:
+            Выберите класс решения для сравнения:
           </label>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-            {ALGORITHMS.map(algo => {
-              const isSelected = algo.id === selectedAlgoId;
+            {ANALOGS.map(analog => {
+              const isSelected = analog.id === selectedAnalogId;
               return (
                 <button
-                  key={algo.id}
-                  onClick={() => setSelectedAlgoId(algo.id)}
+                  key={analog.id}
+                  onClick={() => setSelectedAnalogId(analog.id)}
                   className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between space-y-2 ${
                     isSelected
                       ? 'bg-sky-500/15 border-sky-500 ring-2 ring-sky-500/40 shadow-lg text-white'
@@ -200,12 +205,11 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                   }`}
                 >
                   <div className="flex items-center space-x-2 font-bold text-xs text-slate-900 dark:text-white truncate">
-                    {algo.icon}
-                    <span className="truncate">{algo.shortTitle}</span>
+                    {analog.icon}
+                    <span className="truncate">{analog.shortTitle}</span>
                   </div>
-                  <div className="flex justify-between items-center text-[11px] font-bold pt-1 border-t border-slate-200 dark:border-[#1a2433]">
-                    <span className="text-sky-400">{algo.avgEtaMin}м</span>
-                    <span className="text-emerald-400">{algo.slaPct}%</span>
+                  <div className="text-[10px] font-bold pt-1 border-t border-slate-200 dark:border-[#1a2433] text-sky-400">
+                    Сравнительный профиль
                   </div>
                 </button>
               );
@@ -217,23 +221,23 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
         <div className="p-4 rounded-2xl border bg-slate-100/70 dark:bg-[#101724] border-slate-300 dark:border-[#1e2a3a] space-y-3">
           <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-[#1e2a3a]">
             <div className="flex items-center space-x-2 font-extrabold text-base text-slate-900 dark:text-white">
-              {selectedAlgo.icon}
-              <span>{selectedAlgo.title}</span>
+              {selectedAnalog.icon}
+              <span>{selectedAnalog.title}</span>
             </div>
             <span className="px-2.5 py-1 rounded-lg text-xs font-extrabold bg-sky-500/20 text-sky-400 border border-sky-500/30">
-              Эффективность: {selectedAlgo.efficiencyIndex}
+              Сопоставление возможностей
             </span>
           </div>
 
           <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed font-medium">
-            {selectedAlgo.description}
+            {selectedAnalog.description}
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
             <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-1">
               <span className="font-bold text-xs text-emerald-400 uppercase"> Преимущества:</span>
               <ul className="text-xs text-slate-700 dark:text-gray-300 space-y-1 list-disc pl-4 font-medium">
-                {selectedAlgo.pros.map((pro, i) => (
+                {selectedAnalog.pros.map((pro, i) => (
                   <li key={i}>{pro}</li>
                 ))}
               </ul>
@@ -242,7 +246,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-1">
               <span className="font-bold text-xs text-amber-400 uppercase"> Особенности и ограничения:</span>
               <ul className="text-xs text-slate-700 dark:text-gray-300 space-y-1 list-disc pl-4 font-medium">
-                {selectedAlgo.cons.map((con, i) => (
+                {selectedAnalog.cons.map((con, i) => (
                   <li key={i}>{con}</li>
                 ))}
               </ul>
@@ -267,72 +271,57 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             </div>
           </div>
 
-          {/* Card 2: Average ETA */}
+          {/* Card 2: Measured Average ETA */}
           <div className="p-4 rounded-2xl border bg-sky-500/10 border-sky-500/30 flex flex-col justify-between">
             <div className="flex justify-between items-start">
               <span className="text-xs font-bold text-gray-400 uppercase">Среднее время прибытия</span>
               <Clock className="w-5 h-5 text-sky-400" />
             </div>
             <div className="mt-2">
-              <div className="text-2xl font-extrabold text-sky-400">{selectedAlgo.avgEtaMin} мин</div>
+              <div className="text-2xl font-extrabold text-sky-400">
+                {completedCount > 0 ? (roiMetrics.systemEtaSumMinutes / completedCount).toFixed(1) : '—'} мин
+              </div>
               <div className="text-xs text-gray-400 mt-1 font-medium">
-                Время в пути по дорогам Шереметьево
+                Фактическое среднее по закрытым вызовам
               </div>
             </div>
           </div>
 
-          {/* Card 3: SLA Compliance */}
+          {/* Card 3: Measured Sample */}
           <div className="p-4 rounded-2xl border bg-amber-500/10 border-amber-500/30 flex flex-col justify-between">
             <div className="flex justify-between items-start">
-              <span className="text-xs font-bold text-gray-400 uppercase">Соблюдение SLA (15 мин)</span>
+              <span className="text-xs font-bold text-gray-400 uppercase">Измеренная выборка</span>
               <ShieldCheck className="w-5 h-5 text-amber-400" />
             </div>
             <div className="mt-2">
-              <div className="text-2xl font-extrabold text-amber-400">{selectedAlgo.slaPct}%</div>
+              <div className="text-2xl font-extrabold text-amber-400">{completedCount}</div>
               <div className="text-xs text-gray-400 mt-1 font-medium">
-                Вызовов закрыты в рамках норматива
+                закрытых вызовов, использованных в расчёте
               </div>
             </div>
           </div>
         </div>
 
-        {/* Comparative Bar Chart Section */}
+        {/* Transparent Analog Comparison */}
         <div className="p-4 rounded-2xl border bg-slate-100/50 dark:bg-[#101724]/50 border-slate-300 dark:border-[#1e2a3a] space-y-3">
           <div className="flex justify-between items-center text-xs font-bold uppercase text-gray-400">
-            <span>Сравнительный график времени реакции 5 алгоритмов (мин)</span>
-            <span className="text-sky-400">Сравнение эффективности</span>
+            <span>Матрица возможностей аналогов</span>
+            <span className="text-sky-400">Без неподтверждённых KPI</span>
           </div>
 
-          <div className="space-y-2">
-            {ALGORITHMS.map(algo => {
-              const isCurrent = algo.id === selectedAlgoId;
-              const barPct = Math.min(100, (algo.avgEtaMin / 8) * 100);
-
-              let barColor = 'from-emerald-500 to-teal-400';
-              if (algo.id === 'ANT_COLONY_VRP') barColor = 'from-sky-500 to-blue-500';
-              if (algo.id === 'SLACK_TIME_FIRST') barColor = 'from-purple-500 to-indigo-500';
-              if (algo.id === 'GREEDY_NEAREST') barColor = 'from-amber-500 to-orange-500';
-              if (algo.id === 'KMEANS_VORONOI') barColor = 'from-rose-500 to-red-500';
-
-              return (
-                <div key={algo.id} className="space-y-1">
-                  <div className="flex justify-between text-xs font-bold">
-                    <span className={isCurrent ? 'text-white font-extrabold' : 'text-gray-400'}>
-                      {algo.shortTitle}
-                    </span>
-                    <span className={isCurrent ? 'text-emerald-400 font-extrabold' : 'text-gray-400'}>
-                      {algo.avgEtaMin} мин (SLA {algo.slaPct}%)
-                    </span>
-                  </div>
-                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-3.5 rounded-lg overflow-hidden p-0.5">
-                    <div
-                      className={`bg-gradient-to-r ${barColor} h-full rounded-md transition-all duration-500`}
-                      style={{ width: `${barPct}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[11px]">
+            <div className="font-bold text-gray-500">Решение</div>
+            <div className="font-bold text-gray-500">Маршрут</div>
+            <div className="font-bold text-gray-500">Квалификация</div>
+            <div className="font-bold text-gray-500">Загрузка / SLA</div>
+            {ANALOGS.map(analog => (
+              <React.Fragment key={analog.id}>
+                <div className={analog.id === selectedAnalogId ? 'font-bold text-emerald-400' : 'text-gray-300'}>{analog.shortTitle}</div>
+                <div className="text-gray-400">{analog.route}</div>
+                <div className="text-gray-400">{analog.qualification}</div>
+                <div className="text-gray-400">{analog.workload}; {analog.sla}</div>
+              </React.Fragment>
+            ))}
           </div>
         </div>
 
