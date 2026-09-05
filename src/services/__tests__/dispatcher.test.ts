@@ -47,6 +47,16 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
     expect(['B1', 'B2', 'A']).toContain(w3?.categoryCode);
   });
 
+  it('keeps stationary workers stationary instead of turning the whole shift into patrols', () => {
+    const workers = generateShiftWorkersWithCustomCounts(10, 10, 5, 10);
+
+    expect(workers.some(worker => worker.status === 'FREE_STATIONARY')).toBe(true);
+    expect(workers.some(worker => worker.status === 'FREE_PATROLLING')).toBe(true);
+    workers.forEach(worker => {
+      expect(worker.isPatrolPreference).toBe(worker.status === 'FREE_PATROLLING');
+    });
+  });
+
   it('2. Enforces 15-Minute SLA Limits & Adjusts Speed under Severe Weather', () => {
     resetWeatherOverrides();
     const workers = generateShiftWorkersWithCustomCounts(5, 5, 5, 5);
@@ -315,5 +325,28 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
     expect(eta.waypoints.length).toBeGreaterThanOrEqual(3);
     const hasCorner = eta.waypoints.some(pt => Math.hypot(pt.x - 20, pt.y - 60) < 1.0);
     expect(hasCorner).toBe(true);
+  });
+
+  it('does not invent a direct road between disconnected custom road segments', () => {
+    const elements: AirportElement[] = [
+      { id: 'PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 10, y: 10 },
+      { id: 'STAND-1', kind: 'STAND', label: '101', x: 90, y: 90 },
+      { id: 'W-1', kind: 'WAYPOINT', label: 'Узел 1', x: 20, y: 10 },
+      { id: 'W-2', kind: 'WAYPOINT', label: 'Узел 2', x: 80, y: 90 }
+    ];
+    const connections: AirportConnection[] = [
+      { id: 'ROAD-1', from: 'PTO-1', to: 'W-1', kind: 'ROAD' },
+      { id: 'ROAD-2', from: 'W-2', to: 'STAND-1', kind: 'ROAD' }
+    ];
+
+    const route = calculateModularWorkerEta(
+      { ...generateShiftWorkersWithCustomCounts(1, 0, 0, 0)[0], x: 10, y: 10 },
+      { id: 'STAND-1', label: '101', complex: 'SOUTH', x: 90, y: 90, aircraftType: 'A320' },
+      elements,
+      connections
+    );
+
+    expect(route.distanceMeters).toBe(Infinity);
+    expect(route.waypoints).toHaveLength(1);
   });
 });

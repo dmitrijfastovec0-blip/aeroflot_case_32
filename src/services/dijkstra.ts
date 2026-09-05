@@ -232,12 +232,18 @@ for (let s = 0; s < N; s++) {
   ALL_PAIRS_NEXT[s] = next;
 }
 
-// 1. Find Closest Node by Percentage Coordinates across all nodes, facilities and autoparks
+// 1. Find the closest endpoint of a real road edge. Choosing arbitrary nearby
+// facilities here can make a worker leave its current edge diagonally.
 export function getClosestNodeId(pctX: number, pctY: number): string {
   let minDistanceSq = Infinity;
   let closestId = GRAPH_VERTEX_IDS[0] || SVO_NODES[0].id;
+  const roadNodeIds = new Set<string>();
+  SVO_EDGES.forEach(edge => {
+    roadNodeIds.add(edge.from);
+    roadNodeIds.add(edge.to);
+  });
 
-  for (const id of GRAPH_VERTEX_IDS) {
+  for (const id of roadNodeIds) {
     const coord = NODE_COORD[id];
     if (coord) {
       const dx = coord.x - pctX;
@@ -731,14 +737,14 @@ export function generateShiftWorkersWithCustomCounts(
       name: TECHNICIAN_NAMES[nameIdx % TECHNICIAN_NAMES.length] + (nameIdx >= TECHNICIAN_NAMES.length ? ` ${Math.floor(nameIdx / TECHNICIAN_NAMES.length) + 1}` : ''),
       category: cat,
       categoryCode: code,
-      status: 'FREE_PATROLLING',
+      status: isPatrolling ? 'FREE_PATROLLING' : 'FREE_STATIONARY',
       baseId: baseObj.id,
-      isPatrolPreference: true,
+      isPatrolPreference: isPatrolling,
       x: startX,
       y: startY,
       vehicle: hasVehicle ? 'APRON_VEHICLE' : 'PEDESTRIAN',
       pathWaypoints: waypoints,
-      currentSegmentIndex: 0
+      currentSegmentIndex: isPatrolling ? 0 : undefined
     });
     nameIdx++;
   }

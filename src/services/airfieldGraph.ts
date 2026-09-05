@@ -148,16 +148,6 @@ function buildCompleteAirfieldGraph(elements: AirportElement[], connections: Air
     }
   });
 
-  // If no road connections exist, create virtual direct connections between elements
-  if (rawSegments.length === 0 && elements.length > 1) {
-    for (let i = 0; i < elements.length - 1; i++) {
-      rawSegments.push({
-        p1: { x: elements[i].x, y: elements[i].y, id: elements[i].id },
-        p2: { x: elements[i + 1].x, y: elements[i + 1].y, id: elements[i + 1].id }
-      });
-    }
-  }
-
   // 2. Split crossing segments at intersections
   const segments: { p1: Point2D; p2: Point2D }[] = [...rawSegments];
   let changed = true;
@@ -226,27 +216,6 @@ function buildCompleteAirfieldGraph(elements: AirportElement[], connections: Air
     addEdge(u, v);
   });
 
-  // Ensure all stands/facilities are connected to nearest road vertex
-  elements.forEach(el => {
-    const elIdx = elemVertexMap.get(el.id);
-    if (elIdx !== undefined) {
-      let closestIdx = -1;
-      let minD = Infinity;
-      vertices.forEach((v, idx) => {
-        if (idx !== elIdx) {
-          const d = distBetweenMeters(vertices[elIdx], v);
-          if (d < minD) {
-            minD = d;
-            closestIdx = idx;
-          }
-        }
-      });
-      if (closestIdx !== -1 && minD < 2500) {
-        addEdge(elIdx, closestIdx);
-      }
-    }
-  });
-
   // Build adjacency list
   const adj: { to: number; dist: number }[][] = Array.from({ length: vertices.length }, () => []);
   edges.forEach(e => {
@@ -254,53 +223,71 @@ function buildCompleteAirfieldGraph(elements: AirportElement[], connections: Air
     adj[e.v].push({ to: e.u, dist: e.dist });
   });
 
-  // Ensure single connected component: link any disjoint components
-  const visitedComp = new Set<number>();
-  const components: number[][] = [];
-  for (let i = 0; i < vertices.length; i++) {
-    if (!visitedComp.has(i) && adj[i].length > 0) {
-      const comp: number[] = [];
-      const queue = [i];
-      visitedComp.add(i);
-      while (queue.length > 0) {
-        const curr = queue.shift()!;
-        comp.push(curr);
-        adj[curr].forEach(e => {
-          if (!visitedComp.has(e.to)) {
-            visitedComp.add(e.to);
-            queue.push(e.to);
-          }
-        });
-      }
-      components.push(comp);
-    }
-  }
-
-  // If multiple components, connect each to the closest node in another component
-  if (components.length > 1) {
-    for (let c = 1; c < components.length; c++) {
-      const compA = components[0];
-      const compB = components[c];
-      let bestA = compA[0];
-      let bestB = compB[0];
-      let minD = Infinity;
-      compA.forEach(a => {
-        compB.forEach(b => {
-          const d = distBetweenMeters(vertices[a], vertices[b]);
-          if (d < minD) {
-            minD = d;
-            bestA = a;
-            bestB = b;
-          }
-        });
-      });
-      addEdge(bestA, bestB);
-      adj[bestA].push({ to: bestB, dist: minD });
-      adj[bestB].push({ to: bestA, dist: minD });
-    }
-  }
-
   return { vertices, edges, adj };
+}
+
+type Graph = ReturnType<typeof buildCompleteAirfieldGraph>;
+
+// Attach a moving endpoint to an existing road segment without inventing a
+// shortcut. The returned point is always on an explicitly drawn segment.
+function attachPointToGraph(point: Point2D, graph: Graph): number {
+  let nearestVertex = -1;
+  let nearestVertexDistance = Infinity;
+  graph.vertices.forEach((vertex, index) => {
+    const distance = distBetweenMeters(point, vertex);
+    if (distance < nearestVertexDistance) {
+      nearestVertexDistance = distance;
+      nearestVertex = index;
+    }
+  });
+
+  if (nearestVertex >= 0 && nearestVertexDistance <= 0.5) return nearestVertex;
+
+  let bestProjection: { edge: { u: number; v: number }; point: Point2D; distance: number } | null = null;
+  for (const edge of graph.edges) {
+    const projection = projectPointOnSegment(point, graph.vertices[edge.u], graph.vertices[edge.v]);
+    if (!bestProjection || projection.distMeters < bestProjection.distance) {
+      bestProjection = { edge, point: projection.point, distance: projection.distMeters };
+    }
+  }
+
+  if (!bestProjection) return -1;
+
+  const pointIndex = graph.vertices.length;
+  graph.vertices.push(bestProjection.point);
+  graph.adj.push([]);
+  const addAttachedEdge = (to: number) => {
+    const distance = distBetweenMeters(bestProjection!.point, graph.vertices[to]);
+    graph.adj[pointIndex].push({ to, dist: distance });
+    graph.adj[to].push({ to: pointIndex, dist: distance });
+  };
+  addAttachedEdge(bestProjection.edge.u);
+  addAttachedEdge(bestProjection.edge.v);
+  return pointIndex;
+}
+
+function connectPointsAlongOriginalEdges(graph: Graph): void {
+  for (const edge of graph.edges) {
+    const a = graph.vertices[edge.u];
+    const b = graph.vertices[edge.v];
+    const pointsOnEdge = graph.vertices
+      .map((point, index) => ({ index, projection: projectPointOnSegment(point, a, b) }))
+      .filter(item => item.projection.distMeters <= 0.5)
+      .sort((left, right) => left.projection.t - right.projection.t);
+
+    for (let i = 0; i < pointsOnEdge.length - 1; i++) {
+      const from = pointsOnEdge[i].index;
+      const to = pointsOnEdge[i + 1].index;
+      if (from === to) continue;
+      const distance = distBetweenMeters(graph.vertices[from], graph.vertices[to]);
+      if (!graph.adj[from].some(item => item.to === to)) {
+        graph.adj[from].push({ to, dist: distance });
+      }
+      if (!graph.adj[to].some(item => item.to === from)) {
+        graph.adj[to].push({ to: from, dist: distance });
+      }
+    }
+  }
 }
 
 /**
@@ -319,34 +306,19 @@ export function computeCustomAirfieldRoute(
     return { points: pts, waypoints: pts, distanceMeters: Math.max(10, directDist) };
   }
 
-  const { vertices, adj } = buildCompleteAirfieldGraph(elements, connections);
+  const graph = buildCompleteAirfieldGraph(elements, connections);
+  const { vertices, adj } = graph;
 
-  if (vertices.length < 2) {
-    const pts = [start, target];
-    return { points: pts, waypoints: pts, distanceMeters: Math.max(10, directDist) };
+  if (graph.edges.length === 0) {
+    return { points: [start], waypoints: [start], distanceMeters: Infinity };
   }
 
-  // Find closest graph node to start
-  let startNode = 0;
-  let minStartD = Infinity;
-  for (let i = 0; i < vertices.length; i++) {
-    const d = distBetweenMeters(start, vertices[i]);
-    if (d < minStartD) {
-      minStartD = d;
-      startNode = i;
-    }
+  const startNode = attachPointToGraph(start, graph);
+  const targetNode = attachPointToGraph(target, graph);
+  if (startNode < 0 || targetNode < 0) {
+    return { points: [start], waypoints: [start], distanceMeters: Infinity };
   }
-
-  // Find closest graph node to target
-  let targetNode = 0;
-  let minTargetD = Infinity;
-  for (let i = 0; i < vertices.length; i++) {
-    const d = distBetweenMeters(target, vertices[i]);
-    if (d < minTargetD) {
-      minTargetD = d;
-      targetNode = i;
-    }
-  }
+  connectPointsAlongOriginalEdges(graph);
 
   // Dijkstra Shortest Path Search
   const dist = new Array(vertices.length).fill(Infinity);
@@ -390,13 +362,13 @@ export function computeCustomAirfieldRoute(
     }
   }
 
-  // Assemble full road-adhering waypoints
+  if (graphPath.length === 0) {
+    return { points: [start], waypoints: [start], distanceMeters: Infinity };
+  }
+
+  // The endpoints are projected onto the road graph, so every segment after
+  // the initial short approach follows a user-drawn connection.
   const fullPath: { x: number; y: number }[] = [];
-
-  // Start point
-  fullPath.push({ x: start.x, y: start.y });
-
-  // Add all intermediate graph nodes
   graphPath.forEach(pt => {
     const last = fullPath[fullPath.length - 1];
     if (!last || Math.hypot(last.x - pt.x, last.y - pt.y) > 0.15) {
@@ -404,15 +376,11 @@ export function computeCustomAirfieldRoute(
     }
   });
 
-  // End target point
   const last = fullPath[fullPath.length - 1];
-  if (!last || Math.hypot(last.x - target.x, last.y - target.y) > 0.15) {
-    fullPath.push({ x: target.x, y: target.y });
-  }
 
   // Guarantee at least 2 distinct points for linear interpolation
   if (fullPath.length === 1) {
-    fullPath.push({ x: target.x + 0.05, y: target.y + 0.05 });
+    fullPath.push({ x: last.x + 0.05, y: last.y + 0.05 });
   }
 
   // Calculate real distance along the road graph
@@ -539,7 +507,7 @@ export function getCustomPatrolWaypoints(
     elements,
     patrolConnections.length > 0 ? patrolConnections : connections
   );
-  return route.waypoints.length >= 2 ? route.waypoints : [{ x: worker.x, y: worker.y }, { x: target.x, y: target.y }];
+  return route.waypoints;
 }
 
 /**
@@ -569,5 +537,5 @@ export function getCustomReturnToBaseWaypoints(
   }
 
   const route = computeCustomAirfieldRoute({ x: worker.x, y: worker.y }, { x: targetX, y: targetY }, elements, connections);
-  return route.waypoints.length >= 2 ? route.waypoints : [{ x: worker.x, y: worker.y }, { x: targetX, y: targetY }];
+  return route.waypoints;
 }
