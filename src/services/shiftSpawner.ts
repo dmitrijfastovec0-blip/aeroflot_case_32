@@ -136,6 +136,10 @@ export function spawnAirfieldShift(config: ShiftSpawnerConfig): Worker[] {
         tempWorker.pathWaypoints = getCustomPatrolWaypoints(tempWorker, customElements, customConnections);
       } else {
         tempWorker.pathWaypoints = getSvoPatrolWaypoints({ x: initX, y: initY }, baseObj.id);
+        if (tempWorker.pathWaypoints.length > 0) {
+          tempWorker.x = tempWorker.pathWaypoints[0].x;
+          tempWorker.y = tempWorker.pathWaypoints[0].y;
+        }
       }
       tempWorker.currentSegmentIndex = 0;
     }

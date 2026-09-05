@@ -470,6 +470,8 @@ export function useSimulationEngine(
 
               return {
                 ...worker,
+                x: !isCustomMode && waypoints[0] ? waypoints[0].x : worker.x,
+                y: !isCustomMode && waypoints[0] ? waypoints[0].y : worker.y,
                 pathWaypoints: waypoints,
                 currentSegmentIndex: 0
               };
@@ -632,9 +634,11 @@ export function useSimulationEngine(
                 } else {
                   patrolWaypoints = getSvoPatrolWaypoints({ x: w.x, y: w.y }, w.baseId);
                 }
-                freedFree.set(w.id, {
-                  ...w,
-                  status: 'FREE_PATROLLING',
+                  freedFree.set(w.id, {
+                    ...w,
+                    x: !isCustomMode && patrolWaypoints[0] ? patrolWaypoints[0].x : w.x,
+                    y: !isCustomMode && patrolWaypoints[0] ? patrolWaypoints[0].y : w.y,
+                    status: 'FREE_PATROLLING',
                   currentTaskId: undefined,
                   pathWaypoints: patrolWaypoints,
                   pathSpeedPctPerSimSec: undefined,

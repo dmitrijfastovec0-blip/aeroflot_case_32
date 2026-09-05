@@ -7,7 +7,8 @@ import {
   resetWeatherOverrides,
   findNaiveNearestWorkerOfCategory,
   getCustomAirportStands,
-  getCustomAirportFacilities
+  getCustomAirportFacilities,
+  getSvoPatrolWaypoints
 } from '../dijkstra';
 import {
   extractCustomStands,
@@ -17,7 +18,7 @@ import {
 } from '../airfieldGraph';
 import { spawnAirfieldShift } from '../shiftSpawner';
 import { computeDispatchPlan } from '../../core/dispatcher';
-import { SVO_STANDS, DEFECT_TYPES } from '../../constants/index';
+import { SVO_STANDS, DEFECT_TYPES, SVO_EDGES, SVO_NODES, SVO_FACILITIES } from '../../constants/index';
 import { OtoTask, Stand, Worker, AirportElement, AirportConnection } from '../../types/index';
 
 const standMap = new Map<string, Stand>(SVO_STANDS.map(s => [s.id, s]));
@@ -54,6 +55,33 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
     expect(workers.some(worker => worker.status === 'FREE_PATROLLING')).toBe(true);
     workers.forEach(worker => {
       expect(worker.isPatrolPreference).toBe(worker.status === 'FREE_PATROLLING');
+    });
+  });
+
+  it('keeps every free SVO patrol segment on the declared road graph', () => {
+    const coords = new Map<string, { x: number; y: number }>();
+    SVO_NODES.forEach(node => coords.set(node.id, node));
+    SVO_FACILITIES.forEach(facility => coords.set(facility.id, facility));
+    const isOnSegment = (point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) return Math.hypot(point.x - a.x, point.y - a.y) < 0.01;
+      const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq));
+      return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy)) < 0.01;
+    };
+
+    const workers = spawnAirfieldShift({ b1Count: 22, b2Count: 12, catACount: 6, vehiclesCount: 20 });
+    workers.filter(worker => worker.status === 'FREE_PATROLLING').forEach(worker => {
+      const route = getSvoPatrolWaypoints({ x: worker.x, y: worker.y }, worker.baseId);
+      for (let i = 0; i < route.length - 1; i++) {
+        const followsRoad = SVO_EDGES.some(edge => {
+          const a = coords.get(edge.from);
+          const b = coords.get(edge.to);
+          return a && b && isOnSegment(route[i], a, b) && isOnSegment(route[i + 1], a, b);
+        });
+        expect(followsRoad).toBe(true);
+      }
     });
   });
 

@@ -657,11 +657,7 @@ export function getSvoPatrolWaypoints(start: { x: number; y: number }, baseId: s
   const graphWaypoints = getWaypointsForNodePath(best?.projected || start, nodePath);
   if (!best) return graphWaypoints;
 
-  return [
-    { x: start.x, y: start.y },
-    ...(Math.hypot(start.x - best.projected.x, start.y - best.projected.y) > 0.01 ? [best.projected] : []),
-    ...graphWaypoints.slice(1)
-  ];
+  return [best.projected, ...graphWaypoints.slice(1)];
 }
 
 const NORTH_BASE_IDS = new Set(['PTO_1', 'PARKING_1', 'AK_4']);
