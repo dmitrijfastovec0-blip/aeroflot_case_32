@@ -409,4 +409,60 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
 
     expect(getCustomPatrolWaypoints(patrolWorker, elements, connections)).toHaveLength(0);
   });
+
+  it('keeps custom patrols exactly on a user-drawn curved road without cutting corners', () => {
+    // A U-shaped road; patrol must traverse every leg, never a straight chord.
+    const elements: AirportElement[] = [
+      { id: 'PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 20, y: 20 },
+      { id: 'STAND-1', kind: 'STAND', label: '101', x: 80, y: 20 }
+    ];
+    const roadPts = [{ x: 20, y: 20 }, { x: 20, y: 60 }, { x: 80, y: 60 }, { x: 80, y: 20 }];
+    const connections: AirportConnection[] = [
+      { id: 'ROAD-U', from: 'PTO-1', to: 'STAND-1', kind: 'ROAD', points: roadPts }
+    ];
+
+    const patrolWorker: Worker = {
+      id: 'patrol-curve', name: 'Патруль', category: 'GENERAL_MECHANIC', categoryCode: 'A',
+      status: 'FREE_PATROLLING', baseId: 'PTO-1', x: 20, y: 20, vehicle: 'WALK'
+    };
+
+    const waypoints = getCustomPatrolWaypoints(patrolWorker, elements, connections);
+    expect(waypoints.length).toBeGreaterThanOrEqual(4);
+
+    const onAnySegment = (pt: { x: number; y: number }) => roadPts.slice(0, -1).some((a, i) => {
+      const b = roadPts[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / lenSq));
+      return Math.hypot(pt.x - (a.x + t * dx), pt.y - (a.y + t * dy)) < 0.01;
+    });
+
+    waypoints.forEach(pt => expect(onAnySegment(pt)).toBe(true));
+    // Both corners must appear: this proves the route is not a straight chord.
+    expect(waypoints.some(pt => Math.hypot(pt.x - 20, pt.y - 60) < 0.5)).toBe(true);
+    expect(waypoints.some(pt => Math.hypot(pt.x - 80, pt.y - 60) < 0.5)).toBe(true);
+  });
+
+  it('demotes a custom patrol worker with no reachable road to a stationary idle instead of roaming off-graph', () => {
+    const elements: AirportElement[] = [
+      { id: 'PTO-1', kind: 'DUTY_STATION', label: 'ПТО-1', x: 90, y: 90 },
+      { id: 'W-1', kind: 'WAYPOINT', label: 'Узел 1', x: 5, y: 5 },
+      { id: 'W-2', kind: 'WAYPOINT', label: 'Узел 2', x: 15, y: 5 },
+      { id: 'STAND-1', kind: 'STAND', label: '101', x: 15, y: 8 }
+    ];
+    const connections: AirportConnection[] = [
+      { id: 'ROAD-1', from: 'W-1', to: 'W-2', kind: 'ROAD' },
+      { id: 'ROAD-2', from: 'W-2', to: 'STAND-1', kind: 'ROAD' }
+    ];
+
+    const shift = spawnAirfieldShift({
+      b1Count: 1, b2Count: 0, catACount: 0, vehiclesCount: 0,
+      customElements: elements, customConnections: connections, isCustomMode: true
+    });
+
+    expect(shift[0].status).toBe('FREE_STATIONARY');
+    expect(shift[0].isPatrolPreference).toBe(false);
+    expect(shift[0].pathWaypoints).toBeUndefined();
+  });
 });

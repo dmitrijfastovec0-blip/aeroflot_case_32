@@ -180,7 +180,7 @@ function buildClusterIndexes(workers: Worker[]): ClusterIndexes {
 }
 
 // Target render position for a worker (percent units, strictly tracking live physical position)
-function workerClusterPos(worker: Worker, hash: number, idx: ClusterIndexes, _customElements: AirportElement[] = []) {
+function workerClusterPos(worker: Worker, _hash: number, idx: ClusterIndexes, _customElements: AirportElement[] = []) {
   const anchorX = worker.x;
   const anchorY = worker.y;
 
@@ -197,10 +197,7 @@ function workerClusterPos(worker: Worker, hash: number, idx: ClusterIndexes, _cu
   }
 
   if (worker.status === 'IN_TRANSIT' || worker.status === 'RETURNING_TO_BASE' || worker.status === 'FREE_PATROLLING') {
-    return {
-      x: worker.x + ((hash % 3) - 1) * 0.4,
-      y: worker.y + ((Math.floor(hash / 3) % 3) - 1) * 0.4
-    };
+    return { x: anchorX, y: anchorY };
   }
 
   return { x: anchorX, y: anchorY };
