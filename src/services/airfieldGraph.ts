@@ -6,6 +6,7 @@ export interface RouteResult {
   points: { x: number; y: number }[];
   waypoints: { x: number; y: number }[];
   distanceMeters: number;
+  reachable: boolean;
 }
 
 // Metric coordinate scaling: canvas is 100% x 100% representing 4000m x 2800m
@@ -133,10 +134,11 @@ function buildCompleteAirfieldGraph(elements: AirportElement[], connections: Air
     const routePts: Point2D[] = conn.points && conn.points.length >= 2
       ? conn.points
       : (conn.from && conn.to
-          ? [
-              { x: elements.find(e => e.id === conn.from)?.x ?? 0, y: elements.find(e => e.id === conn.from)?.y ?? 0 },
-              { x: elements.find(e => e.id === conn.to)?.x ?? 0, y: elements.find(e => e.id === conn.to)?.y ?? 0 }
-            ]
+          ? (() => {
+              const from = elements.find(e => e.id === conn.from);
+              const to = elements.find(e => e.id === conn.to);
+              return from && to ? [{ x: from.x, y: from.y }, { x: to.x, y: to.y }] : [];
+            })()
           : []);
 
     for (let i = 0; i < routePts.length - 1; i++) {
@@ -251,7 +253,8 @@ function attachPointToGraph(point: Point2D, graph: Graph): number {
     }
   }
 
-  if (!bestProjection) return -1;
+  // Never attach a facility to an unrelated road across the polygon.
+  if (!bestProjection || bestProjection.distance > 350) return -1;
 
   const pointIndex = graph.vertices.length;
   graph.vertices.push(bestProjection.point);
@@ -303,20 +306,20 @@ export function computeCustomAirfieldRoute(
 
   if (elements.length === 0 && connections.length === 0) {
     const pts = [start, target];
-    return { points: pts, waypoints: pts, distanceMeters: Math.max(10, directDist) };
+    return { points: pts, waypoints: pts, distanceMeters: Math.max(10, directDist), reachable: false };
   }
 
   const graph = buildCompleteAirfieldGraph(elements, connections);
   const { vertices, adj } = graph;
 
   if (graph.edges.length === 0) {
-    return { points: [start], waypoints: [start], distanceMeters: Infinity };
+    return { points: [], waypoints: [], distanceMeters: Infinity, reachable: false };
   }
 
   const startNode = attachPointToGraph(start, graph);
   const targetNode = attachPointToGraph(target, graph);
   if (startNode < 0 || targetNode < 0) {
-    return { points: [start], waypoints: [start], distanceMeters: Infinity };
+    return { points: [], waypoints: [], distanceMeters: Infinity, reachable: false };
   }
   connectPointsAlongOriginalEdges(graph);
 
@@ -363,7 +366,7 @@ export function computeCustomAirfieldRoute(
   }
 
   if (graphPath.length === 0) {
-    return { points: [start], waypoints: [start], distanceMeters: Infinity };
+    return { points: [], waypoints: [], distanceMeters: Infinity, reachable: false };
   }
 
   // The endpoints are projected onto the road graph, so every segment after
@@ -380,7 +383,7 @@ export function computeCustomAirfieldRoute(
 
   // Guarantee at least 2 distinct points for linear interpolation
   if (fullPath.length === 1) {
-    fullPath.push({ x: last.x + 0.05, y: last.y + 0.05 });
+    return { points: fullPath, waypoints: fullPath, distanceMeters: 0, reachable: true };
   }
 
   // Calculate real distance along the road graph
@@ -392,7 +395,8 @@ export function computeCustomAirfieldRoute(
   return {
     points: fullPath,
     waypoints: fullPath,
-    distanceMeters: Math.max(10, totalDistanceMeters)
+    distanceMeters: Math.max(10, totalDistanceMeters),
+    reachable: true
   };
 }
 
@@ -501,13 +505,15 @@ export function getCustomPatrolWaypoints(
 
   // Routine patrol strictly avoids tunnels (no cross-sector migrations)
   const patrolConnections = connections.filter(c => c.kind !== 'TUNNEL');
+  if (patrolConnections.length === 0) return [];
+
   const route = computeCustomAirfieldRoute(
     { x: worker.x, y: worker.y },
     { x: target.x, y: target.y },
     elements,
-    patrolConnections.length > 0 ? patrolConnections : connections
+    patrolConnections
   );
-  return route.waypoints;
+  return route.reachable ? route.waypoints : [];
 }
 
 /**
@@ -537,5 +543,5 @@ export function getCustomReturnToBaseWaypoints(
   }
 
   const route = computeCustomAirfieldRoute({ x: worker.x, y: worker.y }, { x: targetX, y: targetY }, elements, connections);
-  return route.waypoints;
+  return route.reachable ? route.waypoints : [];
 }

@@ -320,7 +320,7 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
     expect(patrolPts.length).toBeGreaterThanOrEqual(2);
 
     const returnPts = getCustomReturnToBaseWaypoints(worker, customElements, customConnections);
-    expect(returnPts.length).toBeGreaterThanOrEqual(2);
+    expect(returnPts.length).toBeGreaterThanOrEqual(1);
   });
 
   it('8. Custom airfield workers follow curved roads and junctions strictly without straight line cutting', () => {
@@ -381,6 +381,6 @@ describe('SVO OTO Dispatcher & Algorithm Suite', () => {
     );
 
     expect(route.distanceMeters).toBe(Infinity);
-    expect(route.waypoints).toHaveLength(1);
+    expect(route.waypoints).toHaveLength(0);
   });
 });

@@ -9,7 +9,6 @@ import {
   getWaypointsForNodePath,
   calculateWorkerToStandEta,
   findNearestFreeWorkerOfCategory,
-  generateShiftWorkersWithCustomCounts,
   getCategoryCandidates,
   findNaiveNearestWorkerOfCategory,
   pickPatrolTargetId,
@@ -468,10 +467,18 @@ export function useSimulationEngine(
                 waypoints = getSvoPatrolWaypoints({ x: worker.x, y: worker.y }, worker.baseId);
               }
 
+              if (waypoints.length < 2) {
+                return {
+                  ...worker,
+                  status: 'FREE_STATIONARY' as WorkerStatus,
+                  pathWaypoints: undefined,
+                  currentSegmentIndex: undefined
+                };
+              }
               return {
                 ...worker,
-                x: !isCustomMode && waypoints[0] ? waypoints[0].x : worker.x,
-                y: !isCustomMode && waypoints[0] ? waypoints[0].y : worker.y,
+                x: waypoints[0].x,
+                y: waypoints[0].y,
                 pathWaypoints: waypoints,
                 currentSegmentIndex: 0
               };
@@ -634,16 +641,25 @@ export function useSimulationEngine(
                 } else {
                   patrolWaypoints = getSvoPatrolWaypoints({ x: w.x, y: w.y }, w.baseId);
                 }
-                  freedFree.set(w.id, {
-                    ...w,
-                    x: !isCustomMode && patrolWaypoints[0] ? patrolWaypoints[0].x : w.x,
-                    y: !isCustomMode && patrolWaypoints[0] ? patrolWaypoints[0].y : w.y,
-                    status: 'FREE_PATROLLING',
-                  currentTaskId: undefined,
-                  pathWaypoints: patrolWaypoints,
-                  pathSpeedPctPerSimSec: undefined,
-                  currentSegmentIndex: 0
-                });
+                freedFree.set(w.id, patrolWaypoints.length >= 2
+                  ? {
+                      ...w,
+                      x: patrolWaypoints[0].x,
+                      y: patrolWaypoints[0].y,
+                      status: 'FREE_PATROLLING',
+                      currentTaskId: undefined,
+                      pathWaypoints: patrolWaypoints,
+                      pathSpeedPctPerSimSec: undefined,
+                      currentSegmentIndex: 0
+                    }
+                  : {
+                      ...w,
+                      status: 'FREE_STATIONARY',
+                      currentTaskId: undefined,
+                      pathWaypoints: undefined,
+                      pathSpeedPctPerSimSec: undefined,
+                      currentSegmentIndex: undefined
+                    });
               } else {
                 let returnWaypoints: { x: number; y: number }[];
                 if (isCustomMode && customElements.length > 0) {
@@ -876,12 +892,10 @@ export function useSimulationEngine(
 
   const applyShiftConfig = useCallback((b1: number, b2: number, catA: number, vehicles: number) => {
     shiftCountsRef.current = { b1, b2, catA, vehicles };
-    const updatedWorkers = isCustomMode
-      ? spawnAirfieldShift({
-          b1Count: b1, b2Count: b2, catACount: catA, vehiclesCount: vehicles,
-          customElements, customConnections, customFacilities: activeFacilities, customStands: activeStands, isCustomMode: true
-        })
-      : generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles, activeFacilities, activeStands);
+    const updatedWorkers = spawnAirfieldShift({
+      b1Count: b1, b2Count: b2, catACount: catA, vehiclesCount: vehicles,
+      customElements, customConnections, customFacilities: activeFacilities, customStands: activeStands, isCustomMode
+    });
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
 
@@ -950,12 +964,10 @@ export function useSimulationEngine(
   // clear all active/queued calls, analytics and ROI history.
   const resetShiftToOptimal = useCallback((showToast: boolean) => {
     const { b1, b2, catA, vehicles } = shiftCountsRef.current;
-    const updatedWorkers = isCustomMode
-      ? spawnAirfieldShift({
-          b1Count: b1, b2Count: b2, catACount: catA, vehiclesCount: vehicles,
-          customElements, customConnections, customFacilities: activeFacilities, customStands: activeStands, isCustomMode: true
-        })
-      : generateShiftWorkersWithCustomCounts(b1, b2, catA, vehicles, activeFacilities, activeStands);
+    const updatedWorkers = spawnAirfieldShift({
+      b1Count: b1, b2Count: b2, catACount: catA, vehiclesCount: vehicles,
+      customElements, customConnections, customFacilities: activeFacilities, customStands: activeStands, isCustomMode
+    });
     workersRef.current = updatedWorkers;
     setWorkers(updatedWorkers);
 
@@ -971,7 +983,14 @@ export function useSimulationEngine(
     setIsStressTestActive(false);
     resetWeatherOverrides();
     if (showToast) showNotification(`🧹 Сброс: ${b1 + b2 + catA} инженеров на базах ПТО, все вызовы очищены.`);
-  }, [showNotification]);
+  }, [
+    showNotification,
+    isCustomMode,
+    customElements,
+    customConnections,
+    activeFacilities,
+    activeStands
+  ]);
 
   const syncHistoricalTasks = useCallback((tasksToSync: OtoTask[]) => {
     if (tasksToSync.length === 0) return;
