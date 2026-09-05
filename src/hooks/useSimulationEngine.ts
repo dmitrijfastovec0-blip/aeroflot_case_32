@@ -847,15 +847,23 @@ export function useSimulationEngine(
   }, [drainQueueWithFreeWorkers, showNotification]);
 
   const triggerStressTest = useCallback(() => {
-    const standsSample = [...activeStands].sort(() => 0.5 - Math.random()).slice(0, Math.min(10, activeStands.length));
+    if (activeStands.length === 0) {
+      showNotification('⚠️ Стресс-тест невозможен: на полигоне нет стоянок.');
+      return;
+    }
+
+    // Cover every stand, then keep the historical high-load minimum for tiny
+    // custom layouts. Cycling is intentional: queued calls may share a stand.
+    const stressTaskCount = Math.max(10, activeStands.length);
     const priorities: TaskPriority[] = ['AOG', 'AOG', 'URGENT', 'URGENT', 'URGENT', 'ROUTINE', 'ROUTINE', 'ROUTINE', 'ROUTINE', 'ROUTINE'];
 
     const newTasks: OtoTask[] = [];
 
-    standsSample.forEach((stand, idx) => {
+    for (let idx = 0; idx < stressTaskCount; idx++) {
+      const stand = activeStands[idx % activeStands.length];
       const priority = priorities[idx % priorities.length];
       const catCode = idx % 2 === 0 ? 'B1' : 'B2';
-      const taskId = `STRESS-${Date.now().toString().slice(-4)}-${idx + 1}`;
+      const taskId = `STRESS-${Date.now().toString().slice(-6)}-${idx + 1}`;
 
       const task: OtoTask = {
         id: taskId,
@@ -879,7 +887,7 @@ export function useSimulationEngine(
       };
 
       newTasks.push(task);
-    });
+    }
 
     const combinedTasks = [...newTasks, ...tasksRef.current];
     tasksRef.current = combinedTasks;
@@ -887,7 +895,7 @@ export function useSimulationEngine(
     syncHistoricalTasks(combinedTasks);
 
     drainQueueWithFreeWorkers();
-    showNotification(`💥 СТРЕСС-ТЕСТ: Сгенерировано 10 вызовов! Персонал выехал по приоритету AOG > URGENT > ROUTINE.`);
+    showNotification(`💥 СТРЕСС-ТЕСТ: Сгенерировано ${newTasks.length} вызовов на ${activeStands.length} стоянках! Персонал выехал по приоритету AOG > URGENT > ROUTINE.`);
   }, [drainQueueWithFreeWorkers, showNotification]);
 
   const applyShiftConfig = useCallback((b1: number, b2: number, catA: number, vehicles: number) => {
@@ -1060,10 +1068,7 @@ export function useSimulationEngine(
       case 'hellish': {
         isStressTestActiveRef.current = true;
         setIsStressTestActive(true);
-
-        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'AOG', 'ATA32');
-        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_C25'), 'B2', 'URGENT', 'ATA24'), 2500);
-        setTimeout(() => enqueueAutoTask(getStandId(2, 'STAND_D18'), 'B1', 'ROUTINE', 'ATA72'), 5500);
+        triggerStressTest();
         showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает задачи в очереди с реалистичными интервалами!`);
         break;
       }
@@ -1166,9 +1171,7 @@ export function useSimulationEngine(
         archiveCurrentTasks();
         isStressTestActiveRef.current = true;
         setIsStressTestActive(true);
-
-        enqueueAutoTask(getStandId(0, 'STAND_B12'), 'B1', 'AOG', 'ATA32');
-        setTimeout(() => enqueueAutoTask(getStandId(1, 'STAND_C25'), 'B2', 'URGENT', 'ATA24'), 3000);
+        triggerStressTest();
         showNotification(`🔥 ПОСТЕПЕННЫЙ СТРЕСС-ТЕСТ: Симулятор автоматически поддерживает задачи в очереди!`);
         break;
       }
@@ -1180,7 +1183,7 @@ export function useSimulationEngine(
       default:
         break;
     }
-  }, [resetShiftToOptimal, enqueueAutoTask, applyWeatherOverrides, showNotification]);
+  }, [resetShiftToOptimal, triggerStressTest, applyWeatherOverrides, showNotification]);
 
   const runControlTests = useCallback((): ControlTestResult[] => {
     const results: ControlTestResult[] = [];

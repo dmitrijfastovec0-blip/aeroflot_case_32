@@ -10,8 +10,8 @@ interface ScenarioBarProps {
 const SCENARIOS: { id: string; label: string; title: string; icon: React.ReactNode }[] = [
   { id: 'standard', label: 'Базовый день', title: 'Смена на базах + вызов ATA 72 на стоянку D18', icon: <Rocket className="w-4 h-4 text-emerald-400" /> },
   { id: 'series', label: 'Серия вызовов', title: '4 плановых вызова подряд с интервалом', icon: <ListChecks className="w-4 h-4 text-sky-400" /> },
-  { id: 'peak', label: 'Пиковая нагрузка', title: '10 одновременных вызовов — проверка приоритетной очереди', icon: <Zap className="w-4 h-4 text-amber-400" /> },
-  { id: 'hellish', label: '🔥 Стресс-тест (3–5 задач)', title: 'Постепенный симулятор нагрузки: поддержание постоянной очереди 3–5 задач в реальном времени', icon: <Zap className="w-4 h-4 text-rose-500 animate-pulse" /> },
+  { id: 'peak', label: 'Пиковая нагрузка', title: 'Задача на каждую стоянку и минимум 10 вызовов — проверка приоритетной очереди', icon: <Zap className="w-4 h-4 text-amber-400" /> },
+  { id: 'hellish', label: '🔥 Стресс-тест (все стоянки)', title: 'Массовые вызовы на все стоянки с последующим поддержанием нагрузки', icon: <Zap className="w-4 h-4 text-rose-500 animate-pulse" /> },
   { id: 'aog', label: 'AOG Перехват', title: 'Рутинный вызов + срочные AOG сверху (перехват персонала)', icon: <Siren className="w-4 h-4 text-rose-400" /> },
   { id: 'deficit', label: 'Кадровый дефицит', title: '4 инженера на 8 вызовов — работа в дефиците ресурсов', icon: <AlertOctagon className="w-4 h-4 text-orange-400" /> },
   { id: 'reset', label: 'Смена ПТО', title: 'Все инженеры на базах, вызовы очищены', icon: <RefreshCcw className="w-4 h-4 text-red-400" /> }
