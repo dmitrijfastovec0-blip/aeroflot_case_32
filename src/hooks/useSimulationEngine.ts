@@ -4,6 +4,7 @@ import { SVO_STANDS, REAL_SVO_FACILITIES, SVO_FACILITIES, SVO_NODES, DEFECT_TYPE
 import {
   getClosestNodeId,
   getClosestSectorNodeId,
+  getSvoPatrolWaypoints,
   findDijkstraShortestPath,
   getWaypointsForNodePath,
   calculateWorkerToStandEta,
@@ -464,15 +465,7 @@ export function useSimulationEngine(
               if (isCustomMode && customElements.length > 0) {
                 waypoints = getCustomPatrolWaypoints(worker, customElements, customConnections);
               } else {
-                const isNorth = worker.baseId === 'PTO_1' || worker.baseId === 'PARKING_1' || worker.baseId === 'AK_4';
-                const sectorNodes = isNorth
-                  ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
-                  : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
-                
-                const currentNodeId = getClosestSectorNodeId(worker.x, worker.y, sectorNodes);
-                const localTargetId = pickPatrolTargetId(worker.baseId);
-                const nodePath = findDijkstraShortestPath(currentNodeId, localTargetId);
-                waypoints = getWaypointsForNodePath({ x: worker.x, y: worker.y }, nodePath);
+                waypoints = getSvoPatrolWaypoints({ x: worker.x, y: worker.y }, worker.baseId);
               }
 
               return {
@@ -637,14 +630,7 @@ export function useSimulationEngine(
                 if (isCustomMode && customElements.length > 0) {
                   patrolWaypoints = getCustomPatrolWaypoints(w, customElements, customConnections);
                 } else {
-                  const isNorth = w.baseId === 'PTO_1' || w.baseId === 'PARKING_1' || w.baseId === 'AK_4';
-                  const sectorNodes = isNorth
-                    ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
-                    : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
-                  const startNodeId = getClosestSectorNodeId(w.x, w.y, sectorNodes);
-                  const localTargetId = pickPatrolTargetId(w.baseId);
-                  const nodePath = findDijkstraShortestPath(startNodeId, localTargetId);
-                  patrolWaypoints = getWaypointsForNodePath({ x: w.x, y: w.y }, nodePath);
+                  patrolWaypoints = getSvoPatrolWaypoints({ x: w.x, y: w.y }, w.baseId);
                 }
                 freedFree.set(w.id, {
                   ...w,

@@ -607,6 +607,63 @@ export function getClosestSectorNodeId(pctX: number, pctY: number, allowedNodeId
   return closestId;
 }
 
+const NORTH_SECTOR_NODES = [
+  'STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27',
+  'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID',
+  'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4'
+];
+
+const SOUTH_SECTOR_NODES = [
+  'STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45',
+  'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1',
+  'PTO_2', 'PARKING_2', 'AK_1'
+];
+
+function projectToSvoSegment(point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq === 0
+    ? 0
+    : Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq));
+  const projected = { x: a.x + dx * t, y: a.y + dy * t };
+  return { projected, distanceSq: (point.x - projected.x) ** 2 + (point.y - projected.y) ** 2 };
+}
+
+// Build patrol routes from the nearest real SVO edge. This prevents a worker
+// already on an edge from taking a diagonal shortcut to an unrelated node.
+export function getSvoPatrolWaypoints(start: { x: number; y: number }, baseId: string) {
+  const allowed = new Set(baseId === 'PTO_1' || baseId === 'PARKING_1' || baseId === 'AK_4'
+    ? NORTH_SECTOR_NODES
+    : SOUTH_SECTOR_NODES);
+  const candidates = SVO_EDGES.filter(edge => allowed.has(edge.from) || allowed.has(edge.to));
+
+  let best: { edge: typeof SVO_EDGES[number]; projected: { x: number; y: number }; distanceSq: number } | null = null;
+  for (const edge of candidates) {
+    const a = NODE_COORD[edge.from];
+    const b = NODE_COORD[edge.to];
+    if (!a || !b) continue;
+    const projection = projectToSvoSegment(start, a, b);
+    if (!best || projection.distanceSq < best.distanceSq) {
+      best = { edge, projected: projection.projected, distanceSq: projection.distanceSq };
+    }
+  }
+
+  const startNodeId = best
+    ? (allowed.has(best.edge.from) ? best.edge.from : best.edge.to)
+    : getClosestSectorNodeId(start.x, start.y, Array.from(allowed));
+  const targetId = pickPatrolTargetId(baseId);
+  const nodePath = findDijkstraShortestPath(startNodeId, targetId);
+  const graphWaypoints = getWaypointsForNodePath(best?.projected || start, nodePath);
+  if (!best) return graphWaypoints;
+
+  return [
+    { x: start.x, y: start.y },
+    ...(Math.hypot(start.x - best.projected.x, start.y - best.projected.y) > 0.01 ? [best.projected] : []),
+    ...graphWaypoints.slice(1)
+  ];
+}
+
 const NORTH_BASE_IDS = new Set(['PTO_1', 'PARKING_1', 'AK_4']);
 const SOUTH_BASE_IDS = new Set(['PTO_2', 'PARKING_2', 'AK_1']);
 

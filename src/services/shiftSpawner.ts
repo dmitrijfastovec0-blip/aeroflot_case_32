@@ -1,7 +1,7 @@
 import { Worker, Stand, Facility, CategoryCode, Category, WorkerStatus, AirportElement, AirportConnection } from '../types/index';
 import { TECHNICIAN_NAMES, SVO_STANDS, REAL_SVO_FACILITIES } from '../constants/index';
 import { extractCustomFacilities, extractCustomStands, getCustomPatrolWaypoints } from './airfieldGraph';
-import { getClosestNodeId, getClosestSectorNodeId, pickPatrolTargetId, findDijkstraShortestPath, getWaypointsForNodePath } from './dijkstra';
+import { getSvoPatrolWaypoints } from './dijkstra';
 
 export interface ShiftSpawnerConfig {
   b1Count: number;
@@ -135,14 +135,7 @@ export function spawnAirfieldShift(config: ShiftSpawnerConfig): Worker[] {
       if (isCustomMode && customElements.length > 0) {
         tempWorker.pathWaypoints = getCustomPatrolWaypoints(tempWorker, customElements, customConnections);
       } else {
-        const isNorth = baseObj.id === 'PTO_1' || baseObj.id === 'PARKING_1' || baseObj.id === 'AK_4';
-        const sectorNodes = isNorth
-          ? ['STAND_B10', 'STAND_B12', 'STAND_B14', 'STAND_C21', 'STAND_C25', 'STAND_C27', 'STAND_101', 'STAND_102', 'STAND_105', 'WAY_AK4', 'WAY_N_WEST', 'WAY_N_MID', 'WAY_N_EAST', 'PTO_1', 'PARKING_1', 'AK_4']
-          : ['STAND_D12', 'STAND_D14', 'STAND_D18', 'STAND_D24', 'STAND_E38', 'STAND_F45', 'STAND_201', 'STAND_204', 'WAY_S_WEST', 'WAY_S_MID', 'WAY_S_EAST', 'WAY_AK1', 'PTO_2', 'PARKING_2', 'AK_1'];
-        const startNodeId = getClosestSectorNodeId(initX, initY, sectorNodes);
-        const localTargetId = pickPatrolTargetId(baseObj.id);
-        const nodePath = findDijkstraShortestPath(startNodeId, localTargetId);
-        tempWorker.pathWaypoints = getWaypointsForNodePath({ x: initX, y: initY }, nodePath);
+        tempWorker.pathWaypoints = getSvoPatrolWaypoints({ x: initX, y: initY }, baseObj.id);
       }
       tempWorker.currentSegmentIndex = 0;
     }
