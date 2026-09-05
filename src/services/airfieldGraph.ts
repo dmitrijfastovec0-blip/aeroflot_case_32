@@ -501,7 +501,7 @@ export function getCustomPatrolWaypoints(
     ? localSectorStands[Math.floor(Math.random() * Math.min(3, localSectorStands.length))]
     : (fallbackStands.length > 0 ? fallbackStands[0] : elements[0]);
 
-  if (!target) return [{ x: worker.x, y: worker.y }, { x: worker.x + 0.1, y: worker.y + 0.1 }];
+  if (!target) return [];
 
   // Routine patrol strictly avoids tunnels (no cross-sector migrations)
   const patrolConnections = connections.filter(c => c.kind !== 'TUNNEL');
