@@ -240,6 +240,8 @@ export function App() {
         onClose={() => setIsAnalyticsOpen(false)}
         roiMetrics={roiMetrics}
           dispatchStats={dispatchStats}
+          workers={workers}
+          tasks={tasks}
           controlTestResults={controlTestResults}
           benchmarkResults={benchmarkResults}
           onRunControlTests={() => setControlTestResults(runControlTests())}

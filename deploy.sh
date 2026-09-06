@@ -8,8 +8,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SERVER="${SERVER:-root@82.22.53.39}"
+SERVER="${SERVER:-}"
 TARGET_DIR="/var/www/aeroflot_case"
+
+if [ -z "$SERVER" ]; then
+    echo "Ошибка: задайте SERVER, например SERVER=root@example.com ./deploy.sh" >&2
+    exit 1
+fi
 
 DO_BUILD=true
 

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ThemeMode, DispatchStat } from '../types/index';
+import { ThemeMode, DispatchStat, Worker, OtoTask } from '../types/index';
 import type { ControlTestResult } from '../hooks/useSimulationEngine';
 import type { AlgorithmBenchmarkResult } from '../services/algorithmBenchmark';
+import { buildPredictiveLoadInsights } from '../services/predictiveLoad';
 import { AIRCRAFT_DOWNTIME_COST_PER_MIN, AIRCRAFT_DOWNTIME_COST_SOURCE } from '../constants/index';
 import { BarChart3, TrendingDown, Clock, ShieldCheck, Wallet, X, Cpu, Compass, Layers, GitMerge, Clock3 } from 'lucide-react';
 
@@ -10,6 +11,8 @@ interface AnalyticsModalProps {
   onClose: () => void;
   roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
   dispatchStats: DispatchStat[];
+  workers: Worker[];
+  tasks: OtoTask[];
   benchmarkResults: AlgorithmBenchmarkResult[];
   controlTestResults: ControlTestResult[];
   onRunBenchmark: () => void;
@@ -160,6 +163,8 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   onClose,
   roiMetrics,
   dispatchStats,
+  workers,
+  tasks,
   benchmarkResults,
   controlTestResults,
   onRunBenchmark,
@@ -210,6 +215,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
         note: `${result.dispatchedCount} назначено; ${result.note}`
       }))
     : measuredAlgorithms;
+  const predictiveInsights = buildPredictiveLoadInsights(tasks, workers);
 
   const fmtRub = (n: number) => n.toLocaleString('ru-RU');
 
@@ -375,6 +381,24 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 </table>
               </div>
             )}
+          </div>
+          <div className="p-4 rounded-2xl border bg-purple-500/10 border-purple-500/30">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-900 dark:text-white">Предиктивная оценка нагрузки</h3>
+                <p className="text-xs text-gray-500 mt-1">Система заранее сравнивает спрос очереди с доступным составом по квалификациям.</p>
+              </div>
+              <span className="text-[10px] text-purple-300">Авторская функция прототипа</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {predictiveInsights.map(insight => (
+                <div key={insight.categoryCode} className="rounded-xl border border-purple-500/20 bg-slate-950/20 p-3 text-xs">
+                  <div className="flex items-center justify-between font-bold"><span>Cat {insight.categoryCode}</span><span className={insight.risk === 'HIGH' ? 'text-rose-400' : insight.risk === 'MEDIUM' ? 'text-amber-400' : 'text-emerald-400'}>{insight.risk}</span></div>
+                  <div className="text-gray-400 mt-2">Спрос: {insight.queuedDemand} · Доступно: {insight.availableSupply}</div>
+                  <div className="text-gray-500 mt-1">Дефицит: <span className="text-white font-bold">{insight.deficit}</span></div>
+                </div>
+              ))}
+            </div>
           </div>
         </>
         ) : (
