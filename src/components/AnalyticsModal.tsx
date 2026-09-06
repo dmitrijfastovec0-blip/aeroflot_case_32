@@ -28,6 +28,7 @@ interface AnalogInfo {
   qualification: string;
   workload: string;
   sla: string;
+  source: string;
   description: string;
   pros: string[];
   cons: string[];
@@ -44,6 +45,7 @@ const ANALOGS: AnalogInfo[] = [
     qualification: 'Проверяется человеком',
     workload: 'Оценивается вручную',
     sla: 'Зависит от оператора',
+    source: 'Базовый процесс из конкурсного задания',
     description: 'Базовый процесс для сравнения: диспетчер получает вызов, сверяет расположение и занятость сотрудников, затем вручную назначает исполнителя.',
     pros: [
       'Не требует сложной ИТ-инфраструктуры',
@@ -64,6 +66,7 @@ const ANALOGS: AnalogInfo[] = [
     qualification: 'Фильтр по категории',
     workload: 'Обычно учитывается только занятость',
     sla: 'Проверяется после выбора',
+    source: 'Baseline прототипа: straight-line nearest',
     description: 'Типовой локальный аналог: система выбирает ближайшего подходящего сотрудника для одного вызова, не оптимизируя одновременно очередь и ресурсы.',
     pros: [
       'Простая реализация',
@@ -84,6 +87,7 @@ const ANALOGS: AnalogInfo[] = [
     qualification: 'Обычно поддерживается через справочники персонала',
     workload: 'Поддерживается через статусы и наряды',
     sla: 'Настраивается правилами предприятия',
+    source: 'SAP Asset Management: sap.com/products/erp/asset-management.html',
     description: 'Класс корпоративных систем управления техническим обслуживанием. Сильная сторона — единый контур заявок и истории работ, но оперативная маршрутизация по дорожному графу требует отдельной интеграции.',
     pros: [
       'Единый учёт заявок и истории обслуживания',
@@ -104,6 +108,7 @@ const ANALOGS: AnalogInfo[] = [
     qualification: 'Зависит от конкретного продукта',
     workload: 'Обычно учитывается в операционном контуре',
     sla: 'Контролируется через операционные KPI',
+    source: 'SITA Airport Operations: sita.aero/solutions/',
     description: 'Широкий класс систем управления аэропортом: перрон, объекты, транспорт и события. Предлагаемый прототип сфокусирован на узкой задаче ОТО и может быть подключён к такому контуру.',
     pros: [
       'Широкий контекст операционной деятельности',
@@ -124,6 +129,7 @@ const ANALOGS: AnalogInfo[] = [
     qualification: 'B1, B2, A и составы бригад ATA',
     workload: 'Статусы, занятость, резервы и перераспределение',
     sla: 'Проверяется до назначения, норматив 15 минут',
+    source: 'Измеряется в текущем прототипе по DispatchStat',
     description: 'Предлагаемая система автоматизирует диспетчерский цикл: принимает вызов, формирует требования по дефекту, выбирает допустимый состав, рассчитывает путь и визуализирует движение.',
     pros: [
       'Сочетает глобальное назначение и граф маршрутов',
@@ -141,8 +147,10 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   isOpen,
   onClose,
   roiMetrics,
+  dispatchStats,
   theme
 }) => {
+  const [activeTab, setActiveTab] = useState<'ALGORITHMS' | 'ANALOGS'>('ALGORITHMS');
   const [selectedAnalogId, setSelectedAnalogId] = useState<SolutionAnalog>('VOZDUHAN');
   const selectedAnalog = ANALOGS.find(a => a.id === selectedAnalogId) || ANALOGS[0];
 
@@ -151,6 +159,29 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
     ? Math.max(0, Math.round((roiMetrics.intuitiveEtaSumMinutes - roiMetrics.systemEtaSumMinutes) * 10) / 10)
     : 0;
   const preventedLossRub = Math.round(savedMinTotal * AIRCRAFT_DOWNTIME_COST_PER_MIN);
+
+  const measuredAlgorithms = [
+    {
+      id: 'VOZDUHAN',
+      title: 'Воздухан: глобальное min-cost назначение',
+      eta: roiMetrics.completedCount > 0 ? roiMetrics.systemEtaSumMinutes / roiMetrics.completedCount : null,
+      sla: dispatchStats.length > 0 ? dispatchStats.filter(stat => stat.within15).length / dispatchStats.length * 100 : null,
+      sample: dispatchStats.length,
+      note: 'Фактические назначения системы'
+    },
+    {
+      id: 'GREEDY',
+      title: 'Greedy baseline: ближайший по прямой',
+      eta: dispatchStats.length > 0
+        ? dispatchStats.reduce((sum, stat) => sum + stat.intuitiveEtaMinutes, 0) / dispatchStats.length
+        : null,
+      sla: dispatchStats.length > 0
+        ? dispatchStats.filter(stat => stat.intuitiveEtaMinutes <= 15).length / dispatchStats.length * 100
+        : null,
+      sample: dispatchStats.length,
+      note: 'Тот же набор назначений, baseline без глобальной оптимизации'
+    }
+  ];
 
   const fmtRub = (n: number) => n.toLocaleString('ru-RU');
 
@@ -171,7 +202,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-extrabold tracking-wider uppercase flex items-center gap-2 text-slate-900 dark:text-white">
-                Сравнительный Анализ Алгоритмов Диспетчеризации
+                 Сравнительный анализ диспетчеризации
               </h2>
               <p className="text-xs text-gray-500 font-medium">
                  Сравнение аналогов и фактических результатов прототипа
@@ -186,6 +217,89 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           </button>
         </div>
 
+        <div className="flex gap-2 border-b border-slate-200 dark:border-[#1e2a3a] pb-3">
+          <button
+            onClick={() => setActiveTab('ALGORITHMS')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'ALGORITHMS' ? 'bg-sky-500 text-white' : 'bg-slate-100 dark:bg-[#101724] text-gray-400'}`}
+          >
+            Алгоритмы и метрики
+          </button>
+          <button
+            onClick={() => setActiveTab('ANALOGS')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'ANALOGS' ? 'bg-sky-500 text-white' : 'bg-slate-100 dark:bg-[#101724] text-gray-400'}`}
+          >
+            Аналоги рынка
+          </button>
+        </div>
+
+        {activeTab === 'ALGORITHMS' ? (
+          <>
+            <div className="p-4 rounded-2xl border bg-slate-100/70 dark:bg-[#101724] border-slate-300 dark:border-[#1e2a3a]">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="font-extrabold text-slate-900 dark:text-white">Сравнение реализованных алгоритмов</h3>
+                  <p className="text-xs text-gray-500 mt-1">Все числа рассчитаны по текущей фактической выборке назначений. При отсутствии выборки показывается «—».</p>
+                </div>
+                <span className="text-xs font-bold text-emerald-400">n = {dispatchStats.length}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="text-gray-500 border-b border-slate-300 dark:border-[#263345]">
+                    <tr><th className="py-2 pr-3">Алгоритм</th><th className="py-2 pr-3">Средний ETA</th><th className="py-2 pr-3">SLA &lt;= 15 мин</th><th className="py-2">Выборка</th></tr>
+                  </thead>
+                  <tbody>
+                    {measuredAlgorithms.map((algorithm, index) => (
+                      <tr key={algorithm.id} className="border-b border-slate-200 dark:border-[#1b2635]">
+                        <td className={`py-3 pr-3 font-bold ${index === 0 ? 'text-emerald-400' : 'text-slate-700 dark:text-gray-300'}`}>
+                          {index === 0 && '★ '}{algorithm.title}
+                          <div className="text-[10px] font-normal text-gray-500 mt-1">{algorithm.note}</div>
+                        </td>
+                        <td className="py-3 pr-3 font-bold text-sky-400">{algorithm.eta == null ? '—' : `${algorithm.eta.toFixed(2)} мин`}</td>
+                        <td className="py-3 pr-3 font-bold text-amber-400">{algorithm.sla == null ? '—' : `${algorithm.sla.toFixed(1)}%`}</td>
+                        <td className="py-3 text-gray-400">{algorithm.sample || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/30">
+                <div className="text-xs text-gray-400 uppercase font-bold">Воздухан: средний ETA</div>
+                <div className="text-2xl font-extrabold text-emerald-400 mt-2">{measuredAlgorithms[0].eta == null ? '—' : `${measuredAlgorithms[0].eta.toFixed(2)} мин`}</div>
+                <div className="text-[11px] text-gray-500 mt-1">по завершённым назначениям</div>
+              </div>
+              <div className="p-4 rounded-2xl border bg-sky-500/10 border-sky-500/30">
+                <div className="text-xs text-gray-400 uppercase font-bold">Выигрыш против baseline</div>
+                <div className="text-2xl font-extrabold text-sky-400 mt-2">{savedMinTotal > 0 ? `${savedMinTotal.toFixed(2)} мин` : '—'}</div>
+                <div className="text-[11px] text-gray-500 mt-1">суммарно по текущей выборке</div>
+              </div>
+              <div className="p-4 rounded-2xl border bg-amber-500/10 border-amber-500/30">
+                <div className="text-xs text-gray-400 uppercase font-bold">Пройдено SLA</div>
+                <div className="text-2xl font-extrabold text-amber-400 mt-2">{measuredAlgorithms[0].sla == null ? '—' : `${measuredAlgorithms[0].sla.toFixed(1)}%`}</div>
+                <div className="text-[11px] text-gray-500 mt-1">реальные записи диспетчеризации</div>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl border bg-slate-100/50 dark:bg-[#101724]/50 border-slate-300 dark:border-[#1e2a3a]">
+              <div className="text-xs font-bold uppercase text-gray-400 mb-3">Последние измерения</div>
+              {dispatchStats.length === 0 ? <div className="text-xs text-gray-500">Запустите сценарий и дождитесь назначения, чтобы получить метрики.</div> : (
+                <div className="space-y-2">
+                  {dispatchStats.slice(0, 8).map(stat => (
+                    <div key={stat.taskId} className="grid grid-cols-4 gap-2 text-[11px] border-b border-slate-200 dark:border-[#1b2635] pb-2">
+                      <span className="text-gray-300 truncate">{stat.standLabel}</span>
+                      <span className="text-sky-400">система {stat.systemEtaMinutes.toFixed(2)} м</span>
+                      <span className="text-gray-400">baseline {stat.intuitiveEtaMinutes.toFixed(2)} м</span>
+                      <span className={stat.within15 ? 'text-emerald-400' : 'text-rose-400'}>{stat.within15 ? 'SLA OK' : 'SLA breach'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+        <>
         {/* SOLUTION ANALOG SELECTOR */}
         <div className="space-y-2">
           <label className="text-xs font-bold uppercase tracking-wider text-gray-400">
@@ -229,9 +343,12 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             </span>
           </div>
 
-          <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed font-medium">
+           <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed font-medium">
             {selectedAnalog.description}
           </p>
+          <div className="text-[11px] text-gray-500 border-t border-slate-200 dark:border-[#1e2a3a] pt-2">
+            Источник / способ проверки: <span className="text-sky-400">{selectedAnalog.source}</span>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
             <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-1">
@@ -324,6 +441,9 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             ))}
           </div>
         </div>
+
+        </>
+        )}
 
         {/* Footer */}
         <div className="pt-2 border-t border-slate-200 dark:border-[#1e2a3a] flex justify-end">
