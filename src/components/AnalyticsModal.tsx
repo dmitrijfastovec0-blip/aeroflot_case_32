@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { ThemeMode, DispatchStat } from '../types/index';
-import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import type { ControlTestResult } from '../hooks/useSimulationEngine';
+import type { AlgorithmBenchmarkResult } from '../services/algorithmBenchmark';
+import { AIRCRAFT_DOWNTIME_COST_PER_MIN, AIRCRAFT_DOWNTIME_COST_SOURCE } from '../constants/index';
 import { BarChart3, TrendingDown, Clock, ShieldCheck, Wallet, X, Cpu, Compass, Layers, GitMerge, Clock3 } from 'lucide-react';
 
 interface AnalyticsModalProps {
@@ -8,6 +10,10 @@ interface AnalyticsModalProps {
   onClose: () => void;
   roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
   dispatchStats: DispatchStat[];
+  benchmarkResults: AlgorithmBenchmarkResult[];
+  controlTestResults: ControlTestResult[];
+  onRunBenchmark: () => void;
+  onRunControlTests: () => void;
   theme: ThemeMode;
 }
 
@@ -29,6 +35,7 @@ interface AnalogInfo {
   workload: string;
   sla: string;
   source: string;
+  features: Record<'workOrders' | 'qualification' | 'liveLocation' | 'roadRouting' | 'workload' | 'sla', 'YES' | 'PARTIAL' | 'NO' | 'UNKNOWN'>;
   description: string;
   pros: string[];
   cons: string[];
@@ -46,6 +53,7 @@ const ANALOGS: AnalogInfo[] = [
     workload: 'Оценивается вручную',
     sla: 'Зависит от оператора',
     source: 'Базовый процесс из конкурсного задания',
+    features: { workOrders: 'YES', qualification: 'PARTIAL', liveLocation: 'NO', roadRouting: 'NO', workload: 'PARTIAL', sla: 'PARTIAL' },
     description: 'Базовый процесс для сравнения: диспетчер получает вызов, сверяет расположение и занятость сотрудников, затем вручную назначает исполнителя.',
     pros: [
       'Не требует сложной ИТ-инфраструктуры',
@@ -67,6 +75,7 @@ const ANALOGS: AnalogInfo[] = [
     workload: 'Обычно учитывается только занятость',
     sla: 'Проверяется после выбора',
     source: 'Baseline прототипа: straight-line nearest',
+    features: { workOrders: 'PARTIAL', qualification: 'YES', liveLocation: 'PARTIAL', roadRouting: 'NO', workload: 'PARTIAL', sla: 'PARTIAL' },
     description: 'Типовой локальный аналог: система выбирает ближайшего подходящего сотрудника для одного вызова, не оптимизируя одновременно очередь и ресурсы.',
     pros: [
       'Простая реализация',
@@ -88,6 +97,7 @@ const ANALOGS: AnalogInfo[] = [
     workload: 'Поддерживается через статусы и наряды',
     sla: 'Настраивается правилами предприятия',
     source: 'SAP Asset Management: sap.com/products/erp/asset-management.html',
+    features: { workOrders: 'YES', qualification: 'PARTIAL', liveLocation: 'PARTIAL', roadRouting: 'UNKNOWN', workload: 'YES', sla: 'YES' },
     description: 'Класс корпоративных систем управления техническим обслуживанием. Сильная сторона — единый контур заявок и истории работ, но оперативная маршрутизация по дорожному графу требует отдельной интеграции.',
     pros: [
       'Единый учёт заявок и истории обслуживания',
@@ -109,6 +119,7 @@ const ANALOGS: AnalogInfo[] = [
     workload: 'Обычно учитывается в операционном контуре',
     sla: 'Контролируется через операционные KPI',
     source: 'SITA Airport Operations: sita.aero/solutions/',
+    features: { workOrders: 'PARTIAL', qualification: 'UNKNOWN', liveLocation: 'PARTIAL', roadRouting: 'PARTIAL', workload: 'YES', sla: 'YES' },
     description: 'Широкий класс систем управления аэропортом: перрон, объекты, транспорт и события. Предлагаемый прототип сфокусирован на узкой задаче ОТО и может быть подключён к такому контуру.',
     pros: [
       'Широкий контекст операционной деятельности',
@@ -130,6 +141,7 @@ const ANALOGS: AnalogInfo[] = [
     workload: 'Статусы, занятость, резервы и перераспределение',
     sla: 'Проверяется до назначения, норматив 15 минут',
     source: 'Измеряется в текущем прототипе по DispatchStat',
+    features: { workOrders: 'YES', qualification: 'YES', liveLocation: 'PARTIAL', roadRouting: 'YES', workload: 'YES', sla: 'YES' },
     description: 'Предлагаемая система автоматизирует диспетчерский цикл: принимает вызов, формирует требования по дефекту, выбирает допустимый состав, рассчитывает путь и визуализирует движение.',
     pros: [
       'Сочетает глобальное назначение и граф маршрутов',
@@ -148,23 +160,29 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   onClose,
   roiMetrics,
   dispatchStats,
+  benchmarkResults,
+  controlTestResults,
+  onRunBenchmark,
+  onRunControlTests,
   theme
 }) => {
-  const [activeTab, setActiveTab] = useState<'ALGORITHMS' | 'ANALOGS'>('ALGORITHMS');
+  const [activeTab, setActiveTab] = useState<'ALGORITHMS' | 'ANALOGS' | 'CONTROL'>('ALGORITHMS');
   const [selectedAnalogId, setSelectedAnalogId] = useState<SolutionAnalog>('VOZDUHAN');
   const selectedAnalog = ANALOGS.find(a => a.id === selectedAnalogId) || ANALOGS[0];
 
-  const completedCount = roiMetrics.completedCount;
-  const savedMinTotal = completedCount > 0
-    ? Math.max(0, Math.round((roiMetrics.intuitiveEtaSumMinutes - roiMetrics.systemEtaSumMinutes) * 10) / 10)
-    : 0;
+  // Both algorithms are evaluated on exactly the same dispatch-stat sample.
+  const completedCount = dispatchStats.length;
+  const measuredSystemEta = dispatchStats.length > 0
+    ? dispatchStats.reduce((sum, stat) => sum + stat.systemEtaMinutes, 0) / dispatchStats.length
+    : null;
+  const savedMinTotal = dispatchStats.reduce((sum, stat) => sum + stat.savedMinutes, 0);
   const preventedLossRub = Math.round(savedMinTotal * AIRCRAFT_DOWNTIME_COST_PER_MIN);
 
   const measuredAlgorithms = [
     {
       id: 'VOZDUHAN',
       title: 'Воздухан: глобальное min-cost назначение',
-      eta: roiMetrics.completedCount > 0 ? roiMetrics.systemEtaSumMinutes / roiMetrics.completedCount : null,
+      eta: measuredSystemEta,
       sla: dispatchStats.length > 0 ? dispatchStats.filter(stat => stat.within15).length / dispatchStats.length * 100 : null,
       sample: dispatchStats.length,
       note: 'Фактические назначения системы'
@@ -182,6 +200,16 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
       note: 'Тот же набор назначений, baseline без глобальной оптимизации'
     }
   ];
+  const algorithmRows = benchmarkResults.length > 0
+    ? benchmarkResults.map(result => ({
+        id: result.id,
+        title: result.name,
+        eta: result.averageEtaMinutes,
+        sla: result.slaCompliancePct,
+        sample: result.sampleSize,
+        note: `${result.dispatchedCount} назначено; ${result.note}`
+      }))
+    : measuredAlgorithms;
 
   const fmtRub = (n: number) => n.toLocaleString('ru-RU');
 
@@ -230,6 +258,12 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           >
             Аналоги рынка
           </button>
+          <button
+            onClick={() => setActiveTab('CONTROL')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'CONTROL' ? 'bg-sky-500 text-white' : 'bg-slate-100 dark:bg-[#101724] text-gray-400'}`}
+          >
+            Контрольные тесты
+          </button>
         </div>
 
         {activeTab === 'ALGORITHMS' ? (
@@ -248,7 +282,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                     <tr><th className="py-2 pr-3">Алгоритм</th><th className="py-2 pr-3">Средний ETA</th><th className="py-2 pr-3">SLA &lt;= 15 мин</th><th className="py-2">Выборка</th></tr>
                   </thead>
                   <tbody>
-                    {measuredAlgorithms.map((algorithm, index) => (
+                    {algorithmRows.map((algorithm, index) => (
                       <tr key={algorithm.id} className="border-b border-slate-200 dark:border-[#1b2635]">
                         <td className={`py-3 pr-3 font-bold ${index === 0 ? 'text-emerald-400' : 'text-slate-700 dark:text-gray-300'}`}>
                           {index === 0 && '★ '}{algorithm.title}
@@ -281,6 +315,9 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 <div className="text-[11px] text-gray-500 mt-1">реальные записи диспетчеризации</div>
               </div>
             </div>
+            <div className="p-3 rounded-xl border border-slate-300 dark:border-[#263345] text-[11px] text-gray-500">
+              Формула: сэкономленные минуты = сумма(baseline ETA − ETA системы); предотвращённый ущерб = минуты × {AIRCRAFT_DOWNTIME_COST_PER_MIN.toLocaleString('ru-RU')} ₽. Источник ставки: {AIRCRAFT_DOWNTIME_COST_SOURCE}.
+            </div>
 
             <div className="p-4 rounded-2xl border bg-slate-100/50 dark:bg-[#101724]/50 border-slate-300 dark:border-[#1e2a3a]">
               <div className="text-xs font-bold uppercase text-gray-400 mb-3">Последние измерения</div>
@@ -298,6 +335,48 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
               )}
             </div>
           </>
+        ) : activeTab === 'CONTROL' ? (
+        <>
+          <div className="p-4 rounded-2xl border bg-slate-100/70 dark:bg-[#101724] border-slate-300 dark:border-[#1e2a3a]">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="font-extrabold text-slate-900 dark:text-white">Воспроизводимые контрольные тесты</h3>
+                <p className="text-xs text-gray-500 mt-1">Проверка квалификации, SLA, маршрутов, дефицита кадров и производительности текущего режима.</p>
+              </div>
+              <button onClick={onRunControlTests} className="px-3 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold cursor-pointer">Запустить тесты</button>
+            </div>
+            {controlTestResults.length === 0 ? (
+              <div className="text-xs text-gray-500">Нажмите «Запустить тесты», чтобы получить результат текущего SVO/CUSTOM-сценария.</div>
+            ) : (
+              <div className="space-y-2">
+                {controlTestResults.map(result => (
+                  <div key={`${result.name}-${result.ms}`} className="grid grid-cols-[auto_1fr_auto] gap-3 items-start border-b border-slate-200 dark:border-[#1b2635] pb-2 text-xs">
+                    <span className={`px-2 py-0.5 rounded-md font-black ${result.pass ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{result.pass ? 'PASS' : 'FAIL'}</span>
+                    <span className="text-gray-300">{result.name}<span className="block text-[10px] text-gray-500 mt-1">{result.details}</span></span>
+                    <span className="text-gray-500">{result.ms} ms</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="p-4 rounded-2xl border bg-slate-100/50 dark:bg-[#101724]/50 border-slate-300 dark:border-[#1e2a3a]">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-900 dark:text-white">Benchmark алгоритмов</h3>
+                <p className="text-xs text-gray-500 mt-1">Одинаковая очередь и один snapshot сотрудников для каждого алгоритма.</p>
+              </div>
+              <button onClick={onRunBenchmark} className="px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-bold cursor-pointer">Запустить benchmark</button>
+            </div>
+            {benchmarkResults.length === 0 ? <div className="text-xs text-gray-500">Запустите benchmark после создания очереди задач.</div> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="text-gray-500 border-b border-slate-300 dark:border-[#263345]"><tr><th className="py-2 pr-3">Алгоритм</th><th className="py-2 pr-3">N</th><th className="py-2 pr-3">Назначено</th><th className="py-2 pr-3">Средний ETA</th><th className="py-2 pr-3">P95</th><th className="py-2">SLA</th></tr></thead>
+                  <tbody>{benchmarkResults.map((result, index) => <tr key={result.id} className="border-b border-slate-200 dark:border-[#1b2635]"><td className={`py-2 pr-3 font-bold ${index === 0 ? 'text-emerald-400' : 'text-gray-300'}`}>{index === 0 && '★ '}{result.name}</td><td className="py-2 pr-3 text-gray-400">{result.sampleSize}</td><td className="py-2 pr-3 text-gray-400">{result.dispatchedCount}</td><td className="py-2 pr-3 text-sky-400">{result.averageEtaMinutes == null ? '—' : `${result.averageEtaMinutes.toFixed(2)} м`}</td><td className="py-2 pr-3 text-purple-400">{result.p95EtaMinutes == null ? '—' : `${result.p95EtaMinutes.toFixed(2)} м`}</td><td className="py-2 text-amber-400">{result.slaCompliancePct == null ? '—' : `${result.slaCompliancePct.toFixed(1)}%`}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
         ) : (
         <>
         {/* SOLUTION ANALOG SELECTOR */}
@@ -396,7 +475,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             </div>
             <div className="mt-2">
               <div className="text-2xl font-extrabold text-sky-400">
-                {completedCount > 0 ? (roiMetrics.systemEtaSumMinutes / completedCount).toFixed(1) : '—'} мин
+                {measuredSystemEta == null ? '—' : measuredSystemEta.toFixed(1)} мин
               </div>
               <div className="text-xs text-gray-400 mt-1 font-medium">
                 Фактическое среднее по закрытым вызовам
@@ -439,6 +518,21 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 <div className="text-gray-400">{analog.workload}; {analog.sla}</div>
               </React.Fragment>
             ))}
+          </div>
+          <div className="overflow-x-auto border-t border-slate-200 dark:border-[#1e2a3a] pt-3">
+            <table className="w-full text-[11px] text-left">
+              <thead className="text-gray-500"><tr><th className="py-1 pr-3">Функция</th>{ANALOGS.map(analog => <th key={analog.id} className="py-1 pr-2">{analog.shortTitle}</th>)}</tr></thead>
+              <tbody>{([
+                ['workOrders', 'Заявки / work orders'],
+                ['qualification', 'Квалификация'],
+                ['liveLocation', 'Геопозиция'],
+                ['roadRouting', 'Маршрут по дорогам'],
+                ['workload', 'Загрузка'],
+                ['sla', 'SLA 15 минут']
+              ] as const).map(([key, label]) => (
+                <tr key={key} className="border-t border-slate-200 dark:border-[#1b2635]"><td className="py-1.5 pr-3 text-gray-400">{label}</td>{ANALOGS.map(analog => { const status = analog.features[key]; return <td key={analog.id} className={`py-1.5 pr-2 font-bold ${status === 'YES' ? 'text-emerald-400' : status === 'PARTIAL' ? 'text-amber-400' : status === 'NO' ? 'text-rose-400' : 'text-gray-500'}`}>{status === 'YES' ? 'Да' : status === 'PARTIAL' ? 'Частично' : status === 'NO' ? 'Нет' : 'Не подтверждено'}</td>; })}</tr>
+              ))}</tbody>
+            </table>
           </div>
         </div>
 

@@ -28,6 +28,7 @@ import {
 } from '../services/airfieldGraph';
 import { spawnAirfieldShift } from '../services/shiftSpawner';
 import { computeDispatchPlan, pathSpeedFor } from '../core/dispatcher';
+import { runAlgorithmBenchmark, AlgorithmBenchmarkResult } from '../services/algorithmBenchmark';
 import { formatSimClock } from '../utils/time';
 
 // Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
@@ -1276,6 +1277,25 @@ export function useSimulationEngine(
     return results;
   }, [activeStands, isCustomMode, customElements, customConnections, standById]);
 
+  const runAlgorithmBenchmarkNow = useCallback((): AlgorithmBenchmarkResult[] => {
+    const calculateEta = isCustomMode
+      ? (w: Worker, s: Stand) => calculateModularWorkerEta(w, s, customElements, customConnections)
+      : (w: Worker, s: Stand) => calculateWorkerToStandEta(w, s);
+    const findNaive = isCustomMode
+      ? (cat: CategoryCode, s: Stand, wrks: Worker[], busy?: Set<string>) =>
+          findNearestFreeCustomWorker(cat, s, wrks, busy || new Set(), customElements, customConnections)
+      : (cat: CategoryCode, s: Stand, wrks: Worker[], busy?: Set<string>) =>
+          findNaiveNearestWorkerOfCategory(cat, s, wrks, busy || new Set());
+
+    return runAlgorithmBenchmark({
+      tasks: tasksRef.current,
+      workers: workersRef.current,
+      standById,
+      calculateEta,
+      findNaiveNearest: findNaive
+    });
+  }, [isCustomMode, customElements, customConnections, standById]);
+
   const updateWorker = useCallback((workerId: string, updates: Partial<Worker>) => {
     setWorkers(prev => {
       const next = prev.map(w => w.id === workerId ? { ...w, ...updates } : w);
@@ -1354,6 +1374,7 @@ export function useSimulationEngine(
     activeScenarioName,
     runPreset,
     runControlTests,
+    runAlgorithmBenchmark: runAlgorithmBenchmarkNow,
     activeStands,
     activeFacilities
   };

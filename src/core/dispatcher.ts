@@ -187,11 +187,13 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
   // Item 1: SLA-aware ordering (AOG first, then by slack-to-deadline)
   const ordered = sortQueuedBySla(queuedAll, workerById, busy, standById, fastCalculateEta);
 
-  const pushStat = (q: OtoTask, systemEta: number) => {
+  const pushStat = (q: OtoTask, systemEta: number, systemDistanceMeters: number, systemWorkerIds: string[] = []) => {
     const targetStand = standById.get(q.standId);
-    if (!targetStand) return;
-    const naivePick = findNaiveNearest(q.categoryCode, targetStand, workers, busy);
-    if (!naivePick) return;
+    if (!targetStand) return undefined;
+    const baselineBusy = new Set(busy);
+    systemWorkerIds.forEach(workerId => baselineBusy.delete(workerId));
+    const naivePick = findNaiveNearest(q.categoryCode, targetStand, workers, baselineBusy);
+    if (!naivePick) return undefined;
     naiveEtaByTask[q.id] = naivePick.etaMinutes;
     const saved = Math.max(0, Math.round((naivePick.etaMinutes - systemEta) * 10) / 10);
     newStats.push({
@@ -201,10 +203,17 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
       defectLabel: q.defectLabel,
       intuitiveEtaMinutes: naivePick.etaMinutes,
       systemEtaMinutes: systemEta,
+      intuitiveDistanceMeters: naivePick.distanceMeters,
+      systemDistanceMeters,
       savedMinutes: saved,
       within15: systemEta <= 15,
+      baselineWithin15: naivePick.etaMinutes <= 15,
       createdAt: new Date().toLocaleTimeString('ru-RU', { hour12: false })
     });
+    return {
+      intuitiveEtaMinutes: naivePick.etaMinutes,
+      intuitiveDistanceMeters: naivePick.distanceMeters
+    };
   };
 
   // ---- Step 1: manual (user-assembled) crews, in SLA order ----
@@ -242,15 +251,22 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     });
 
     const maxEtaMinutes = Math.max(...freshMembers.map(m => m.etaMinutes));
+    const comparison = pushStat(
+      qTask,
+      Math.min(...freshMembers.map(m => m.etaMinutes)),
+      freshMembers.reduce((sum, member) => sum + member.distanceMeters, 0),
+      freshMembers.map(member => member.workerId)
+    );
     dispatchedTasks[qTask.id] = {
       ...qTask,
       status: 'DISPATCHED' as const,
       crew: freshMembers,
       arrivedCount: 0,
       maxEtaMinutes,
+      intuitiveEtaMinutes: comparison?.intuitiveEtaMinutes,
+      intuitiveDistanceMeters: comparison?.intuitiveDistanceMeters,
       reservedWorkerId: undefined
     };
-    pushStat(qTask, Math.min(...freshMembers.map(m => m.etaMinutes)));
   }
 
   // ---- Step 2: auto tasks → GLOBAL MIN-COST ASSIGNMENT ----
@@ -400,15 +416,17 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
         busy.add(cand.w.id);
         load[cand.w.id] = (load[cand.w.id] || 0) + 1;
 
+        const comparison = pushStat(q, member.etaMinutes, member.distanceMeters, [member.workerId]);
         dispatchedTasks[q.id] = {
           ...q,
           status: 'DISPATCHED' as const,
           crew: [member],
           arrivedCount: 0,
           maxEtaMinutes: member.etaMinutes,
+          intuitiveEtaMinutes: comparison?.intuitiveEtaMinutes,
+          intuitiveDistanceMeters: comparison?.intuitiveDistanceMeters,
           reservedWorkerId: undefined
         };
-        pushStat(q, member.etaMinutes);
       }
     }
 
@@ -579,15 +597,22 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
             dispatchedCount: (p.w.dispatchedCount || 0) + 1
           };
         }
+        const comparison = pushStat(
+          q,
+          maxEta,
+          crew.reduce((sum, member) => sum + member.distanceMeters, 0),
+          crew.map(member => member.workerId)
+        );
         dispatchedTasks[q.id] = {
           ...q,
           status: 'DISPATCHED' as const,
           crew,
           arrivedCount: 0,
           maxEtaMinutes: maxEta,
+          intuitiveEtaMinutes: comparison?.intuitiveEtaMinutes,
+          intuitiveDistanceMeters: comparison?.intuitiveDistanceMeters,
           reservedWorkerId: undefined
         };
-        pushStat(q, maxEta);
         notifications.push(`👷 Бригада собрана: ${crew.map(c => `${c.workerName} (Cat ${c.categoryCode}, ${c.etaMinutes} мин)`).join(' + ')} → ${q.standLabel} (max ETA ${maxEta} мин).`);
       }
     }
@@ -675,15 +700,17 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
       m.workerId === slowestMember.workerId ? bestMember : m
     );
     const newMaxEta = Math.max(...newCrew.map(m => m.etaMinutes));
+    const comparison = pushStat(task, newMaxEta, newCrew.reduce((sum, member) => sum + member.distanceMeters, 0), newCrew.map(member => member.workerId));
     dispatchedTasks[task.id] = {
       ...task,
       crew: newCrew,
       arrivedCount: 0,
       maxEtaMinutes: newMaxEta,
+      intuitiveEtaMinutes: comparison?.intuitiveEtaMinutes,
+      intuitiveDistanceMeters: comparison?.intuitiveDistanceMeters,
       elapsedTransitSec: 0,
       reservedWorkerId: undefined
     };
-    pushStat(task, newMaxEta);
     notifications.push(`🔁 Задача ${task.id} перекинута на ${bestFree.name} — он ближе к стоянке, чем ${slowestMember.workerName}.`);
   }
 
@@ -784,12 +811,15 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
     };
 
     // High task becomes DISPATCHED with the preempted engineer
+    const comparison = pushStat(highTask, member.etaMinutes, member.distanceMeters, [member.workerId]);
     dispatchedTasks[highTask.id] = {
       ...highTask,
       status: 'DISPATCHED' as const,
       crew: [member],
       arrivedCount: 0,
       maxEtaMinutes: member.etaMinutes,
+      intuitiveEtaMinutes: comparison?.intuitiveEtaMinutes,
+      intuitiveDistanceMeters: comparison?.intuitiveDistanceMeters,
       reservedWorkerId: undefined
     };
 
@@ -805,7 +835,6 @@ export function computeDispatchPlan(ctx: DispatcherContext): DispatcherOutput {
       reservedWorkerId: undefined
     };
 
-    pushStat(highTask, member.etaMinutes);
     notifications.push(`⚠️ КАСКАДНОЕ ПЕРЕНАЗНАЧЕНИЕ: ${worker.name} снят с ${lowTask.id} и направлен на ${highTask.standLabel} (${highTask.aircraftType}) — критический вызов ${highTask.id}.`);
   }
 

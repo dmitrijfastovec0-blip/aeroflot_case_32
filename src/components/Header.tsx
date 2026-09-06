@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Worker, ThemeMode, WeatherMode, AirfieldMode } from '../types/index';
+import { Worker, ThemeMode, WeatherMode, AirfieldMode, DispatchStat } from '../types/index';
 import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
 import { WeatherWidget } from './WeatherWidget';
 import {
@@ -20,6 +20,7 @@ interface HeaderProps {
   airfieldMode?: AirfieldMode;
   onToggleAirfieldMode?: () => void;
   roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
+  dispatchStats: DispatchStat[];
   onRunScenario: (scenarioId: string) => void;
   weatherMode: WeatherMode;
   onWeatherChange: (mode: WeatherMode) => void;
@@ -50,6 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
   airfieldMode = 'SVO',
   onToggleAirfieldMode,
   roiMetrics,
+  dispatchStats,
   onRunScenario,
   weatherMode,
   onWeatherChange,
@@ -59,10 +61,12 @@ export const Header: React.FC<HeaderProps> = ({
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isRoiOpen, setIsRoiOpen] = useState(false);
 
-  const { completedCount, systemEtaSumMinutes, intuitiveEtaSumMinutes } = roiMetrics;
+  const completedCount = dispatchStats.length;
+  const systemEtaSumMinutes = dispatchStats.reduce((sum, stat) => sum + stat.systemEtaMinutes, 0);
+  const intuitiveEtaSumMinutes = dispatchStats.reduce((sum, stat) => sum + stat.intuitiveEtaMinutes, 0);
   const systemAvgMinutes = completedCount > 0 ? Math.round((systemEtaSumMinutes / completedCount) * 10) / 10 : 0;
   const manualAvgMinutes = completedCount > 0 ? Math.round((intuitiveEtaSumMinutes / completedCount) * 10) / 10 : 0;
-  const savedMinutes = completedCount > 0 ? Math.max(0, Math.round((manualAvgMinutes - systemAvgMinutes) * completedCount * 10) / 10) : 0;
+  const savedMinutes = dispatchStats.reduce((sum, stat) => sum + stat.savedMinutes, 0);
   const preventedLossRub = Math.round(savedMinutes * AIRCRAFT_DOWNTIME_COST_PER_MIN);
 
   const fmtRub = (n: number) => n.toLocaleString('ru-RU');

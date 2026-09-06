@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { OtoTask, ThemeMode, Stand, WeatherMode, AirportElement, AirportConnection, AirfieldMode, Worker } from './types/index';
 import { SVO_STANDS, DEFECT_TYPES, DEFAULT_CUSTOM_ELEMENTS, DEFAULT_CUSTOM_CONNECTIONS } from './constants/index';
-import { useSimulationEngine } from './hooks/useSimulationEngine';
+import { useSimulationEngine, ControlTestResult } from './hooks/useSimulationEngine';
+import { AlgorithmBenchmarkResult } from './services/algorithmBenchmark';
 import { Header } from './components/Header';
 import { CanvasMap } from './components/CanvasMap';
 import { RightPanel } from './components/RightPanel';
@@ -45,6 +46,8 @@ export function App() {
   const [customElements, setCustomElements] = useState<AirportElement[]>(DEFAULT_CUSTOM_ELEMENTS);
   const [customConnections, setCustomConnections] = useState<AirportConnection[]>(DEFAULT_CUSTOM_CONNECTIONS);
   const [shiftCounts, setShiftCounts] = useState({ b1: 22, b2: 12, catA: 6, vehicles: 20 });
+  const [controlTestResults, setControlTestResults] = useState<ControlTestResult[]>([]);
+  const [benchmarkResults, setBenchmarkResults] = useState<AlgorithmBenchmarkResult[]>([]);
 
   // Sync theme with HTML root class
   useEffect(() => {
@@ -82,7 +85,9 @@ export function App() {
     activeScenarioName,
     activeStands,
     activeFacilities,
-    simClockSec
+    simClockSec,
+    runControlTests,
+    runAlgorithmBenchmark
   } = useSimulationEngine(customElements, customConnections, airfieldMode);
 
   // Keep selected stand valid across airfield modes (SVO <-> CUSTOM)
@@ -230,12 +235,16 @@ export function App() {
       />
 
       {/* Comparative Analytics Dashboard Modal */}
-      <AnalyticsModal
+        <AnalyticsModal
         isOpen={isAnalyticsOpen}
         onClose={() => setIsAnalyticsOpen(false)}
         roiMetrics={roiMetrics}
-        dispatchStats={dispatchStats}
-        theme={theme}
+          dispatchStats={dispatchStats}
+          controlTestResults={controlTestResults}
+          benchmarkResults={benchmarkResults}
+          onRunControlTests={() => setControlTestResults(runControlTests())}
+          onRunBenchmark={() => setBenchmarkResults(runAlgorithmBenchmark())}
+          theme={theme}
       />
 
       {/* Gantt Chart Timeline Modal */}
@@ -299,6 +308,7 @@ export function App() {
           });
         }}
         roiMetrics={roiMetrics}
+        dispatchStats={dispatchStats}
         onRunScenario={runScenario}
         weatherMode={weatherMode}
         onWeatherChange={setWeatherMode}

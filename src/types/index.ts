@@ -123,6 +123,7 @@ export interface OtoTask {
   arrivedCount: number;
   maxEtaMinutes: number;
   intuitiveEtaMinutes?: number;
+  intuitiveDistanceMeters?: number;
   slaLimitMinutes: number;
   withinSla: boolean;
   createdAt: string;
@@ -155,7 +156,10 @@ export interface DispatchStat {
   defectLabel?: string;
   intuitiveEtaMinutes: number;
   systemEtaMinutes: number;
+  intuitiveDistanceMeters: number;
+  systemDistanceMeters: number;
   savedMinutes: number;
   within15: boolean;
+  baselineWithin15: boolean;
   createdAt: string;
 }
