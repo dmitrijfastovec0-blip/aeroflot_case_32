@@ -273,9 +273,7 @@ export function App() {
           dispatchStats={dispatchStats}
           workers={workers}
           tasks={tasks}
-          controlTestResults={controlTestResults}
           benchmarkResults={benchmarkResults}
-          onRunControlTests={() => setControlTestResults(runControlTests())}
           onRunBenchmark={() => setBenchmarkResults(runAlgorithmBenchmark())}
           theme={theme}
       />

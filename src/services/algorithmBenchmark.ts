@@ -232,12 +232,54 @@ const runSimplePolicy = (
  * @returns Массив результатов тестирования по 6 алгоритмам
  */
 export function runAlgorithmBenchmark(context: BenchmarkContext): AlgorithmBenchmarkResult[] {
-  const sample = context.tasks.filter(task => task.status === 'QUEUED');
+  let sample = context.tasks.filter(task => task.status === 'QUEUED');
+  
+  // Если очередь в данный момент пуста, формируем репрезентативную выборку из 6 стоянок перрона
+  if (sample.length === 0) {
+    const standsList = Array.from(context.standById.values());
+    const defects = [
+      { code: 'B1' as CategoryCode, label: 'ATA 72 — Стружка в масле', prio: 'AOG' as const, crew: [{ categoryCode: 'B1' as CategoryCode, count: 1 }] },
+      { code: 'B2' as CategoryCode, label: 'ATA 34 — Сбой TCAS', prio: 'URGENT' as const, crew: [{ categoryCode: 'B2' as CategoryCode, count: 1 }] },
+      { code: 'B1' as CategoryCode, label: 'ATA 32 — Люфт тормоза', prio: 'ROUTINE' as const, crew: [{ categoryCode: 'B1' as CategoryCode, count: 1 }] },
+      { code: 'B2' as CategoryCode, label: 'ATA 24 — Генератор ВСУ', prio: 'URGENT' as const, crew: [{ categoryCode: 'B2' as CategoryCode, count: 1 }] },
+      { code: 'A' as CategoryCode, label: 'ATA 12 — Заправка гидросистемы', prio: 'ROUTINE' as const, crew: [{ categoryCode: 'A' as CategoryCode, count: 1 }] },
+      { code: 'B1' as CategoryCode, label: 'ATA 49 — Давление ВСУ', prio: 'AOG' as const, crew: [{ categoryCode: 'B1' as CategoryCode, count: 1 }, { categoryCode: 'A' as CategoryCode, count: 1 }] }
+    ];
+    sample = standsList.slice(0, 6).map((stand, idx) => {
+      const def = defects[idx % defects.length];
+      return {
+        id: `bench-task-${idx + 1}`,
+        standId: stand.id,
+        standLabel: stand.label,
+        aircraftType: stand.aircraftType || 'A320',
+        categoryCode: def.code,
+        categoryLabel: def.label,
+        defectLabel: def.label,
+        requiredCrew: def.crew,
+        priority: def.prio,
+        status: 'QUEUED' as const,
+        crew: [],
+        arrivedCount: 0,
+        maxEtaMinutes: 15,
+        slaLimitMinutes: 15,
+        withinSla: true,
+        createdAt: '12:00',
+        elapsedWorkSec: 0,
+        targetWorkSec: 40
+      };
+    });
+  }
+
+  const evalContext: BenchmarkContext = {
+    ...context,
+    tasks: sample
+  };
+
   const results: AlgorithmBenchmarkResult[] = [];
 
   // 1. Прогон флагманского алгоритма «AeroDispatch» (венгерский алгоритм + SLA-slack + Zone Guard)
   const optimalStarted = performance.now();
-  const optimal = computeDispatchPlan(context);
+  const optimal = computeDispatchPlan(evalContext);
   const optimalAssignments: Assignment[] = Object.values(optimal.dispatchedTasks)
     .map(task => {
       const members = task.crew;
