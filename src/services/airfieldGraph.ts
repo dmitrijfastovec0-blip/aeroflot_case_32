@@ -1,22 +1,44 @@
+/**
+ * ============================================================================
+ * ДИНАМИЧЕСКИЙ ДОРОЖНЫЙ ГРАФ ПОЛЬЗОВАТЕЛЬСКОГО ПОЛИГОНА (CUSTOM AIRFIELD GRAPH)
+ * ----------------------------------------------------------------------------
+ * Модуль отвечает за генерацию топологии дорог и маршрутизацию на
+ * произвольных аэродромах, созданных пользователем в интерактивном
+ * конструкторе (LocationBuilderWorkspace).
+ * 
+ * Особенности:
+ * - Извлечение стоянок (STAND) и оперативных баз (DUTY_STATION, HANGAR, PARKING).
+ * - Построение связного графа из пользовательских дорог (ROAD, TAXIWAY, SERVICE).
+ * - Метрическое масштабирование: канвас 100% x 100% сопоставляется с 4000м x 2800м.
+ * - Поиск пути Дейкстры по явно нарисованным дорожным соединениям.
+ * ============================================================================
+ */
+
 import { Stand, Facility, Worker, TaskCrewMember, AirportElement, AirportConnection, CategoryCode } from '../types/index';
 import { SVO_FACILITIES, REAL_SVO_FACILITIES } from '../constants/index';
 import { getWeatherSpeeds } from './dijkstra';
 
+/** Результат вычисления маршрута по пользовательскому полигону */
 export interface RouteResult {
+  /** Промежуточные точки отрезков */
   points: { x: number; y: number }[];
+  /** Полный список путевых точек траектории движения */
   waypoints: { x: number; y: number }[];
+  /** Длина маршрута в метрах */
   distanceMeters: number;
+  /** Достижима ли целевая стоянка по нарисованным дорогам */
   reachable: boolean;
 }
 
-// Metric coordinate scaling: canvas is 100% x 100% representing 4000m x 2800m
+/** Расчет метрического расстояния между точками (масштаб: 100% = 4000x2800 м) */
 export const distBetweenMeters = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
   Math.hypot((p2.x - p1.x) * 40, (p2.y - p1.y) * 28);
 
 /**
- * Extracts stand list from custom elements
+ * Извлекает стоянки воздушных судов из массива элементов полигона
  */
 export function extractCustomStands(elements: AirportElement[]): Stand[] {
+
   return elements
     .filter(e => e.kind === 'STAND')
     .map(e => ({

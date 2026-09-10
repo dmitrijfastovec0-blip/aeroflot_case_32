@@ -11,11 +11,6 @@ cd "$(dirname "$0")"
 SERVER="${SERVER:-}"
 TARGET_DIR="/var/www/aeroflot_case"
 
-if [ -z "$SERVER" ]; then
-    echo "Ошибка: задайте SERVER, например SERVER=root@example.com ./deploy.sh" >&2
-    exit 1
-fi
-
 DO_BUILD=true
 
 # Парсинг аргументов
@@ -29,6 +24,11 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+if [ -z "$SERVER" ]; then
+    echo "Ошибка: задайте SERVER, например SERVER=root@example.com ./deploy.sh" >&2
+    exit 1
+fi
 
 echo "=========================================================="
 echo "🚀 Деплой SVO OTO Aeroflot на $SERVER"

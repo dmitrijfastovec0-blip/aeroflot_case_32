@@ -27,19 +27,59 @@ import {
   getCustomReturnToBaseWaypoints
 } from '../services/airfieldGraph';
 import { spawnAirfieldShift } from '../services/shiftSpawner';
+/**
+ * ============================================================================
+ * ХУК ДВИЖКА СИМУЛЯЦИИ ПЕРРОНА (USE SIMULATION ENGINE)
+ * ----------------------------------------------------------------------------
+ * Центральный реактивный оркестратор состояния системы «AeroDispatch».
+ * 
+ * Основные зоны ответственности:
+ * 1. Игровой/симуляционный цикл (Simulation Tick Loop):
+ *    - Запускается через requestAnimationFrame с поддержкой ускорения времени
+ *      (1x, 2x, 5x, 10x, 30x, 50x) и паузы (Space).
+ *    - Ведет виртуальные часы симуляции (simClockSec).
+ * 2. Жизненный цикл специалистов:
+ *    - Посадка и получение инструмента (BOARDING_VEHICLE).
+ *    - Движение по путевым точкам графа к стоянке (IN_TRANSIT).
+ *    - Проведение работ на борту ВС (WORKING_ON_SITE).
+ *    - Возврат на базу приписки (RETURNING_TO_BASE) или уход в патрулирование (FREE_PATROLLING).
+ * 3. Очередь и диспетчеризация:
+ *    - Автоматический вызов ядра computeDispatchPlan при изменении очереди или освобождении ИТП.
+ *    - Резервирование специалистов lookahead.
+ * 4. Аналитика эффективности и расчет ROI:
+ *    - Фиксация сэкономленного времени простоя (savedMinutes) и предотвращенного ущерба в рублях.
+ * 5. Сценарное тестирование и стресс-тесты:
+ *    - Базовый день, Серия вызовов, Пиковая нагрузка, Адский пик, AOG перехват,
+ *      Кадровый дефицит, Снегопад, Сброс смены.
+ * ============================================================================
+ */
+
 import { computeDispatchPlan, pathSpeedFor } from '../core/dispatcher';
 import { runAlgorithmBenchmark, AlgorithmBenchmarkResult } from '../services/algorithmBenchmark';
 import { formatSimClock } from '../utils/time';
 
-// Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
+/** Экспорт типа аналитической статистики диспетчеризации */
 export type { DispatchStat };
+
+/** Результат выполнения контрольного теста верификации алгоритмов */
 export interface ControlTestResult {
+  /** Название контрольного теста */
   name: string;
+  /** Пройден ли тест успешно */
   pass: boolean;
+  /** Детали и диагностические параметры */
   details: string;
+  /** Время выполнения теста в миллисекундах */
   ms: number;
 }
 
+/**
+ * Хук управления симуляцией оперативного обслуживания перрона
+ * 
+ * @param customElements Элементы пользовательского полигона (при режиме CUSTOM)
+ * @param customConnections Соединения дорожного графа пользовательского полигона
+ * @param airfieldMode Режим аэродрома: 'SVO' (Шереметьево) или 'CUSTOM' (пользовательский)
+ */
 export function useSimulationEngine(
   customElements: AirportElement[] = [],
   customConnections: AirportConnection[] = [],
@@ -748,7 +788,7 @@ export function useSimulationEngine(
   // Auto-launch initial active simulation on startup so engineers move and perform work immediately!
   useEffect(() => {
     const timer = setTimeout(() => {
-      runScenario('standard');
+      runScenario('series');
     }, 400);
     return () => clearTimeout(timer);
   }, []);

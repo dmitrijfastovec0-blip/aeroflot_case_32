@@ -1,13 +1,29 @@
+/**
+ * ============================================================================
+ * ВЕРХНЯЯ ПАНЕЛЬ УПРАВЛЕНИЯ ДИСПЕТЧЕРА (HEADER BAR)
+ * ----------------------------------------------------------------------------
+ * Верхняя консоль управления ЦУП ОТО:
+ * - Переключение темы (Dark/Light)
+ * - Управление симуляцией: пауза/пуск (Space), скорость (1x, 10x, 50x)
+ * - Выбор сценариев нагрузки (Базовый день, Серия, Пик, Адский пик, AOG, Дефицит)
+ * - Виджет погоды и погодных модификаторов (WeatherWidget)
+ * - Индикатор экономического эффекта: сэкономленные минуты и предотвращенный ущерб
+ * - Кнопки вызова модальных окон (Аналитика, Конфигуратор смены, Таймлайн, Конструктор)
+ * ============================================================================
+ */
+
 import React, { useState } from 'react';
-import { Worker, ThemeMode, WeatherMode, AirfieldMode, DispatchStat } from '../types/index';
-import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import { Worker, ThemeMode, WeatherMode, AirfieldMode, DispatchStat } from '../types';
+import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants';
 import { WeatherWidget } from './WeatherWidget';
 import {
   FastForward, Sun, Moon, Pause, Play, Settings2, Users,
   Wallet, TrendingDown, ShieldCheck, Rocket, ListChecks, Zap, Siren, AlertOctagon, Snowflake, RefreshCcw, ChevronDown, BarChart3, Clock, MapPin, Sliders
 } from 'lucide-react';
 
+/** Свойства верхней панели управления */
 interface HeaderProps {
+
   workers: Worker[];
   simSpeed: number;
   onSimSpeedChange: (speed: number) => void;
@@ -29,13 +45,9 @@ interface HeaderProps {
 }
 
 const SCENARIOS = [
-  { id: 'standard', label: 'Базовый день', icon: <Rocket className="w-4 h-4 text-emerald-400" /> },
   { id: 'series', label: 'Серия вызовов', icon: <ListChecks className="w-4 h-4 text-sky-400" /> },
-  { id: 'peak', label: 'Пиковая нагрузка', icon: <Zap className="w-4 h-4 text-amber-400" /> },
-  { id: 'hellish', label: '🔥 Адский пик (все стоянки)', icon: <Zap className="w-4 h-4 text-rose-500 animate-pulse" /> },
-  { id: 'aog', label: 'AOG Перехват', icon: <Siren className="w-4 h-4 text-rose-400" /> },
-  { id: 'deficit', label: 'Кадровый дефицит', icon: <AlertOctagon className="w-4 h-4 text-orange-400" /> },
-  { id: 'reset', label: 'Смена ПТО', icon: <RefreshCcw className="w-4 h-4 text-red-400" /> }
+  { id: 'hellish', label: 'Экстремальная нагрузка', icon: <Zap className="w-4 h-4 text-amber-400" /> },
+  { id: 'aog', label: 'AOG Перехват', icon: <Siren className="w-4 h-4 text-rose-400" /> }
 ];
 
 export const Header: React.FC<HeaderProps> = ({

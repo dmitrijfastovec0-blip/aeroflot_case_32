@@ -1,9 +1,37 @@
+/**
+ * ============================================================================
+ * ВЫСОКОПРОИЗВОДИТЕЛЬНЫЙ CANVAS 2D ДВИЖОК КАРТЫ ПЕРРОНА (USE CANVAS ENGINE)
+ * ----------------------------------------------------------------------------
+ * Отвечает за рендеринг и интерактивность карты летного поля Международного
+ * аэропорта Шереметьево (SVO) и пользовательских полигонов (CUSTOM).
+ * 
+ * Особенности реализации:
+ * 1. Векторный CAD-стиль отрисовки:
+ *    - Здания и терминалы скруглены через arcTo для устранения острых углов.
+ *    - Дорожная сеть перрона рендерится как единый Path2D со сглаженными сопряжениями
+ *      перекрестков (fillets), исключая артефакты наложений линий.
+ * 2. Интерактивная навигация:
+ *    - Плавное панорамирование (Pan) и масштабирование (Zoom) колесиком мыши.
+ *    - Автоматическое плавное слежение камеры (Camera Tracking) за выбранным инженером.
+ *    - Клик по стоянке для вызова радиального меню или открытия панели задачи.
+ *    - Всплывающие подсказки (Tooltips) при наведении на стоянки, базы и техников.
+ * 3. Анимация движения:
+ *    - Отрисовка спецмашин ПТО (иконка автомобиля) и пеших техников.
+ *    - Анимированные пунктирные траектории движения к борту.
+ *    - Проблесковые маячки экстренных вызовов AOG.
+ * 4. Темы оформления и погода:
+ *    - Поддержка темной (Dark Ops) и светлой (Day CAD) тем.
+ *    - Визуальные эффекты дождя, метели/снегопада и ночного освещения.
+ * ============================================================================
+ */
+
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { Worker, OtoTask, HoverTooltipData, ThemeMode, WeatherMode, TaskCrewMember, AirportElement, AirportConnection, AirfieldMode } from '../types/index';
 import { SVO_BUILDINGS, SVO_FACILITIES, SVO_STANDS, SVO_NODES, SVO_EDGES, CANVAS_THEMES } from '../constants/index';
 
-// Polyfill for CanvasRenderingContext2D.roundRect (missing in older Safari/Firefox)
+// Полифилл для CanvasRenderingContext2D.roundRect (для совместимости со старыми браузерами)
 if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+
   CanvasRenderingContext2D.prototype.roundRect = function (
     x: number,
     y: number,

@@ -55,7 +55,14 @@ describe('algorithm benchmark', () => {
       findNaiveNearest: (cat, s, allWorkers, busy) => findNearestFreeCustomWorker(cat, s, allWorkers, busy || new Set(), elements, connections)
     });
 
-    expect(results.map(result => result.id)).toEqual(['VOZDUHAN', 'GREEDY_NEAREST', 'FIFO_QUALIFICATION', 'ZONE_FIRST']);
+    expect(results.map(result => result.id)).toEqual([
+      'AERODISPATCH',
+      'GREEDY_GRAPH',
+      'GREEDY_DIRECT',
+      'FIFO_QUALIFICATION',
+      'ZONE_FIRST',
+      'MANUAL_RADIO'
+    ]);
     expect(results.every(result => result.sampleSize === 2)).toBe(true);
     expect(results.every(result => result.calculationMs >= 0)).toBe(true);
     expect(JSON.stringify([worker, catAWorker])).toBe(workersBefore);

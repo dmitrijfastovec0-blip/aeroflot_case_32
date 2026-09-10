@@ -1,9 +1,23 @@
+/**
+ * ============================================================================
+ * ДИАГРАММА ГАНТА И ТАЙМЛАЙН РАСПИСАНИЯ ОБСЛУЖИВАНИЯ (TIMELINE MODAL)
+ * ----------------------------------------------------------------------------
+ * Интерактивный таймлайн для визуализации временных интервалов:
+ * - Отображает временные отрезки каждой заявки (ожидание в очереди, транзит бригады,
+ *   непосредственное ТО на борту).
+ * - Шкала времени привязана к часам симуляции (simClockSec).
+ * - Позволяет отслеживать занятость стоянок и критические точки превышения SLA.
+ * ============================================================================
+ */
+
 import React, { useMemo, useRef, useEffect } from 'react';
-import { OtoTask, Worker, ThemeMode, Stand } from '../types/index';
-import { SVO_NODES } from '../constants/index';
+import { OtoTask, Worker, ThemeMode, Stand } from '../types';
+import { SVO_NODES } from '../constants';
 import { X, Table, MapPin } from 'lucide-react';
 
+/** Свойства модального окна таймлайна */
 interface TimelineModalProps {
+
   isOpen: boolean;
   onClose: () => void;
   tasks: OtoTask[];

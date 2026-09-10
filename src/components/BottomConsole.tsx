@@ -1,7 +1,21 @@
+/**
+ * ============================================================================
+ * НИЖНЯЯ ОПЕРАТИВНАЯ КОНСОЛЬ РЕЕСТРА ЗАЯВОК И СМЕНЫ (BOTTOM CONSOLE)
+ * ----------------------------------------------------------------------------
+ * Предоставляет диспетчеру доступ к полному оперативному реестру:
+ * - Вкладка «Активные»: задачи на этапе движения бригады (DISPATCHED) и работы на борту (WORKING).
+ * - Вкладка «Очередь»: задачи, ожидающие освобождения ИТП (QUEUED), с указанием причин ожидания (Explainable AI).
+ * - Вкладка «Завершено»: история обслуженных судов.
+ * - Вкладка «Смена»: полный список дежурных инженеров (B1, B2, A) со статусами,
+ *   местоположением и прикрепленным транспортом.
+ * ============================================================================
+ */
+
 import React, { useState } from 'react';
-import { OtoTask, Worker, ThemeMode } from '../types/index';
+import { OtoTask, Worker, ThemeMode } from '../types';
 import { Terminal, Layers, Clock, Trash2, ChevronUp, ChevronDown, Activity, CheckCircle2 } from 'lucide-react';
 
+/** Свойства нижней оперативной консоли */
 interface BottomConsoleProps {
   tasks: OtoTask[];
   queuedTasks: OtoTask[];
@@ -12,6 +26,7 @@ interface BottomConsoleProps {
   trackedWorkerId?: string | null;
   onTrackWorker?: (workerId: string) => void;
 }
+
 
 export const BottomConsole = React.memo<BottomConsoleProps>(({
   tasks,

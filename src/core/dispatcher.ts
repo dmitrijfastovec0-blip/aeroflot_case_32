@@ -1,23 +1,40 @@
+/**
+ * ============================================================================
+ * ЯДРО ДИСПЕТЧЕРИЗАЦИИ ОТО («AERODISPATCH» / PURE DISPATCH ENGINE)
+ * ----------------------------------------------------------------------------
+ * Центральный математический модуль принятия диспетчерских решений.
+ * Реализован в виде чистой детерминированной функции (без React-состояния и side-effects),
+ * что гарантирует 100% повторяемость расчетов и возможность покрытия unit-тестами.
+ * 
+ * Ключевые принципы целевой функции и весовой модели:
+ * 1. ETA как базовая метрика стоимости назначения (время прибытия к борту).
+ * 2. OVERQUAL_SURCHARGE (+10 мин):
+ *    Фиксированная надбавка к эффективному ETA при назначении инженера B1/B2
+ *    на слот Cat-A. Защищает ценных инженеров B1/B2 от нерационального расхода
+ *    на простые осмотры; подмена допускается только при реальном удалении Cat-A.
+ * 3. FATIGUE_WEIGHT (+12% за каждый прошлый вызов, лимит FATIGUE_CAP=5):
+ *    Балансировка усталости и справедливая ротация бригад. Предотвращает ситуацию,
+ *    когда один и тот же удобно расположенный инженер делает 15 вызовов за смену,
+ *    а остальные простаивают.
+ * 4. LOAD_WEIGHT (0.25):
+ *    Штраф за активную загрузку для кандидатов механизма LOOKAHEAD
+ *    (инженер, завершающий предыдущий борт, уже несет нагрузку).
+ * 5. ZONE_GUARD_COST (+3 мин):
+ *    Защита опорных баз ПТО от полного опустошения. Запрещает оголять сектор ниже 2 инженеров.
+ * 6. SLA_PENALTY (+60 мин):
+ *    Штраф за превышение отраслевого норматива 15 минут.
+ * 7. PRIORITY_BONUS:
+ *    AOG (+100), URGENT (+40), ROUTINE (0) — приоритет экстренных рейсов за дефицитный персонал.
+ * ============================================================================
+ */
+
 import { Worker, OtoTask, TaskCrewMember, WorkerStatus, CategoryCode, Stand, DispatchStat, TaskPriority, CrewRequirement } from '../types/index';
 import { hungarianMinCost } from '../services/hungarian';
 
+/** Число-сторож для несовместимых пар */
 const INF = 1e6;
 
-// Assignment-cost tuning (Step 2). ETA is the base cost; the rest steers the
-// global optimum toward operational realism:
-//  - OVERQUAL_SURCHARGE — B1/B2 covering a Cat-A slot pays a FIXED +10 min to its
-//    effective ETA. A real Cat-A engineer wins the slot whenever he is within
-//    10 min of the stand (normal apron distances are 1–9 min), so regulation
-//    crews (2×B1+1×A, 1×B1+1×A) are kept intact; substitution is a last resort
-//    only when the certified engineer is genuinely far away.
-//  - FATIGUE_WEIGHT    — rotation fairness: repeatedly picking the same nearby
-//    engineer costs +12% ETA per lifetime dispatch (capped at FATIGUE_CAP) —
-//    the "real load" the dispatcher can observe on a FREE candidate.
-//  - LOAD_WEIGHT       — active-commitment penalty for LOOKAHEAD candidates
-//    (an engineer mid-maintenance already carries load).
-//  - ZONE_GUARD_COST   — never strip a base below 2 idle engineers.
-//  - SLA_PENALTY       — breaching the 15-min regulation is very expensive.
-//  - PRIORITY_BONUS    — AOG/URGENT win scarce staff.
+// Весовые коэффициенты целевой функции
 const SLA_PENALTY = 60;
 const ZONE_GUARD_COST = 3;
 const OVERQUAL_SURCHARGE_MIN = 10;
@@ -26,62 +43,77 @@ const FATIGUE_CAP = 5;
 const LOAD_WEIGHT = 0.25;
 const PRIORITY_BONUS: Record<TaskPriority, number> = { AOG: 100, URGENT: 40, ROUTINE: 0 };
 
-// Required crew of an auto task: the ATA chapter's regulation roster wins,
-// falling back to a single engineer of the task's display category.
+/**
+ * Определяет регламентный состав бригады по задаче:
+ * Если задан requiredCrew главы ATA — берется регламентный состав,
+ * иначе — 1 специалист категории задачи.
+ */
 const reqOf = (t: OtoTask): CrewRequirement[] =>
   t.requiredCrew && t.requiredCrew.length > 0
     ? t.requiredCrew
     : [{ categoryCode: t.categoryCode, count: 1 }];
 
+/** Суммарное количество человек в требуемом составе бригады */
 const totalSlots = (reqs: CrewRequirement[]): number =>
   reqs.reduce((s, r) => s + r.count, 0);
 
+/** Проверяет корректность рассчитанного маршрута к стоянке */
 const hasUsableRoute = (member: TaskCrewMember): boolean =>
   Number.isFinite(member.etaMinutes) && member.waypoints.length > 0;
 
-// Skill-ladder eligibility: trades are strict (B1≠B2≠A). A Cat-A slot may be
-// covered by any certified engineer at a fixed surcharge; higher certs never
-// substitute for a lower trade (B1 cannot do avionics).
+/**
+ * Проверяет допустимость квалификации:
+ * Специальности B1 и B2 строго разделены (механик B1 не может обслуживать авионику B2).
+ * На слот линейного техника Cat-A может быть назначен любой инженер (B1, B2 или A).
+ */
 const overqualAllowed = (reqCat: CategoryCode, workerCat: CategoryCode): boolean =>
   reqCat === workerCat || reqCat === 'A';
 
-// Penalty in minutes added to a candidate's effective ETA for covering a
-// Cat-A slot without the Cat-A certificate. Infinity = not eligible at all.
+/**
+ * Штраф к расчетному ETA за закрытие слота Cat-A специалистом более высокой категории
+ */
 const overqualSurcharge = (reqCat: CategoryCode, workerCat: CategoryCode): number => {
   if (reqCat === workerCat) return 0;
   if (reqCat === 'A') return OVERQUAL_SURCHARGE_MIN;
   return Infinity;
 };
 
-// ============================================================================
-// PURE DISPATCH ENGINE (no React state)
-// ----------------------------------------------------------------------------
-// Every decision the dispatcher makes lives here as a pure function of
-// (tasks, workers, ETA calculator), so it can be unit-tested in isolation.
-// The React hook only calls this and applies the returned mutations.
-// ============================================================================
-
+/** Контекст входных данных для расчета плана диспетчеризации */
 export interface DispatcherContext {
-  tasks: OtoTask[]; // all tasks (QUEUED + DISPATCHED + WORKING) — busy-set derived from these
+  /** Все текущие задачи симуляции (QUEUED, DISPATCHED, WORKING) */
+  tasks: OtoTask[];
+  /** Полный список сотрудников смены */
   workers: Worker[];
+  /** Карта стоянок перрона по ID */
   standById: Map<string, Stand>;
+  /** Функция расчета ETA и путевых точек для конкретного инженера и стоянки */
   calculateEta: (w: Worker, stand: Stand) => TaskCrewMember;
+  /** Функция поиска ближайшего инженера для baseline оценки */
   findNaiveNearest: (catCode: CategoryCode, stand: Stand, workers: Worker[], busyIds?: Set<string>) => TaskCrewMember | null;
 }
 
+/** Результат вычисления диспетчерского плана */
 export interface DispatcherOutput {
+  /** Задачи, получившие назначения */
   dispatchedTasks: Record<string, OtoTask>;
+  /** Сотрудники, получившие новые назначения */
   dispatchedWorkers: Record<string, Worker>;
+  /** Статистические записи диспетчеризации для аналитики ROI */
   stats: DispatchStat[];
+  /** Оповещения для оператора */
   notifications: string[];
+  /** Причины ожидания для неназначенных задач (Explainable AI) */
   waitingReasons: Record<string, string>;
+  /** Флаг наличия изменений в плане */
   changed: boolean;
 }
 
-// SLA-aware queue ordering (item 1): AOG first, then by "slack" = remaining
-// time-to-deadline minus the best achievable ETA, so a ROUTINE call about to
-// breach its 15-min limit outranks a comfortable URGENT one. Tasks that
-// cannot be staffed right now sink to the back instead of jamming the front.
+/**
+ * SLA-ориентированная сортировка очереди задач:
+ * Задачи с наивысшим приоритетом (AOG) идут первыми.
+ * Далее задачи ранжируются по запасу времени (slack = оставшееся время до нарушения SLA 15 мин
+ * минус минимально достижимый ETA прибытия). Задачи с угрозой срыва SLA обслуживаются первыми.
+ */
 export function sortQueuedBySla(
   taskList: OtoTask[],
   workerIdx: Map<string, Worker>,

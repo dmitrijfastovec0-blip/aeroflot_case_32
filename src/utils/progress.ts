@@ -1,8 +1,28 @@
-import { OtoTask, Worker } from '../types/index';
+/**
+ * ============================================================================
+ * УТИЛИТЫ РАСЧЕТА ФИЗИЧЕСКОГО ПРОГРЕССА И ВРЕМЕНИ РАБОТ (PROGRESS UTILS)
+ * ----------------------------------------------------------------------------
+ * Предоставляет функции точной синхронизации UI с физическим положением
+ * специалистов на дорожном графе перрона:
+ * - calculateTaskTransitProgressPct: расчет процента преодоления пути (0..100%)
+ *   в строгой синхронизации с текущими координатами каждого члена бригады.
+ * - formatCompletedTaskDuration: расчет и форматирование фактического общего
+ *   времени от создания/отправки заявки до завершения ТО на борту ВС.
+ * ============================================================================
+ */
+
+import { OtoTask, Worker } from '../types';
 
 /**
- * Calculates physical transit completion percentage (0 to 100%)
- * strictly in 1:1 sync with workers' actual positions along their path.
+ * Рассчитывает процент физического выполнения транзита бригады к стоянке (от 0 до 100%).
+ * 
+ * Учитывает фактическое положение всех назначенных специалистов:
+ * если часть бригады уже прибыла к борту (WORKING_ON_SITE), их прогресс = 100%,
+ * для находящихся в пути суммируются пройденные сегменты путевых точек (pathWaypoints).
+ * 
+ * @param task Заявка на ОТО
+ * @param workers Список всех сотрудников смены
+ * @returns Процент завершения пути бригады (целое число от 0 до 100)
  */
 export function calculateTaskTransitProgressPct(task: OtoTask, workers: Worker[]): number {
   if (task.status === 'WORKING' || task.status === 'COMPLETED') return 100;
@@ -52,7 +72,10 @@ export function calculateTaskTransitProgressPct(task: OtoTask, workers: Worker[]
 }
 
 /**
- * Formats total elapsed time from dispatch/creation to completion.
+ * Форматирует фактическую длительность выполнения задачи от выезда до завершения работ.
+ * 
+ * @param task Завершенная заявка на ОТО
+ * @returns Человекочитаемая строка вида "8 мин 24 сек" или "45 сек"
  */
 export function formatCompletedTaskDuration(task: OtoTask): string {
   const startSec = task.startedAtSimSec ?? task.createdAtSimSec;
@@ -68,7 +91,7 @@ export function formatCompletedTaskDuration(task: OtoTask): string {
     return `${sec} сек`;
   }
 
-  // Fallback estimation if simulation clock delta is missing
+  // Резервная приближенная оценка, если метки времени отсутствуют
   const eta = task.maxEtaMinutes || 12;
   const workMin = (task.targetWorkSec || 40) / 20;
   const totalMin = Math.round((eta + workMin) * 10) / 10;

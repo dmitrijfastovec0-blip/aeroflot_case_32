@@ -1,9 +1,22 @@
+/**
+ * ============================================================================
+ * РАДИАЛЬНОЕ КОНТЕКСТНОЕ МЕНЮ СТОЯНКИ ВС (STAND RADIAL MENU)
+ * ----------------------------------------------------------------------------
+ * Всплывающее меню быстрого действия при клике на стоянку:
+ * - Экспресс-вызов дефектов (ATA 24, ATA 32, ATA 34, ATA 49, ATA 72) в 1 клик
+ * - Центрирование камеры перрона на стоянке (Focus Camera)
+ * - Открытие детальной панели параметров борта в RightPanel
+ * ============================================================================
+ */
+
 import React from 'react';
-import { Stand, ThemeMode } from '../types/index';
-import { DEFECT_TYPES } from '../constants/index';
+import { Stand, ThemeMode } from '../types';
+import { DEFECT_TYPES } from '../constants';
 import { Wrench, Zap, Eye, X, ChevronRight, Navigation, Sparkles } from 'lucide-react';
 
+/** Свойства контекстного меню стоянки */
 interface StandRadialMenuProps {
+
   stand: Stand;
   x: number;
   y: number;

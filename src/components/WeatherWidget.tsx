@@ -1,8 +1,22 @@
+/**
+ * ============================================================================
+ * ВИДЖЕТ ПОГОДНЫХ УСЛОВИЙ НА ПЕРРОНЕ (WEATHER WIDGET)
+ * ----------------------------------------------------------------------------
+ * Компонент оперативного переключения погодных условий:
+ * - Ясно (CLEAR): штатные скорости (100%)
+ * - Осадки / Ливень (RAIN): снижение скоростей движения (-20%)
+ * - Метель / Снегопад (BLIZZARD): критическое замедление техники и пешеходов (-50%)
+ * - Ночная смена (NIGHT): ночной режим видимости
+ * ============================================================================
+ */
+
 import React, { useState } from 'react';
-import { WeatherMode, ThemeMode } from '../types/index';
+import { WeatherMode, ThemeMode } from '../types';
 import { Sun, CloudRain, Wind, Moon, ChevronDown } from 'lucide-react';
 
+/** Свойства виджета погоды */
 interface WeatherWidgetProps {
+
   weatherMode: WeatherMode;
   onWeatherChange: (mode: WeatherMode) => void;
   theme: ThemeMode;

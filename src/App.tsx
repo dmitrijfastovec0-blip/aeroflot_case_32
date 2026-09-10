@@ -1,28 +1,59 @@
+/**
+ * ============================================================================
+ * ГЛАВНЫЙ КОМПОНЕНТ ДИСПЕТЧЕРСКОГО ПУЛЬТА ОТО («AERODISPATCH» / SVO OTO DASHBOARD)
+ * ----------------------------------------------------------------------------
+ * Связывает воедино все подсистемы:
+ * - CanvasMap: интерактивная векторная карта перрона SVO и полигонов
+ * - Header: оперативная панель управления симуляцией, сценариями и погодой
+ * - RightPanel: терминал создания задач, ручного назначения и монитора сценариев
+ * - BottomConsole: оперативный реестр активных, стоящих в очереди и завершенных заявок
+ * - Модальные окна: аналитика ROI, таймлайн Ганта, конфигуратор смены, конструктор перрона
+ * - useSimulationEngine: математический движок симуляции и цикл обновления
+ * ============================================================================
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
-import { OtoTask, ThemeMode, Stand, WeatherMode, AirportElement, AirportConnection, AirfieldMode, Worker } from './types/index';
-import { SVO_STANDS, DEFECT_TYPES, DEFAULT_CUSTOM_ELEMENTS, DEFAULT_CUSTOM_CONNECTIONS } from './constants/index';
-import { useSimulationEngine, ControlTestResult } from './hooks/useSimulationEngine';
-import { AlgorithmBenchmarkResult } from './services/algorithmBenchmark';
-import { Header } from './components/Header';
-import { CanvasMap } from './components/CanvasMap';
-import { RightPanel } from './components/RightPanel';
-import { BottomConsole } from './components/BottomConsole';
-import { SlaConfirmModal } from './components/SlaConfirmModal';
-import { ShiftConfigModal } from './components/ShiftConfigModal';
-import { AnalyticsModal } from './components/AnalyticsModal';
-import { StandRadialMenu } from './components/StandRadialMenu';
-import { TimelineModal } from './components/TimelineModal';
-import { WorkerEditModal } from './components/WorkerEditModal';
-import { LocationBuilderWorkspace } from './components/LocationBuilderWorkspace';
+import {
+  OtoTask,
+  ThemeMode,
+  Stand,
+  WeatherMode,
+  AirportElement,
+  AirportConnection,
+  AirfieldMode,
+  Worker
+} from './types';
+import {
+  SVO_STANDS,
+  DEFECT_TYPES,
+  DEFAULT_CUSTOM_ELEMENTS,
+  DEFAULT_CUSTOM_CONNECTIONS
+} from './constants';
+import { useSimulationEngine, ControlTestResult } from './hooks';
+import { AlgorithmBenchmarkResult } from './services';
+import {
+  Header,
+  CanvasMap,
+  RightPanel,
+  BottomConsole,
+  SlaConfirmModal,
+  ShiftConfigModal,
+  AnalyticsModal,
+  StandRadialMenu,
+  TimelineModal,
+  WorkerEditModal,
+  LocationBuilderWorkspace
+} from './components';
 
 export function App() {
   const [selectedStandId, setSelectedStandId] = useState<string | null>(SVO_STANDS[0].id);
 
-  // Light / Dark Theme Mode Engine
+  // Переключение темы интерфейса (Dark Ops / Day CAD)
   const [theme, setTheme] = useState<ThemeMode>('dark');
 
-  // Gantt Chart Timeline Modal State
+  // Модальное окно таймлайна Ганта (расписание обслуживания)
   const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(false);
+
 
   // Comparative Analytics Modal State
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState<boolean>(false);
@@ -363,7 +394,7 @@ export function App() {
               setCustomConnections(conns);
               setIsLocationBuilderOpen(false);
               setAirfieldMode('CUSTOM');
-              runScenario('standard');
+              runScenario('series');
             }}
             theme={theme}
           />

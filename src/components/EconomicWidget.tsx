@@ -1,9 +1,22 @@
+/**
+ * ============================================================================
+ * ВИДЖЕТ ЭКОНОМИЧЕСКОЙ ЭФФЕКТИВНОСТИ И ROI (ECONOMIC WIDGET)
+ * ----------------------------------------------------------------------------
+ * Информационная карточка реального времени, демонстрирующая экономический эффект:
+ * - Среднее время прибытия системы («AeroDispatch») против базового диспетчера.
+ * - Суммарно сэкономленные минуты простоя воздушных судов.
+ * - Расчетная сумма предотвращенного финансового ущерба (в рублях).
+ * ============================================================================
+ */
+
 import React from 'react';
-import { ThemeMode } from '../types/index';
-import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants/index';
+import { ThemeMode } from '../types';
+import { AIRCRAFT_DOWNTIME_COST_PER_MIN } from '../constants';
 import { Wallet, TrendingDown, Timer, ShieldCheck } from 'lucide-react';
 
+/** Свойства экономического виджета */
 interface EconomicWidgetProps {
+
   roiMetrics: { completedCount: number; systemEtaSumMinutes: number; intuitiveEtaSumMinutes: number };
   theme: ThemeMode;
 }

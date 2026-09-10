@@ -1,46 +1,140 @@
+/**
+ * ============================================================================
+ * ТИПЫ ДАННЫХ И МОДЕЛИ СИСТЕМЫ ОТО («AERODISPATCH» / SVO OTO AEROFLOT)
+ * ----------------------------------------------------------------------------
+ * Описывает предметную область оперативного технического обслуживания (ОТО)
+ * воздушных судов (ВС) на перроне международного аэропорта Шереметьево (SVO)
+ * и пользовательских тестовых полигонах (CUSTOM).
+ * 
+ * Включает:
+ * - Квалификации инженерно-технического персонала (ФАП-147 / EASA Part-66: B1, B2, A)
+ * - Терминальные комплексы (Северный, Южный, Удаленные стоянки)
+ * - Регламентные составы бригад под главы ATA
+ * - Задачи ОТО (OtoTask), приоритеты (AOG, URGENT, ROUTINE) и SLA (15 минут)
+ * - Статусы специалистов и спецавтотранспорта на перроне
+ * - Статистику диспетчеризации (DispatchStat) и экономический эффект
+ * ============================================================================
+ */
+
+/**
+ * Категории специализации авиационного персонала:
+ * - ENGINES_AIRFRAME: Силовые установки и планер (механические системы)
+ * - AVIONICS: Радиоэлектронное, пилотажно-навигационное и электрооборудование
+ * - GENERAL_MECHANIC: Линейный авиатехник оперативного обслуживания
+ */
 export type Category = 'ENGINES_AIRFRAME' | 'AVIONICS' | 'GENERAL_MECHANIC';
+
+/**
+ * Квалификационные коды свидетельств специалистов (ФАП-147 / Part-66):
+ * - 'B1': Авиационный техник/инженер по планеру и двигателям (Airframe & Powerplant).
+ *         Имеет право выполнять и сертифицировать обслуживание систем планера,
+ *         силовой установки, механических и гидравлических систем.
+ * - 'B2': Авиационный техник/инженер по авионике (Avionics & Electrical).
+ *         Обслуживает радиоэлектронное оборудование, радары, автопилот, приборные панели.
+ * - 'A':  Линейный авиатехник (Line Maintenance Mechanic).
+ *         Выполняет базовое оперативное ТО: предполетные осмотры, замену колес/тормозов,
+ *         долив технических жидкостей и масел.
+ */
 export type CategoryCode = 'B1' | 'B2' | 'A';
 
+/**
+ * Секторы / терминальные комплексы аэропорта Шереметьево:
+ * - 'NORTH': Северный терминальный комплекс (Терминалы B, C, стоянки перрона СТК)
+ * - 'SOUTH': Южный терминальный комплекс (Терминалы D, E, F, стоянки ЮТК)
+ * - 'REMOTE': Удаленные перронные стоянки (межполосные перроны, стоянки ожидания)
+ */
 export type Complex = 'NORTH' | 'SOUTH' | 'REMOTE';
+
+/**
+ * Типы наземных объектов инфраструктуры ОТО:
+ * - 'DUTY_STATION': Пункт технического обслуживания (ПТО) — оперативная база бригад
+ * - 'HANGAR_BASE': Ангарный комплекс / база тяжелых форм ТО (АК)
+ * - 'PARKING': Стоянка спецтехники (автомобили ПТО, передвижные мастерские)
+ * - 'HANGAR': Ангар для закрытых инспекций
+ */
 export type FacilityType = 'DUTY_STATION' | 'HANGAR_BASE' | 'PARKING' | 'HANGAR';
 
+/** Тема графического интерфейса: темная или светлая */
 export type ThemeMode = 'dark' | 'light';
+
+/**
+ * Погодные условия на перроне (влияют на скорость движения техники и видимость):
+ * - 'CLEAR': Ясная погода, штатные скорости (авто 20 км/ч, пешком 4.5 км/ч)
+ * - 'RAIN': Дождь, мокрый перрон
+ * - 'BLIZZARD': Метель/снегопад (скорость авто снижается до 12 км/ч, пешком до 3.5 км/ч)
+ * - 'NIGHT': Ночная смена (ночное освещение перрона)
+ */
 export type WeatherMode = 'CLEAR' | 'RAIN' | 'BLIZZARD' | 'NIGHT';
+
+/**
+ * Приоритет оперативной заявки на ТО:
+ * - 'AOG': Aircraft On Ground — критический сбой перед вылетом, угроза задержки рейса (наивысший приоритет)
+ * - 'URGENT': Срочная заявка — дефект, требующий немедленного устранения до начала посадки
+ * - 'ROUTINE': Плановое оперативное ТО — регулярный транзитный или суточный чек
+ */
 export type TaskPriority = 'AOG' | 'URGENT' | 'ROUTINE';
 
-// Регламентный состав бригады: сколько инженеров какой квалификации нужно
-// для данной главы ATA (единый источник — используется и в каталоге дефектов,
-// и в диспетчере для сборки полных бригад).
+/**
+ * Регламентный состав бригады:
+ * Указывает количество специалистов определенной квалификации (B1, B2, A),
+ * необходимых для устранения дефекта согласно регламенту авиакомпании и руководству AMM/MEL.
+ */
 export interface CrewRequirement {
+  /** Квалификация инженера (B1, B2, A) */
   categoryCode: CategoryCode;
+  /** Количество требуемых специалистов данной квалификации */
   count: number;
 }
 
+/**
+ * Объект инфраструктуры аэропорта (база, ПТО, ангар, парковка)
+ */
 export interface Facility {
+  /** Уникальный идентификатор базы */
   id: string;
+  /** Человекочитаемое название (например, "База ПТО Север 1") */
   name: string;
+  /** Короткий код для отображения на карте (например, "ПТО-1") */
   code: string;
+  /** Терминальный комплекс расположения */
   complex: Complex;
+  /** Координата X на карте перрона (0..100) */
   x: number;
+  /** Координата Y на карте перрона (0..100) */
   y: number;
+  /** Функциональный тип объекта */
   type: FacilityType;
 }
 
+/**
+ * Стоянка воздушного судна (МС — место стоянки)
+ */
 export interface Stand {
+  /** Уникальный код стоянки (например, "STAND_B1") */
   id: string;
+  /** Отображаемый номер/маркировка стоянки (например, "101", "305") */
   label: string;
+  /** Комплекс расположения (Север, Юг, Удаленная) */
   complex: Complex;
+  /** Координата X (0..100) */
   x: number;
+  /** Координата Y (0..100) */
   y: number;
+  /** Модель обслуживаемого воздушного судна (например, "Airbus A320-200") */
   aircraftType: string;
+  /** Авиакомпания-эксплуатант */
   airline?: string;
+  /** Статус стоянки: IDLE — свободна, HAS_TASK — назначена заявка на ТО */
   status?: 'IDLE' | 'HAS_TASK';
 }
 
+/** Режим аэродрома: SVO (реальное Шереметьево) или CUSTOM (пользовательский полигон) */
 export type AirfieldMode = 'SVO' | 'CUSTOM';
 
+/** Тип графического элемента в конструкторе полигона */
 export type AirportElementKind = 'TERMINAL' | 'HANGAR' | 'PARKING' | 'RUNWAY' | 'STAND' | 'DUTY_STATION' | 'WAYPOINT';
 
+/** Элемент аэродромного полотна в конструкторе полигона */
 export interface AirportElement {
   id: string;
   kind: AirportElementKind;
@@ -54,8 +148,10 @@ export interface AirportElement {
   complex?: Complex;
 }
 
+/** Тип дорожного соединения перрона */
 export type AirportConnectionKind = 'ROAD' | 'TAXIWAY' | 'TUNNEL' | 'SERVICE';
 
+/** Ребро дорожной сети перрона между узлами */
 export interface AirportConnection {
   id: string;
   from?: string;
@@ -64,81 +160,157 @@ export interface AirportConnection {
   points?: { x: number; y: number }[];
 }
 
+/**
+ * Статусы жизненного цикла специалиста на перроне:
+ * - 'FREE_STATIONARY': 🟢 Свободен, находится на опорной базе ПТО
+ * - 'FREE_PATROLLING': 🟢 Свободен, находится в патрулировании сектора перрона
+ * - 'BOARDING_VEHICLE': 🟡 Подготовка, получение инструмента и посадка в спецмашину
+ * - 'IN_TRANSIT': 🔵 Перемещение по дорожному графу к воздушному судну
+ * - 'WORKING_ON_SITE': 🔴 Прибыл к борту, выполняет работы по устранению дефекта
+ * - 'RETURNING_TO_BASE': 🟡 Возвращается на базу приписки после завершения работ
+ */
 export type WorkerStatus =
-  | 'FREE_STATIONARY'    // 🟢 Свободен на базе
-  | 'FREE_PATROLLING'     // 🟢 Свободен, патрулирует перрон
-  | 'BOARDING_VEHICLE'    // 🟡 Погрузка инструмента и посадка
-  | 'IN_TRANSIT'         // 🔵 В пути на вызов
-  | 'WORKING_ON_SITE'    // 🔴 Дошел до борта и проводит ТО
-  | 'RETURNING_TO_BASE';  // 🟡 Возврат на базу
+  | 'FREE_STATIONARY'
+  | 'FREE_PATROLLING'
+  | 'BOARDING_VEHICLE'
+  | 'IN_TRANSIT'
+  | 'WORKING_ON_SITE'
+  | 'RETURNING_TO_BASE';
 
+/** Тип передвижения специалиста: пешком, перронный автомобиль, межтерминальный шаттл */
 export type VehicleType = 'PEDESTRIAN' | 'APRON_VEHICLE' | 'SHUTTLE' | 'WALK';
 
+/**
+ * Модель сотрудника инженерно-технического персонала (ИТП) ОТО
+ */
 export interface Worker {
+  /** Уникальный табельный номер / ID */
   id: string;
+  /** ФИО авиатехника */
   name: string;
+  /** Категория специальности */
   category: Category;
+  /** Код квалификации (B1, B2, A) */
   categoryCode: CategoryCode;
+  /** Текущий статус готовности/работы */
   status: WorkerStatus;
+  /** База приписки (ПТО) */
   baseId: string;
+  /** Текущая координата X (0..100) */
   x: number;
+  /** Текущая координата Y (0..100) */
   y: number;
+  /** Закрепленный тип транспорта */
   vehicle: VehicleType;
+  /** ID текущей выполняемой задачи (если назначен) */
   currentTaskId?: string;
+  /** Массив путевых точек запланированного маршрута по графу */
   pathWaypoints?: { x: number; y: number }[];
+  /** Скорость перемещения (% пройденного пути за 1 сим-секунду) */
   pathSpeedPctPerSimSec?: number;
+  /** Индекс текущего преодолеваемого сегмента маршрута */
   currentSegmentIndex?: number;
-  boardingSecRemaining?: number; // 🟡 Погрузка инструмента и посадка (в сим-секундах)
+  /** Оставшееся время сбора инструмента/посадки (в сим-секундах) */
+  boardingSecRemaining?: number;
+  /** Стоянка патрулирования/дежурства */
   dutyStandId?: string;
+  /** Предпочтение находиться в патруле, а не на базе */
   isPatrolPreference?: boolean;
+  /** Общее число вызовов за смену (для балансировки нагрузки/усталости) */
   dispatchedCount?: number;
-  isEmergency?: boolean; // AOG emergency beacon flashing lights
+  /** Флаг экстренного вызова AOG (включает проблесковый маяк на спецмашине) */
+  isEmergency?: boolean;
 }
 
+/**
+ * Член бригады, назначенный на выполнение конкретной задачи
+ */
 export interface TaskCrewMember {
+  /** ID назначенного специалиста */
   workerId: string;
+  /** ФИО специалиста */
   workerName: string;
+  /** Квалификация (B1, B2, A) */
   categoryCode: CategoryCode;
+  /** Название точки старта (база или текущая стоянка) */
   startLocationText: string;
+  /** Длина маршрута по дорожному графу в метрах */
   distanceMeters: number;
+  /** Способ передвижения */
   vehicle: VehicleType;
+  /** Текстовое описание транспорта ("Спецавтомобиль ПТО", "Пеший ход") */
   vehicleLabel: string;
+  /** Расчетное время прибытия к борту в минутах (ETA) */
   etaMinutes: number;
+  /** Геометрические путевые точки траектории движения */
   waypoints: { x: number; y: number }[];
+  /** Отметка о фактическом прибытии на место стоянки */
   hasArrived?: boolean;
 }
 
+/**
+ * Заявка на оперативное техническое обслуживание (ОТО) воздушного судна
+ */
 export interface OtoTask {
+  /** Уникальный номер заявки (например, "TASK-1042") */
   id: string;
+  /** ID стоянки ВС */
   standId: string;
+  /** Номер стоянки (например, "104") */
   standLabel: string;
+  /** Тип воздушного судна */
   aircraftType: string;
+  /** Основная категория дефекта */
   categoryCode: CategoryCode;
+  /** Текстовое название категории (например, "B1 — Двигатели и планер") */
   categoryLabel: string;
+  /** Наименование дефекта по главе ATA (например, "ATA 32: Отказ датчика выпуска шасси") */
   defectLabel?: string;
-  priority: TaskPriority; // AOG (1), URGENT (2), ROUTINE (3)
+  /** Приоритет заявки: AOG, URGENT или ROUTINE */
+  priority: TaskPriority;
+  /** Текущий статус заявки */
   status: 'QUEUED' | 'DISPATCHED' | 'WORKING' | 'COMPLETED';
-  requiredCrew?: CrewRequirement[]; // Полный регламентный состав бригады (для сборки в диспетчере)
+  /** Регламентный состав бригады, требуемый под данную задачу */
+  requiredCrew?: CrewRequirement[];
+  /** Фактически назначенные члены бригады */
   crew: TaskCrewMember[];
+  /** Число инженеров, уже прибывших к борту */
   arrivedCount: number;
+  /** Время прибытия последнего члена бригады (критический путь ETA) */
   maxEtaMinutes: number;
+  /** Оценка ETA интуитивным методом диспетчера ("ближайший свободный") для сравнения */
   intuitiveEtaMinutes?: number;
+  /** Дистанция по прямой интуитивного метода */
   intuitiveDistanceMeters?: number;
+  /** Норматив SLA по прибытию (стандарт: 15.0 минут) */
   slaLimitMinutes: number;
+  /** Укладывается ли системный ETA в SLA 15 минут */
   withinSla: boolean;
+  /** Время создания заявки в формате HH:MM */
   createdAt: string;
-  elapsedQueueSec?: number; // Queued time accumulated in simulation seconds
-  elapsedTransitSec?: number; // Time spent in transit
-  elapsedWorkSec: number;   // Elapsed work time in seconds (0 to 120s)
-  targetWorkSec: number;    // Target 120s (2 real minutes)
-  reservedWorkerId?: string; // Lookahead: queued task promised to a worker still on duty
-  waitingReason?: string;   // Explainability: почему задача ждёт в очереди (для UI)
-  createdAtSimSec?: number;  // Время создания задачи по сим-часам (сек)
-  startedAtSimSec?: number;  // Время первого отправления бригады по сим-часам (сек)
-  completedAtSimSec?: number; // Время завершения ТО по сим-часам (сек)
-  isEmergency?: boolean;     // AOG urgent dispatch siren mode
+  /** Накопленное время ожидания в очереди в сим-секундах */
+  elapsedQueueSec?: number;
+  /** Накопленное время нахождения бригады в пути в сим-секундах */
+  elapsedTransitSec?: number;
+  /** Фактическое время проведения работ на борту в сим-секундах */
+  elapsedWorkSec: number;
+  /** Нормативная длительность работ в сим-секундах (по умолчанию 120 с) */
+  targetWorkSec: number;
+  /** ID зарезервированного инженера (механизм lookahead диспетчера) */
+  reservedWorkerId?: string;
+  /** Понятная причина нахождения в очереди для оператора (Explainable AI) */
+  waitingReason?: string;
+  /** Время создания по часам симуляции (в секундах от старта) */
+  createdAtSimSec?: number;
+  /** Время выезда бригады по часам симуляции */
+  startedAtSimSec?: number;
+  /** Время завершения работ по часам симуляции */
+  completedAtSimSec?: number;
+  /** Режим экстренной сирены AOG */
+  isEmergency?: boolean;
 }
 
+/** Данные всплывающей подсказки (Tooltip) на интерактивной карте */
 export interface HoverTooltipData {
   type: 'STAND' | 'FACILITY' | 'WORKER';
   title: string;
@@ -148,18 +320,34 @@ export interface HoverTooltipData {
   y: number;
 }
 
-// Dispatch analytics: "intuitive dispatcher" vs system (saved minutes, SLA compliance)
+/**
+ * Запись аналитики диспетчеризации:
+ * Служит для прозрачного сравнения алгоритма AeroDispatch с baseline («интуитивный ближайший диспетчер»)
+ * на одном и том же вызове.
+ */
 export interface DispatchStat {
+  /** ID заявки */
   taskId: string;
+  /** Номер стоянки */
   standLabel: string;
+  /** Квалификация дефекта */
   categoryCode: CategoryCode;
+  /** Название неисправности */
   defectLabel?: string;
+  /** Расчетное время прибытия интуитивного метода (минуты) */
   intuitiveEtaMinutes: number;
+  /** Расчетное время прибытия алгоритма AeroDispatch (минуты) */
   systemEtaMinutes: number;
+  /** Пройденное расстояние интуитивного метода (метры) */
   intuitiveDistanceMeters: number;
+  /** Пройденное расстояние по оптимизированному маршруту (метры) */
   systemDistanceMeters: number;
+  /** Сэкономленные минуты простоя ВС (intuitiveEta - systemEta) */
   savedMinutes: number;
+  /** Уложился ли алгоритм AeroDispatch в норматив SLA 15 минут */
   within15: boolean;
+  /** Уложился ли базовый метод в норматив SLA 15 минут */
   baselineWithin15: boolean;
+  /** Дата/время фиксации назначения */
   createdAt: string;
 }

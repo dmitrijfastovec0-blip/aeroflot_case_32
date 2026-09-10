@@ -1,13 +1,27 @@
+/**
+ * ============================================================================
+ * ПРАВАЯ ОПЕРАТИВНАЯ ПАНЕЛЬ ДИСПЕТЧЕРА (RIGHT PANEL)
+ * ----------------------------------------------------------------------------
+ * Основная интерактивная рабочая панель:
+ * - Монитор активного сценария: карточки текущих задач, статус движения бригады,
+ *   индикатор физического прогресса пути (0-100%), таймеры SLA.
+ * - Ручное переназначение (Manual Override): возможность вручную закрепить
+ *   специалиста за дефектом в обход автоматического алгоритма.
+ * - Создание новой заявки: выбор стоянки, дефекта по главе ATA, приоритета.
+ * - Архив выполненных задач: история обслуженных бортов с расчетом времени.
+ * ============================================================================
+ */
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { OtoTask, TaskCrewMember, Worker, ThemeMode, Stand, AirportElement, AirportConnection } from '../types/index';
-import { SVO_STANDS, DEFECT_TYPES } from '../constants/index';
-import { CrewRequirement } from '../constants/index';
-import { findNearestFreeWorkerOfExactCategory } from '../services/dijkstra';
-import { findNearestFreeCustomWorker } from '../services/airfieldGraph';
-import { calculateTaskTransitProgressPct, formatCompletedTaskDuration } from '../utils/progress';
+import { OtoTask, TaskCrewMember, Worker, ThemeMode, Stand, AirportElement, AirportConnection } from '../types';
+import { SVO_STANDS, DEFECT_TYPES, CrewRequirement } from '../constants';
+import { findNearestFreeWorkerOfExactCategory, findNearestFreeCustomWorker } from '../services';
+import { calculateTaskTransitProgressPct, formatCompletedTaskDuration } from '../utils';
 import { Wrench, Rocket, MapPin, Users, ChevronRight, ChevronLeft, Zap, Target, CheckCircle2, ChevronDown, Activity, Clock, Archive, UserRoundCheck } from 'lucide-react';
 
+/** Свойства правой оперативной панели */
 interface RightPanelProps {
+
   selectedStandId: string | null;
   onSelectStand: (standId: string) => void;
   workers: Worker[];

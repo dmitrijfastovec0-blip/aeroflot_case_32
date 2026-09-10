@@ -1,9 +1,23 @@
+/**
+ * ============================================================================
+ * РЕДАКТОР ПАРАМЕТРОВ СПЕЦИАЛИСТА (WORKER EDIT MODAL)
+ * ----------------------------------------------------------------------------
+ * Модальное окно для индивидуальной настройки авиатехника:
+ * - Смена квалификационной категории (B1 / B2 / Cat-A)
+ * - Прикрепление спецавтомобиля или перевод в пеший ход
+ * - Привязка к опорной базе ПТО или дежурной стоянке
+ * - Переключение режима патрулирования
+ * ============================================================================
+ */
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { Worker, CategoryCode, VehicleType, ThemeMode, Stand, Facility } from '../types/index';
-import { SVO_STANDS, SVO_FACILITIES } from '../constants/index';
+import { Worker, CategoryCode, VehicleType, ThemeMode, Stand, Facility } from '../types';
+import { SVO_STANDS, SVO_FACILITIES } from '../constants';
 import { UserCheck, X, Save, MapPin, Truck, Award } from 'lucide-react';
 
+/** Свойства модального окна редактирования сотрудника */
 interface WorkerEditModalProps {
+
   worker: Worker | null;
   isOpen: boolean;
   onClose: () => void;

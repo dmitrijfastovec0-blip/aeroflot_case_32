@@ -1,8 +1,21 @@
-import React, { useState } from 'react';
-import { Worker, OtoTask, ThemeMode, WeatherMode, AirportElement, AirportConnection, AirfieldMode } from '../types/index';
-import { useCanvasEngine } from '../hooks/useCanvasEngine';
+/**
+ * ============================================================================
+ * КОМПОНЕНТ КАРТЫ ЛЕТНОГО ПОЛЯ (CANVAS MAP)
+ * ----------------------------------------------------------------------------
+ * Интерактивный UI-контейнер для HTML5 Canvas элемента.
+ * Инкапсулирует обработку событий мыши (Drag/Pan, Wheel/Zoom, Click, Move)
+ * и передает их в движок useCanvasEngine.
+ * Отображает всплывающие тултипы (HoverTooltipData) и оверлеи режима слежения.
+ * ============================================================================
+ */
 
+import React, { useState } from 'react';
+import { Worker, OtoTask, ThemeMode, WeatherMode, AirportElement, AirportConnection, AirfieldMode } from '../types';
+import { useCanvasEngine } from '../hooks';
+
+/** Свойства интерактивной карты перрона */
 interface CanvasMapProps {
+
   workersRef: React.MutableRefObject<Worker[]>;
   tasksRef: React.MutableRefObject<OtoTask[]>;
   selectedStandId: string | null;

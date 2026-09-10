@@ -1,22 +1,38 @@
+/**
+ * ============================================================================
+ * МАРШРУТИЗАЦИЯ И РАСЧЕТ ВРЕМЕНИ ПРИБЫТИЯ ПО ДОРОЖНОМУ ГРАФУ SVO (ДЕЙКСТРА)
+ * ----------------------------------------------------------------------------
+ * Сервис отвечает за навигацию специалистов и спецавтотранспорта по дорожной
+ * сети перрона Международного аэропорта Шереметьево (SVO).
+ * 
+ * Ключевые возможности:
+ * - Топологический дорожный граф перрона (SVO_NODES, SVO_EDGES):
+ *   сервисные автодороги, пути объезда стоянок, межтерминальный тоннель (СТК <-> ЮТК).
+ * - Алгоритм Дейкстры с предварительным расчетом кратчайших путей (All-Pairs Shortest Path)
+ *   для обеспечения мгновенного расчета (O(1) lookup) при высоких нагрузках и бенчмарках.
+ * - Динамическая интерполяция координат moving-target: если техник уже находится
+ *   в движении (патрулирует или возвращается на базу), остаток текущего ребра
+ *   вычисляется в реальных метрах, предотвращая погрешности дискретизации.
+ * - Погодные модификаторы скоростей:
+ *   Базовые: пешком — 4.5 км/ч, авто — 20 км/ч, тоннельный шаттл — 40 км/ч.
+ *   Снегопад / гололед: пешком — 3.5 км/ч, авто — 12 км/ч.
+ * ============================================================================
+ */
+
 import { Worker, Stand, CategoryCode, TaskCrewMember, Category, WorkerStatus, AirportConnection, AirportElement, Facility } from '../types/index';
 import { SVO_NODES, SVO_EDGES, SVO_FACILITIES, REAL_SVO_FACILITIES, SVO_STANDS, TECHNICIAN_NAMES } from '../constants/index';
 import { computeCustomAirfieldRoute, calculateModularWorkerEta } from './airfieldGraph';
 
-// ============================================================================
-// WEATHER / CONDITIONS SPEED OVERRIDES (scenario "Снегопад")
-// ----------------------------------------------------------------------------
-// Baseline: pedestrian 4.5 km/h, apron vehicle 20 km/h, tunnel shuttle 40 km/h.
-// The snow scenario drops WALK → 3.5 km/h and CAR → 12 km/h. Because dispatched
-// workers pace via pathSpeedFor(etaMinutes), changing these values automatically
-// slows down every routed move; patrol / return-to-base also read them here.
-// ============================================================================
+// Скорости по умолчанию в зависимости от типа передвижения
 const WEATHER_DEFAULTS = { pedestrianKmH: 4.5, vehicleKmH: 20.0, tunnelVehicleKmH: 40.0 };
 let weatherSpeeds = { ...WEATHER_DEFAULTS };
 
 let customAirportElements: AirportElement[] = [];
 let customAirportConnections: AirportConnection[] = [];
 
+/** Настраивает геометрию пользовательского аэродрома */
 export function configureCustomAirport(elements: AirportElement[], connections: AirportConnection[]) {
+
   customAirportElements = elements;
   customAirportConnections = connections;
 }

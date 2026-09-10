@@ -1,6 +1,20 @@
+/**
+ * ============================================================================
+ * ИНТЕРАКТИВНЫЙ КОНСТРУКТОР ПОЛЬЗОВАТЕЛЬСКИХ АЭРОДРОМОВ (LOCATION BUILDER)
+ * ----------------------------------------------------------------------------
+ * Рабочая среда (CAD-workspace) для свободного проектирования перронов:
+ * - Создание стоянок (STAND), баз ПТО (DUTY_STATION), ангаров (HANGAR),
+ *   паркингов спецтехники (PARKING), терминалов (TERMINAL) и ВПП (RUNWAY).
+ * - Соединение объектов дорожной сетью перрона (ROAD, TAXIWAY, SERVICE).
+ * - Проверка топологической связности графа и готовности к симуляции.
+ * - Экспорт/импорт полигонов для испытаний алгоритмов диспетчеризации.
+ * ============================================================================
+ */
+
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { AirportConnection, AirportConnectionKind, AirportElement, AirportElementKind, ThemeMode } from '../types/index';
+import { AirportConnection, AirportConnectionKind, AirportElement, AirportElementKind, ThemeMode } from '../types';
 import {
+
   Box,
   Building2,
   CircleDot,
