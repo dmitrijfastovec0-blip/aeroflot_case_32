@@ -56,7 +56,7 @@ describe('algorithm benchmark', () => {
     });
 
     expect(results.map(result => result.id)).toEqual([
-      'AERODISPATCH',
+      'LINEOPS',
       'GREEDY_GRAPH',
       'GREEDY_DIRECT',
       'FIFO_QUALIFICATION',

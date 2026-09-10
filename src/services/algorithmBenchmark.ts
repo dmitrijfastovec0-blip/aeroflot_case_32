@@ -7,7 +7,7 @@
  * входящей очереди дефектов и текущего состояния персонала перрона.
  * 
  * Сравниваемые стратегии:
- * 1. «AeroDispatch» (Global Min-Cost):
+ * 1. «LineOps» (Global Min-Cost):
  *    Глобальная оптимизация целевой функции через венгерский алгоритм.
  *    Учитывает SLA-slack (запас времени до нарушения норматива 15 минут),
  *    защиту баз от полного опустошения (Zone Guard), усталость и штрафы
@@ -277,7 +277,7 @@ export function runAlgorithmBenchmark(context: BenchmarkContext): AlgorithmBench
 
   const results: AlgorithmBenchmarkResult[] = [];
 
-  // 1. Прогон флагманского алгоритма «AeroDispatch» (венгерский алгоритм + SLA-slack + Zone Guard)
+  // 1. Прогон флагманского алгоритма «LineOps» (венгерский алгоритм + SLA-slack + Zone Guard)
   const optimalStarted = performance.now();
   const optimal = computeDispatchPlan(evalContext);
   const optimalAssignments: Assignment[] = Object.values(optimal.dispatchedTasks)
@@ -292,8 +292,8 @@ export function runAlgorithmBenchmark(context: BenchmarkContext): AlgorithmBench
 
   results.push(
     metric(
-      'AERODISPATCH',
-      'AeroDispatch: global min-cost',
+      'LINEOPS',
+      'LineOps: global min-cost',
       sample,
       optimalAssignments,
       optimalStarted,

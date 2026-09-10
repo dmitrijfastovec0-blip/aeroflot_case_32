@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * ТИПЫ ДАННЫХ И МОДЕЛИ СИСТЕМЫ ОТО («AERODISPATCH» / SVO OTO AEROFLOT)
+ * ТИПЫ ДАННЫХ И МОДЕЛИ СИСТЕМЫ ОТО («LINEOPS» / SVO OTO AEROFLOT)
  * ----------------------------------------------------------------------------
  * Описывает предметную область оперативного технического обслуживания (ОТО)
  * воздушных судов (ВС) на перроне международного аэропорта Шереметьево (SVO)
@@ -322,7 +322,7 @@ export interface HoverTooltipData {
 
 /**
  * Запись аналитики диспетчеризации:
- * Служит для прозрачного сравнения алгоритма AeroDispatch с baseline («интуитивный ближайший диспетчер»)
+ * Служит для прозрачного сравнения алгоритма LineOps с baseline («интуитивный ближайший диспетчер»)
  * на одном и том же вызове.
  */
 export interface DispatchStat {
@@ -336,7 +336,7 @@ export interface DispatchStat {
   defectLabel?: string;
   /** Расчетное время прибытия интуитивного метода (минуты) */
   intuitiveEtaMinutes: number;
-  /** Расчетное время прибытия алгоритма AeroDispatch (минуты) */
+  /** Расчетное время прибытия алгоритма LineOps (минуты) */
   systemEtaMinutes: number;
   /** Пройденное расстояние интуитивного метода (метры) */
   intuitiveDistanceMeters: number;
@@ -344,7 +344,7 @@ export interface DispatchStat {
   systemDistanceMeters: number;
   /** Сэкономленные минуты простоя ВС (intuitiveEta - systemEta) */
   savedMinutes: number;
-  /** Уложился ли алгоритм AeroDispatch в норматив SLA 15 минут */
+  /** Уложился ли алгоритм LineOps в норматив SLA 15 минут */
   within15: boolean;
   /** Уложился ли базовый метод в норматив SLA 15 минут */
   baselineWithin15: boolean;

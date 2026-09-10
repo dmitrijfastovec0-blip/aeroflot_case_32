@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Единый скрипт развертывания (Deploy) SVO OTO Aeroflot (vozduhan) на боевой сервер
+# Единый скрипт развертывания (Deploy) LineOps SVO на боевой сервер
 # Использование:
-#   ./deploy.sh                # Обычный деплой (сборка npm run build + rsync в /var/www/aeroflot_case)
+#   ./deploy.sh                # Обычный деплой (сборка npm run build + rsync в /var/www/lineops)
 #   ./deploy.sh --no-build     # Деплой готовой папки dist без пересборки
 # ==============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
 
 SERVER="${SERVER:-}"
-TARGET_DIR="/var/www/aeroflot_case"
+TARGET_DIR="${TARGET_DIR:-/var/www/lineops}"
 
 DO_BUILD=true
 
@@ -37,7 +37,7 @@ echo "Режим сборки: $( [ "$DO_BUILD" = true ] && echo "Автомат
 echo "=========================================================="
 
 # Настройка SSH multiplexing (пароль/ключ запрашивается ровно один раз)
-SSH_SOCKET="/tmp/vozduhan_deploy_ssh_mux.$$"
+SSH_SOCKET="/tmp/lineops_deploy_ssh_mux.$$"
 SSH_OPTS="-o ControlMaster=auto -o ControlPath=${SSH_SOCKET} -o ControlPersist=600"
 export RSYNC_RSH="ssh $SSH_OPTS"
 
@@ -62,7 +62,7 @@ fi
 
 # 2. Подготовка директорий на сервере
 echo "📁 Проверка структуры каталогов на сервере..."
-ssh $SSH_OPTS "$SERVER" "mkdir -p $TARGET_DIR"
+ssh $SSH_OPTS "$SERVER" "mkdir -p $TARGET_DIR /var/www/aeroflot_case"
 
 # 3. Выгрузка фронтенда (dist/)
 echo "🌐 Выгрузка файлов из dist/..."
@@ -70,11 +70,16 @@ rsync -avc --delete \
     dist/ \
     "${SERVER}:${TARGET_DIR}/"
 
+# Зеркалирование для обратной совместимости старых ссылок
+rsync -avc --delete \
+    dist/ \
+    "${SERVER}:/var/www/aeroflot_case/"
+
 # 4. Права доступа
 echo "🔒 Настройка прав доступа на сервере..."
-ssh $SSH_OPTS "$SERVER" "chown -R www-data:www-data $TARGET_DIR && chmod -R 755 $TARGET_DIR"
+ssh $SSH_OPTS "$SERVER" "chown -R www-data:www-data $TARGET_DIR /var/www/aeroflot_case && chmod -R 755 $TARGET_DIR /var/www/aeroflot_case"
 
 echo "=========================================================="
-echo "✅ Деплой SVO OTO Aeroflot успешно завершен!"
-echo "🌐 Приложение развернуто в $TARGET_DIR на $SERVER"
+echo "✅ Деплой LineOps SVO успешно завершен!"
+echo "🌐 Приложение доступно: https://charg3d.ru/lineops/"
 echo "=========================================================="

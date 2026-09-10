@@ -6,7 +6,7 @@
  * - «Экономика и ROI»: Реальная финансово-экономическая модель ОТО Шереметьево
  *   (простой ВС по типам бортов, срывы слотов, компенсации пассажирам, оптимизация ФОТ и ГСМ,
  *   интерактивный калькулятор масштабирования на весь флот и срок окупаемости).
- * - «Бенчмарк: До / После»: Прямое сопоставление ручного процесса и AeroDispatch
+ * - «Бенчмарк: До / После»: Прямое сопоставление ручного процесса и LineOps
  *   (время реакции, средний ETA, % соблюдения 15-мин SLA, предотвращение срыва слотов,
  *   архитектурное превосходство над аналогами рынка).
  * - «Алгоритмы и метрики»: Сравнение 6 алгоритмов диспетчеризации на единой выборке.
@@ -43,7 +43,7 @@ export type SolutionAnalog =
   | 'NEAREST_ENGINEER'
   | 'ERP_EAM'
   | 'AIRPORT_OPERATIONS'
-  | 'AERODISPATCH';
+  | 'LINEOPS';
 
 interface AnalogInfo {
   id: SolutionAnalog;
@@ -142,7 +142,7 @@ const ANALOGS: AnalogInfo[] = [
     sla: 'Контролируется через KPI оборота рейсов',
     source: 'SITA Airport Operations: sita.aero/solutions/',
     features: { workOrders: 'PARTIAL', qualification: 'UNKNOWN', liveLocation: 'PARTIAL', roadRouting: 'PARTIAL', workload: 'YES', sla: 'YES' },
-    description: 'Широкий класс систем управления аэропортом: перрон, гейты, спецтехника и багаж. AeroDispatch сфокусирован на узкой высококритичной задаче ОТО ВС и легко подключается к SITA.',
+    description: 'Широкий класс систем управления аэропортом: перрон, гейты, спецтехника и багаж. LineOps сфокусирован на узкой высококритичной задаче ОТО ВС и легко подключается к SITA.',
     pros: [
       'Широкий контекст общеаэропортовой деятельности',
       'Хорошая интеграция с телеметрией ВС'
@@ -153,9 +153,9 @@ const ANALOGS: AnalogInfo[] = [
     ]
   },
   {
-    id: 'AERODISPATCH',
-    title: 'AeroDispatch — предлагаемый прототип',
-    shortTitle: 'AeroDispatch',
+    id: 'LINEOPS',
+    title: 'LineOps — предлагаемый прототип',
+    shortTitle: 'LineOps',
     icon: <Layers className="w-5 h-5 text-rose-400" />,
     tagline: 'Квалификация + загрузка + ETA + дорожный граф в единой системе',
     route: 'Dijkstra по графу дорог и тоннелей SVO / CUSTOM',
@@ -190,7 +190,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   theme
 }) => {
   const [activeTab, setActiveTab] = useState<'ECONOMICS' | 'BEFORE_AFTER' | 'ALGORITHMS' | 'ANALOGS'>('ECONOMICS');
-  const [selectedAnalogId, setSelectedAnalogId] = useState<SolutionAnalog>('AERODISPATCH');
+  const [selectedAnalogId, setSelectedAnalogId] = useState<SolutionAnalog>('LINEOPS');
   
   // Custom scaling calculator inputs
   const [dailyFlights, setDailyFlights] = useState<number>(480);
@@ -247,8 +247,8 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
       }))
     : [
         {
-          id: 'AERODISPATCH',
-          title: 'AeroDispatch: global min-cost',
+          id: 'LINEOPS',
+          title: 'LineOps: global min-cost',
           eta: measuredSystemEta || 4.25,
           sla: dispatchStats.length > 0 ? (dispatchStats.filter(stat => stat.within15).length / dispatchStats.length) * 100 : 98.6,
           sample: dispatchStats.length || 6,
@@ -683,12 +683,12 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 </div>
               </div>
 
-              {/* AFTER: AeroDispatch Pure Engine */}
+              {/* AFTER: LineOps Pure Engine */}
               <div className="p-5 rounded-2xl border bg-emerald-500/10 border-emerald-500/40 space-y-4">
                 <div className="flex items-center justify-between border-b border-emerald-500/20 pb-3">
                   <div className="flex items-center space-x-2 text-emerald-400 font-black text-base uppercase">
                     <CheckCircle className="w-5 h-5" />
-                    <span>ПОСЛЕ ВНЕДРЕНИЯ (AeroDispatch)</span>
+                    <span>ПОСЛЕ ВНЕДРЕНИЯ (LineOps)</span>
                   </div>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">Оптимум AI</span>
                 </div>
@@ -733,7 +733,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                     <tr>
                       <th className="py-2.5 pr-3">Параметр / Метрика</th>
                       <th className="py-2.5 pr-3 text-rose-400">ДО (Ручной процесс)</th>
-                      <th className="py-2.5 pr-3 text-emerald-400">ПОСЛЕ (AeroDispatch)</th>
+                      <th className="py-2.5 pr-3 text-emerald-400">ПОСЛЕ (LineOps)</th>
                       <th className="py-2.5 text-sky-400">Эффект / Дельта</th>
                     </tr>
                   </thead>
@@ -779,11 +779,11 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
               </div>
             </div>
 
-            {/* Why AeroDispatch is Architecturally Superior to Analogs */}
+            {/* Why LineOps is Architecturally Superior to Analogs */}
             <div className="p-4 rounded-2xl border bg-slate-100/50 dark:bg-[#101724]/50 border-slate-300 dark:border-[#1e2a3a] space-y-3">
               <h3 className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-400" />
-                Почему AeroDispatch превосходит существующие аналоги рынка?
+                Почему LineOps превосходит существующие аналоги рынка?
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -804,7 +804,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 <div className="p-3 rounded-xl bg-slate-900/30 border border-slate-800 space-y-1.5">
                   <div className="font-bold text-emerald-400">3. Против Greedy систем</div>
                   <p className="text-gray-400 leading-relaxed text-[11px]">
-                    Локально-жадные алгоритмы захватывают первого попавшегося сотрудника. AeroDispatch <b>решает глобальную матрицу назначений</b>, предотвращая кадровый коллапс.
+                    Локально-жадные алгоритмы захватывают первого попавшегося сотрудника. LineOps <b>решает глобальную матрицу назначений</b>, предотвращая кадровый коллапс.
                   </p>
                 </div>
               </div>
@@ -863,7 +863,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/30">
-                <div className="text-xs text-gray-400 uppercase font-bold">AeroDispatch: средний ETA</div>
+                <div className="text-xs text-gray-400 uppercase font-bold">LineOps: средний ETA</div>
                 <div className="text-2xl font-extrabold text-emerald-400 mt-2">{measuredSystemEta == null ? '4.25 мин' : `${measuredSystemEta.toFixed(2)} мин`}</div>
                 <div className="text-[11px] text-gray-500 mt-1">по фактическим назначениям</div>
               </div>
