@@ -318,10 +318,12 @@ export const RightPanel = React.memo<RightPanelProps>(({
                     : isCompleted ? 100 : 0;
 
                   // Card styling depending on state
-                  let cardBgClass = 'bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-[#1a2330] border-slate-300 dark:border-[#263345]';
-                  if (isCompleted) {
-                    cardBgClass = 'bg-emerald-600/90 hover:bg-emerald-600 border-emerald-400 text-white shadow-lg shadow-emerald-500/20';
-                  } else if (isExpanded) {
+                   let cardBgClass = 'bg-slate-100 dark:bg-[#121820] hover:bg-slate-200 dark:hover:bg-[#1a2330] border-slate-300 dark:border-[#263345]';
+                   if (isCompleted) {
+                     cardBgClass = 'bg-emerald-600/90 hover:bg-emerald-600 border-emerald-400 text-white shadow-lg shadow-emerald-500/20';
+                   } else if (slaState === 'breach') {
+                     cardBgClass = 'bg-red-950/55 hover:bg-red-950/70 border-red-500/80 ring-1 ring-red-500/40 shadow-lg shadow-red-500/15';
+                   } else if (isExpanded) {
                     cardBgClass = isAog
                       ? 'bg-red-950/40 border-red-500/60 ring-1 ring-red-500/30 shadow-lg'
                       : 'bg-sky-950/40 border-sky-500/60 ring-1 ring-sky-500/30 shadow-lg';
@@ -350,7 +352,7 @@ export const RightPanel = React.memo<RightPanelProps>(({
                             <span className={`px-2 py-0.5 rounded text-xs font-bold ${
                               isCompleted
                                 ? 'bg-white/20 text-white'
-                                : isAog ? 'bg-red-500 text-white animate-pulse' : 'bg-sky-600 text-white'
+                                : isAog || slaState === 'breach' ? 'bg-red-500 text-white animate-pulse' : 'bg-sky-600 text-white'
                             }`}>
                               {isCompleted ? 'ГОТОВО' : task.priority}
                             </span>

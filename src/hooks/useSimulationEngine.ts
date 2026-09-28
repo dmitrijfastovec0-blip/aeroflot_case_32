@@ -596,7 +596,6 @@ export function useSimulationEngine(
 
             if (task.status === 'DISPATCHED' && isAllArrived) {
               status = 'WORKING';
-              task.startedAtSimSec = simClockRef.current;
             }
 
             if (status === 'WORKING') {

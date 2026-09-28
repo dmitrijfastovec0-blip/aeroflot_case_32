@@ -93,7 +93,7 @@ export function formatCompletedTaskDuration(task: OtoTask): string {
 
   // Резервная приближенная оценка, если метки времени отсутствуют
   const eta = task.maxEtaMinutes || 12;
-  const workMin = (task.targetWorkSec || 40) / 20;
+  const workMin = (task.targetWorkSec || 40) / 60;
   const totalMin = Math.round((eta + workMin) * 10) / 10;
   return `${totalMin} мин`;
 }

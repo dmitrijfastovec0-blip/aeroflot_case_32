@@ -100,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
             ✈️
           </div>
           <span className="font-extrabold text-sm tracking-wider text-slate-900 dark:text-white uppercase whitespace-nowrap">
-            АЭРОФЛОТ
+            LineOps
           </span>
         </div>
 
